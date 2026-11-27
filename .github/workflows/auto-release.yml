@@ -1420,20 +1420,6 @@ jobs:
             fi
           }
 
-          # This attempt's kickoff issue author id -- used by the clarify-
-          # decision script's actor-gate check (a qualifying reply is one
-          # from a non-Bot OWNER/MEMBER/COLLABORATOR, or from this id,
-          # mirroring intake.yml:524). The issue's author never changes
-          # mid-attempt, so this is resolved lazily on the first loop
-          # iteration below (not here) and cached -- a transient failure at
-          # this single, unretried call used to leave author_id empty for
-          # the rest of the attempt, and the clarify-decision script's own
-          # `${1:?}` then made every iteration's `decide` call fail, falsely
-          # stalling at "clarification" after MAX_GATE_FAILURES instead of
-          # simply retrying the read (maintainer feedback on PR #389, second
-          # review).
-          author_id=""
-
           # The three PR-merge gates share one shape (research.md D6/D9);
           # gate_name is the failing_check string contracts/verdict-
           # extension.md specifies for a fail-gate-stall at that gate.
@@ -1546,23 +1532,15 @@ jobs:
           }
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
-            # author_id is resolved lazily here (not before the loop), so a
-            # transient failure is retried on the next iteration and counted
-            # against the same MAX_GATE_FAILURES bound as the comments read
-            # and the decision script below, instead of leaving author_id
-            # permanently empty for the rest of the attempt (maintainer
-            # feedback on PR #389, second review).
-            if [ -z "$author_id" ] && ! author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>"$RUNNER_TEMP/auto-release-author-id-err.txt")"; then
-              author_id=""
-              clarify_failures=$((clarify_failures + 1))
-              clarify_last_failure="issue author id: $(tail -c 300 "$RUNNER_TEMP/auto-release-author-id-err.txt")"
-            elif ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
+            # A qualifying reply is a non-bot OWNER/MEMBER/COLLABORATOR
+            # comment; no user id is read (specs/134-maintainer-only-comments).
+            if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
                 '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
                 > "$RUNNER_TEMP/auto-release-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-comments-err.txt"; then
               clarify_failures=$((clarify_failures + 1))
               clarify_last_failure="$(tail -c 300 "$RUNNER_TEMP/auto-release-comments-err.txt")"
             elif ! clarify_decision="$(jq -cs '.' "$RUNNER_TEMP/auto-release-comments.ndjson" 2>/dev/null \
-                | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$author_id" "$clarification_rounds" \
+                | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$clarification_rounds" \
                 2>"$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"; then
               clarify_failures=$((clarify_failures + 1))
               clarify_last_failure="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-clarify-decision-err.txt")"
@@ -1649,7 +1627,11 @@ jobs:
                     gate_last_failure[$prefix]="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-merge-decision-err.txt")"
                   else
                     gate_failures[$prefix]=0
-                    merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
+                    # read from a here-string, not printf piped to head:
+                    # under pipefail, head can exit before printf writes the
+                    # decision's second line, and the SIGPIPE'd printf
+                    # (rc 141) would end this step just before the merge.
+                    IFS= read -r merge_head <<<"$merge_decision" || merge_head=""
                     case "$merge_head" in
                       merge)
                         gate_blocked_since[$prefix]=""
@@ -1996,25 +1978,8 @@ jobs:
           # read above (moved there for FR-021's stage:clarify assertion,
           # research.md D5.2); this reuses it rather than reading the
           # issue's comments a second time.
-          #
-          # Fallback for the rare case the loop reached stage:done before
-          # author_id was ever resolved above (e.g. its very first attempt
-          # failed and the very same iteration's terminal-state check
-          # already found the issue closed) -- the same one-shot fallback
-          # idiom slug's own resolution above already uses.
-          # #396 item 3: `|| true` swallowed a genuine `gh api` read failure
-          # here the same way as the slug and timeline fallbacks above --
-          # an empty, successfully-read author_id (nothing to fall back to)
-          # keeps today's behaviour, but a failed call now goes through
-          # fail_infra_on_read instead of silently leaving author_id empty.
-          if [ -z "$author_id" ]; then
-            if ! author_id="$(gh api "repos/${E2E_REPO}/issues/${ISSUE}" --jq '.user.id' 2>"$RUNNER_TEMP/auto-release-author-id2-err.txt")"; then
-              fail_infra_on_read "reading the issue's author id for the pass-path clarification assertion" \
-                "gh api issues/<issue> succeeds" "$RUNNER_TEMP/auto-release-author-id2-err.txt"
-            fi
-          fi
           clarification_satisfied="$(printf '%s' "$comments_json" \
-            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$author_id" 2>/dev/null)" || clarification_satisfied=unsatisfied
+            | bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied 2>/dev/null)" || clarification_satisfied=unsatisfied
           if [ "$clarification_satisfied" != "ok" ]; then
             write_verdict "fail-wrong-output" "clarification gate answered before stage:done" \
               "a qualifying reply after every open question" "question opened, never answered"

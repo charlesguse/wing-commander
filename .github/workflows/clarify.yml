@@ -1,8 +1,10 @@
 # Published stage — clarify (contracts/stage-interfaces.md).
 # on: workflow_call only. The calling wrapper owns the comment trigger and its
-# security gates (commenter is maintainer-or-author and not a bot —
-# constitution V; see docs/adoption.md). This stage folds the answers from the
-# referenced comment into the open draft spec PR and confirms on the issue.
+# security gates (commenter is a maintainer, OWNER/MEMBER/COLLABORATOR, and
+# not a bot — constitution 3.0.0, Principle V; see docs/adoption.md), and this
+# stage checks the triggering comment again itself before acting on it. This
+# stage folds the answers from the referenced comment into the open draft spec
+# PR and confirms on the issue.
 # Consumers: uses: <owner>/wing-commander/.github/workflows/clarify.yml@<ref>
 name: "reusable · clarify"
 
@@ -403,19 +405,53 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Constitution 3.0.0 (Principle V): this stage acts only on a comment
+      # from a maintainer (OWNER/MEMBER/COLLABORATOR, never a bot), whatever
+      # the calling wrapper admits (specs/134-maintainer-only-comments,
+      # research.md D1). It reads the comment it is given by id, so the stage
+      # still reads no event payload. A refused comment ends the job here:
+      # lifecycle-gate and every step gated on it are skipped, so there is no
+      # reaction, no notice and no change, and the job succeeds, which keeps
+      # `stalled` (it fires on a failed or skipped clarify job) quiet. A
+      # failed read fails the step; it never counts as a maintainer.
+      - name: Check the triggering comment is from a maintainer
+        id: comment-author
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ inputs.comment-id }}
+        run: |
+          set -euo pipefail
+          if ! info="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq '[(.user.type // ""), (.author_association // "")] | @tsv')"; then
+            echo "::error::wing-commander clarify: could not read comment ${COMMENT_ID} to check its author; a failed read is never treated as a maintainer."
+            exit 1
+          fi
+          user_type="${info%%$'\t'*}"
+          association="${info#*$'\t'}"
+          maintainer=false
+          if [ "$user_type" != "Bot" ]; then
+            case "$association" in
+              OWNER|MEMBER|COLLABORATOR) maintainer=true ;;
+            esac
+          fi
+          echo "maintainer=$maintainer" >> "$GITHUB_OUTPUT"
+          if [ "$maintainer" != "true" ]; then
+            echo "Comment ${COMMENT_ID} is not from a maintainer; this stage takes no action on it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Re-fetch the lifecycle issue's live state before any write can occur
       # (specs/022-gate-closed-lifecycle): a closed lifecycle is inert, even
       # to the very comment that closed it (research.md's race-at-close-time
       # scenario). Never trusts the triggering event payload.
       - name: Check lifecycle issue state
         id: lifecycle-gate
+        if: steps.comment-author.outputs.maintainer == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
         with:
           issue-number: ${{ inputs.issue-number }}
           token: ${{ github.token }}
 
       - name: Note closed lifecycle and stop
-        if: steps.lifecycle-gate.outputs.is-open != 'true'
+        if: steps.comment-author.outputs.maintainer == 'true' && steps.lifecycle-gate.outputs.is-open != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ github.token }}
@@ -642,7 +678,7 @@ jobs:
         id: tool-args-clarify
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
+          default-allowed-tools: "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)"
           default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
@@ -757,7 +793,9 @@ jobs:
 
             Steps:
             1. Read ${{ steps.ctx.outputs.spec-dir }}/spec.md and find the open
-               [NEEDS CLARIFICATION] markers.
+               [NEEDS CLARIFICATION] markers. A marker quoted inside inline code
+               or a fenced code block is not open: it is text the spec quotes,
+               so never answer it, replace it or report it as a question.
             2. Read the answer file. Map answers to questions (they may reference
                Q1/Q2/Q3, option letters, or free text). If the reply does not
                actually answer any open question, comment on issue
@@ -1161,7 +1199,10 @@ jobs:
       # research.md D3): a follow-up questionnaire just posted means the
       # issue is waiting on the requester again; a ready, unblocked outcome
       # means the spec is back to awaiting review. Deterministic, reading
-      # only this step's own outputs above.
+      # only this step's own outputs above. Either flip also clears
+      # stage:stalled: a stall this run recovered from must not keep the
+      # lifecycle reading stalled on the board (Gate 105's stalled-clear
+      # scenarios).
       - name: Flip stage label for clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
@@ -1177,6 +1218,7 @@ jobs:
                 echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
               fi
               gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+              gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
               ;;
             ready)
               if [ "$BLOCKED" != "true" ]; then
@@ -1185,6 +1227,7 @@ jobs:
                   echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 fi
                 gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+                gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
               fi
               ;;
             none|*)
@@ -1261,6 +1304,19 @@ jobs:
               )
             | join("\n")
           ' > "$RUNNER_TEMP/clarify-followup.md"
+
+      # (canonical copy: requester-relay-note; do not condense)
+      # FR-008 (specs/134-maintainer-only-comments): when the issue's author
+      # is not a maintainer, the questions say up front that only a
+      # maintainer's reply is folded in. The paragraph's single home is the
+      # composite (Gate 180).
+      - name: Add the maintainer-relay note for a requester who is not a maintainer
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-requester-relay-note
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          body-file: ${{ runner.temp }}/clarify-followup.md
 
       - name: Announce remaining clarification questions
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'

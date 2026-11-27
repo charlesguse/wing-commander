@@ -1,0 +1,1 @@
+{"note": "Owner decision 2026-11-26 (#890): a stopped round never announces, and withholding it is not a push-failure hand-off.", "input": {"findings": [{"class": "unambiguous-error"}], "push_results": {"fixes_pushed": true}, "freshness": {}, "stopped": true}, "expect": {"push_fixes": true, "post_announcement": false, "move_label": false}, "absent": ["handoff"]}

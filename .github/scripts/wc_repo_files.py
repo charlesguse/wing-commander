@@ -42,10 +42,18 @@ def _git(root, *args):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def repo_files(root=".", within_tree=False):
+def repo_files(root=".", within_tree=False, untracked=False, pathspecs=()):
     """-> sorted repo-root-relative paths of the repository's files.
     `within_tree` also accepts a `root` that is a subdirectory of a working
-    tree, listing git's tracked files under it (paths relative to `root`)."""
+    tree, listing git's tracked files under it (paths relative to `root`).
+    `untracked` adds the untracked files git does not ignore (what `git add
+    -A` would stage), and `pathspecs` limits the listing to git pathspecs,
+    magic included; neither has a walk to fall back on, so outside a git
+    working tree they raise RuntimeError (verify-proof-list.py's tree
+    snapshot, which mirrors `git archive` of those pathspecs)."""
+    args = ["ls-files", "-z"] + (["-co", "--exclude-standard"] if untracked else [])
+    if pathspecs:
+        args += ["--"] + list(pathspecs)
     try:
         top = _git(root, "rev-parse", "--show-toplevel")
         # Only when root IS the top: a fixture directory nested inside some
@@ -53,7 +61,7 @@ def repo_files(root=".", within_tree=False):
         same = os.path.normcase(os.path.realpath(os.fsdecode(top.stdout).strip()))
         if top.returncode == 0 and (
                 within_tree or same == os.path.normcase(os.path.realpath(root))):
-            proc = _git(root, "ls-files", "-z")
+            proc = _git(root, *args)
             if proc.returncode == 0:
                 return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
     except OSError:
@@ -66,6 +74,10 @@ def repo_files(root=".", within_tree=False):
         raise RuntimeError(
             f"repo_files: {root!r} is a git working tree but git could not "
             f"list its tracked files (dubious ownership? set safe.directory)")
+    if untracked or pathspecs:
+        raise RuntimeError(
+            f"repo_files: {root!r} is not a git working tree, and untracked "
+            f"or pathspec listing has no walk to fall back on")
     rels = []
     for dirpath, dirnames, filenames in os.walk(root):
         if ".git" in dirnames:

@@ -87,7 +87,20 @@ def _title(text):
 
 
 def _switch_on(value):
-    return str(value or "").strip().lower() == "true"
+    """The one switch rule (owner decision 2026-11-27, on the Roadmap issue:
+    all switches work the same way): on when the value equals "true"
+    compared case-insensitively, with no trimming. That is GitHub's own
+    `vars.X == 'true'`, which most switches are read by, so "True" and
+    "TRUE" are on and "true ", " true", "yes" and "1" are off. The
+    watch-guard composite, wc_feature_health.collect and Board status read
+    switches through this; verify-board-status.py runs every reader against
+    it."""
+    return str(value or "").lower() == "true"
+
+
+def switch_set(switches, key):
+    """Whether switch `key` is on, by the one switch rule."""
+    return _switch_on((switches or {}).get(key))
 
 
 def lifecycle_wait(issue, prs, switches):
@@ -117,8 +130,8 @@ def lifecycle_wait(issue, prs, switches):
     elif stage in PIPELINE_STAGES:
         who, what = "pipeline", PIPELINE_STAGES[stage]
     elif stage == "stage:review":
-        gate_merges = (_switch_on(switches.get("lifecycle_auto_merge"))
-                       and not _switch_on(switches.get("review_gate_paused")))
+        gate_merges = (switch_set(switches, "lifecycle_auto_merge")
+                       and not switch_set(switches, "review_gate_paused"))
         if gate_merges:
             who, what = "pipeline", "final PR {0} with the lifecycle review gate".format(pr_ref or "(none open)")
         else:
@@ -164,7 +177,7 @@ def classify(snap):
             # WING_COMMANDER_AUTO_RELEASE_PAUSED is on auto-release.yml's
             # detect job never runs, so nothing closes it until unpaused.
             what = "fix the release failure; auto-release closes this once every mode it records has passed"
-            if _switch_on(switches.get("auto_release_paused")):
+            if switch_set(switches, "auto_release_paused"):
                 what += " -- but auto-release is paused, so it cannot close this until the pause is lifted"
             owner.append((ref, what, age))
         elif "spec-proposal" in labels:
@@ -209,7 +222,7 @@ def render(snap):
         rel_text = "none"
 
     def state(key, on_text, off_text):
-        return on_text if _switch_on(switches.get(key)) else off_text
+        return on_text if switch_set(switches, key) else off_text
 
     lines.append("- **main:** {0}".format(ci_text))
     lines.append("- **last release:** {0}; auto-release {1}".format(
@@ -511,8 +524,7 @@ def current_lines(body):
 
 def snapshot(repo, switches):
     item_jq = ('.[] | {number, title, created_at, pull_request: (.pull_request != null), '
-               'labels: [.labels[].name], body: (.body // ""), user_type: .user.type, '
-               'author: .user.login}')
+               'labels: [.labels[].name], body: (.body // ""), user_type: .user.type}')
     items = _gh_lines("repos/{0}/issues?state=open&per_page=100".format(repo), item_jq)
     issues = [i for i in items if not i["pull_request"]]
     prs = [i for i in items if i["pull_request"]]
@@ -531,17 +543,15 @@ def snapshot(repo, switches):
             roadmap = issue["number"]
     for issue in issues:
         if "stage:clarify" in issue["labels"]:
-            # Who spoke last among the bot (its questions), a maintainer
-            # and the issue's own author (the answers). A passer-by's
-            # comment on this public repository answers nothing.
+            # Who spoke last between the bot (its questions) and a
+            # maintainer (the answers; spec 134: clarify acts on a maintainer's
+            # reply only). Anyone else's comment answers nothing.
             speakers = _gh_lines("repos/{0}/issues/{1}/comments?per_page=100".format(
                 repo, issue["number"]),
-                '.[] | select(.user.type == "Bot" or .user.login == "{0}" or '
-                '(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))) | .user.type'.format(
-                    issue.get("author", "")))
+                '.[] | select(.user.type == "Bot" or '
+                '(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))) | .user.type')
             issue["last_comment_by_bot"] = bool(speakers) and speakers[-1] == "Bot"
         issue.pop("body", None)
-        issue.pop("author", None)
     # branch=main also matches a fork PR whose head branch is its own main,
     # so the first run on this repository's main that is not a PR run.
     runs = _gh_json("repos/{0}/actions/workflows/{1}/runs?branch=main&per_page=20".format(
@@ -620,7 +630,7 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
     section's reader) and `stale_keeps_section` serve feature health."""
     gh_obj = gh_obj or _gh_obj
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    paused = _switch_on(switches.get(switch_key))
+    paused = switch_set(switches, switch_key)
     last_good = "unknown"
     try:
         default = gh_obj("repos/{0}".format(repo))["default_branch"]

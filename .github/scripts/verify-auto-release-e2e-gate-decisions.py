@@ -85,41 +85,42 @@ CLARIFY_DECIDE_SCENARIOS = [
     dict(name="no marker comment at all: none",
          comments=[comment("c1", "wing-commander[bot]", "1", "2026-01-01T00:00:00Z",
                             body="hello", user_type="Bot")],
-         author_id="999", rounds="0", expect_head="none"),
+         rounds="0", expect_head="none"),
     dict(name="marker open, round 0: reply with the exact prepared answer",
          comments=[marker("c1", "2026-01-01T00:00:00Z")],
-         author_id="999", rounds="0", expect_head="reply",
+         rounds="0", expect_head="reply",
          expect_body=PREPARED_ANSWER),
     dict(name="marker open (remaining-questions wording), round 2: still replies",
          comments=[marker("c1", "2026-01-01T00:00:00Z", body=REMAINING_MARKER)],
-         author_id="999", rounds="2", expect_head="reply",
+         rounds="2", expect_head="reply",
          expect_body=PREPARED_ANSWER),
     dict(name="marker open, round 3 (bound exhausted): exhausted",
          comments=[marker("c1", "2026-01-01T00:00:00Z")],
-         author_id="999", rounds="3", expect_head="exhausted"),
+         rounds="3", expect_head="exhausted"),
     dict(name="marker open, a qualifying (COLLABORATOR) reply postdates it: wait",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "a-maintainer", "42", "2026-01-01T00:05:00Z",
                            association="COLLABORATOR")],
-         author_id="999", rounds="1", expect_head="wait"),
-    dict(name="marker open, the issue's own author (by id, NONE association) replies: wait",
+         rounds="1", expect_head="wait"),
+    dict(name="marker open, the issue's own author with NONE association replies: still "
+              "unanswered (reply) -- only a maintainer's reply qualifies (spec 134)",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "the-reporter", ISSUE_AUTHOR_ID, "2026-01-01T00:05:00Z",
                            association="NONE")],
-         author_id=ISSUE_AUTHOR_ID, rounds="0", expect_head="wait"),
+         rounds="0", expect_head="reply"),
     dict(name="marker open, a bot comment postdates it: still unanswered (reply) -- "
               "the original deadlock this feature closes",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "metrics-bot[bot]", "9", "2026-01-01T00:05:00Z",
                            body="rollup", user_type="Bot", association="NONE")],
-         author_id="999", rounds="0", expect_head="reply",
+         rounds="0", expect_head="reply",
          expect_body=PREPARED_ANSWER),
     dict(name="marker open, a non-qualifying human (NONE, not the issue author) postdates it: "
               "still unanswered (reply)",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "a-random-passerby", "777", "2026-01-01T00:05:00Z",
                            association="NONE")],
-         author_id="999", rounds="0", expect_head="reply",
+         rounds="0", expect_head="reply",
          expect_body=PREPARED_ANSWER),
     dict(name="marker open, a Bot account with a qualifying (COLLABORATOR) association "
               "postdates it: still unanswered (reply) -- the Bot check, not merely "
@@ -127,30 +128,30 @@ CLARIFY_DECIDE_SCENARIOS = [
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "wing-commander[bot]", "1", "2026-01-01T00:05:00Z",
                            user_type="Bot", association="COLLABORATOR")],
-         author_id="999", rounds="0", expect_head="reply",
+         rounds="0", expect_head="reply",
          expect_body=PREPARED_ANSWER),
 ]
 
 CLARIFY_SATISFIED_SCENARIOS = [
     dict(name="no markers ever: ok (vacuous)",
          comments=[comment("c1", "someone", "2", "2026-01-01T00:00:00Z", body="hi")],
-         author_id="999", expect="ok"),
+         expect="ok"),
     dict(name="one marker, one qualifying reply after: ok",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "a-maintainer", "42", "2026-01-01T00:05:00Z",
                            association="MEMBER")],
-         author_id="999", expect="ok"),
+         expect="ok"),
     dict(name="one marker, only a non-qualifying reply after: unsatisfied",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "metrics-bot[bot]", "9", "2026-01-01T00:05:00Z",
                            user_type="Bot", association="NONE")],
-         author_id="999", expect="unsatisfied"),
+         expect="unsatisfied"),
     dict(name="two markers, only the first answered: unsatisfied",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "a-maintainer", "42", "2026-01-01T00:05:00Z",
                            association="OWNER"),
                    marker("c3", "2026-01-01T00:10:00Z", body=REMAINING_MARKER)],
-         author_id="999", expect="unsatisfied"),
+         expect="unsatisfied"),
     dict(name="two markers, both answered: ok",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "a-maintainer", "42", "2026-01-01T00:05:00Z",
@@ -158,7 +159,7 @@ CLARIFY_SATISFIED_SCENARIOS = [
                    marker("c3", "2026-01-01T00:10:00Z", body=REMAINING_MARKER),
                    comment("c4", "a-maintainer", "42", "2026-01-01T00:15:00Z",
                            association="OWNER")],
-         author_id="999", expect="ok"),
+         expect="ok"),
 ]
 
 CLARIFY_MARKERS_SCENARIOS = [
@@ -175,7 +176,7 @@ def run_clarify_suite(script_path):
     for sc in CLARIFY_DECIDE_SCENARIOS:
         tag = f"[clarify decide: {sc['name']}]"
         comments_json = json.dumps(sc["comments"])
-        rc, out, err = run_script(script_path, ["decide", sc["author_id"], sc["rounds"]], comments_json)
+        rc, out, err = run_script(script_path, ["decide", sc["rounds"]], comments_json)
         if rc != 0:
             failures.append(f"{tag} script exited {rc}: {out}{err}")
             continue
@@ -191,7 +192,7 @@ def run_clarify_suite(script_path):
     for sc in CLARIFY_SATISFIED_SCENARIOS:
         tag = f"[clarify satisfied: {sc['name']}]"
         comments_json = json.dumps(sc["comments"])
-        rc, out, err = run_script(script_path, ["satisfied", sc["author_id"]], comments_json)
+        rc, out, err = run_script(script_path, ["satisfied"], comments_json)
         if rc != 0:
             failures.append(f"{tag} script exited {rc}: {out}{err}")
             continue
@@ -424,10 +425,6 @@ POLL_CLAMP_ENV = {
 # not a silently-green pass.
 POLL_CLAMP_STUB_GH = '''#!/usr/bin/env bash
 case "$*" in
-  "api repos/wc-fixture/test-repo/issues/42 --jq .user.id")
-    printf '1\\n'
-    exit 0
-    ;;
   "api repos/wc-fixture/test-repo/issues/42/comments --paginate --jq"*)
     exit 0
     ;;

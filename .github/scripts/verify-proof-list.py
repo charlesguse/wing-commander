@@ -246,7 +246,8 @@ def check_failed_reads():
          [("*workflows/wrap.yml/runs*", ("404", "Not Found")),
           ("*--paginate*actions/runs?*", _PAGES_OF_NONE),
           ("*actions/runs?*", '{"total_count": 2000}')],
-         lambda c: c.workflow_runs(runs), pl.ReadError, "a deleted workflow's runs cannot be read completely"),
+         lambda c: c.workflow_runs(runs), pl.ReadError,
+         "wrap.yml (deleted; the repository's runs): more than 1000 runs in one day"),
     ]
     old_path, saved_gh = os.environ["PATH"], pl.gh_text
     for label, arms, act, want, text in cases:
@@ -622,6 +623,10 @@ def check_closed_by_commit(fx):
         problems.append("closing_targets: {0}, expected [3, 4]".format(pl.closing_targets(
             "Resolves: GH-3, closes https://github.com/Own/Repo/issues/4 and "
             "https://github.com/other/repo/issues/5", "own/repo")))
+    # #1314: the decoding is closing_keyword_refs(); an owner spelled like
+    # `gh-` or `http` is another repository's slug, not a GH-N or a URL.
+    if pl.closing_targets("Fixes gh-tools/x#6, fixes httpx/y#7, fixes #8", "own/repo") != [8]:
+        problems.append("closing_targets: another repository's gh-/http-prefixed slug is not dropped")
     return problems
 
 
@@ -941,36 +946,118 @@ def check_budget():
     return problems
 
 
+def _tree_snapshot(root, dest):
+    """Copy the files `git archive` would carry for TREE_PATHSPECS -- tracked
+    and untracked-but-not-ignored, so a local edit is still scanned -- from
+    the working tree at `root` into `dest`. The tree-cost check scans this
+    fixed copy, never the live tree: under `run-local-gates.py --jobs N` other
+    gates write ignored files into it mid-scan (the byte cache Python writes
+    in .github/actions/_shared/__pycache__ when a gate imports a shared
+    script), which a composite directory's walk picked up between two scans.
+    A file that vanishes while it is copied is left out of the copy."""
+    import shutil
+    from wc_repo_files import repo_files
+    for rel in sorted(set(repo_files(root, untracked=True, pathspecs=pl.TREE_PATHSPECS))):
+        target = os.path.join(dest, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        try:
+            shutil.copy2(os.path.join(root, rel), target, follow_symlinks=False)
+        except (FileNotFoundError, IsADirectoryError):
+            continue
+
+
+def check_tree_snapshot():
+    """_tree_snapshot copies what the archive would carry, as it stood when
+    copied: local edits and new files yes; ignored files and the scripts'
+    test and fixture subdirectories no; a later write to the live tree
+    never reaches the copy."""
+    import subprocess
+    import tempfile
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root, dest = os.path.join(tmp, "repo"), os.path.join(tmp, "copy")
+        files = {".gitignore": "__pycache__/\n",
+                 ".github/workflows/a.yml": "on: push\n",
+                 ".github/actions/x/action.yml": "runs: {}\n",
+                 ".github/scripts/board_x.py": "import os\n",
+                 ".github/scripts/tests/t.py": "x\n"}
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        subprocess.run(["git", "init", "-q", root], check=True)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        for rel, text in ((".github/actions/x/new.sh", "echo\n"),
+                          (".github/actions/x/__pycache__/m.pyc", "pyc"),
+                          (".github/workflows/a.yml", "on: pull_request\n")):
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        _tree_snapshot(root, dest)
+        with open(os.path.join(root, ".github/workflows/a.yml"), "w", encoding="utf-8") as fh:
+            fh.write("on: written after the copy\n")
+        got = sorted(os.path.relpath(os.path.join(d, n), dest).replace(os.sep, "/")
+                     for d, _ds, ns in os.walk(dest) for n in ns)
+        want = [".github/actions/x/action.yml", ".github/actions/x/new.sh",
+                ".github/scripts/board_x.py", ".github/workflows/a.yml"]
+        if got != want:
+            problems.append("tree snapshot: copied {0}, expected {1}".format(got, want))
+        elif open(os.path.join(dest, ".github/workflows/a.yml"), encoding="utf-8").read() != "on: pull_request\n":
+            problems.append("tree snapshot: the copy does not hold the working tree as it stood when copied")
+        # The copy is no git working tree: a pathspec listing there has no
+        # walk to fall back on, so it raises instead of listing everything.
+        from wc_repo_files import repo_files
+        try:
+            repo_files(dest, untracked=True, pathspecs=pl.TREE_PATHSPECS)
+            problems.append("tree snapshot: a pathspec listing outside a git tree walked the disk")
+        except RuntimeError:
+            pass
+    return problems
+
+
 def check_tree_cost():
     """A merge's tree is scanned once per merge in the window (87 at the
     2026-11-26 timeouts), so its cost bounds the build: an unchanged
     workflow text is parsed once per build, a path absent from a text never
     reaches the mention regex, and the archive leaves out the tests and
-    fixtures the scan never reads."""
+    fixtures the scan never reads. The scans read a fixed copy of the tree
+    (_tree_snapshot), so a gate writing to the live tree in parallel cannot
+    make two scans differ, and nothing the scan reads is a file git ignores."""
     import board_prove as bp
+    import subprocess
+    import tempfile
     problems = []
     parses = []
     real = bp.yaml.safe_load
+    repo = os.path.join(HERE, "..", "..")
 
     def counting(text, *a, **k):
         parses.append(1)
         return real(text, *a, **k)
-    bp.yaml.safe_load = counting
     previous = os.getcwd()
-    try:
-        os.chdir(os.path.join(HERE, "..", ".."))
-        first = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
-        before = len(parses)
-        again = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
-        bp.workflow_triggers(".github/workflows/wing-commander-proof-list.yml")
-        if len(parses) != before:
-            problems.append("tree cost: {0} unchanged workflow texts were parsed again".format(
-                len(parses) - before))
-        if first != again:
-            problems.append("tree cost: a second scan of the same tree differs from the first")
-    finally:
-        bp.yaml.safe_load = real
-        os.chdir(previous)
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree_snapshot(repo, tmp)
+        bp.yaml.safe_load = counting
+        try:
+            os.chdir(tmp)
+            first = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+            before = len(parses)
+            again = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+            bp.workflow_triggers(".github/workflows/wing-commander-proof-list.yml")
+            if len(parses) != before:
+                problems.append("tree cost: {0} unchanged workflow texts were parsed again".format(
+                    len(parses) - before))
+            if first != again:
+                problems.append("tree cost: a second scan of the same tree differs from the first")
+        finally:
+            bp.yaml.safe_load = real
+            os.chdir(previous)
+    scanned = sorted(set(first[1]) | set(p for refs in first[1].values() for p in refs))
+    ignored = subprocess.run(["git", "check-ignore", "--no-index", "--stdin"], input="\n".join(scanned),
+                             capture_output=True, text=True, cwd=repo).stdout.split()
+    if ignored:
+        problems.append("tree cost: the scan read files git ignores, which the archive never carries: "
+                        "{0}".format(", ".join(ignored[:5])))
 
     class Counting:
         def __init__(self):
@@ -1040,6 +1127,434 @@ def check_run_list_cost():
             len(wide), len(counts), wide[0]))
     if any("per_page=100" not in q for q in paged):
         problems.append("run list cost: a paged read is not at per_page=100")
+    return problems
+
+
+def check_deleted_workflow_runs():
+    """#889: a workflow gone from the default branch is read from the
+    repository's run list, sliced by day as the main path is (the repository
+    passes 1,000 runs in any window here), and a run whose `path` carries an
+    `@refs/...` suffix is still that workflow's run."""
+    problems = []
+    gone = ".github/workflows/wrap.yml"
+
+    def api(path, paginate):
+        if "/workflows/wrap.yml/" in path:
+            raise pl.NotFound("gh api {0}: (HTTP 404)".format(path))
+        if not paginate:
+            return {"total_count": 1500 if "created=%3E%3D" in path else 40, "workflow_runs": []}
+        if "created=2026-10-10T12:00:00Z.." not in path:
+            return []
+        return [{"id": 1, "path": gone + "@refs/heads/main"}, {"id": 2, "path": gone},
+                {"id": 3, "path": ".github/workflows/other.yml"},
+                {"id": 4, "path": gone + ".bak"}]
+    with _FakeReads(api=api) as fake:
+        try:
+            got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").workflow_runs(gone)
+        except pl.ReadError as exc:
+            return ["deleted workflow: the repository's run list over the cap failed the read: {0}".format(exc)]
+    ids = sorted(r["id"] for r in got)
+    if ids != [1, 2]:
+        problems.append("deleted workflow: kept runs {0}, expected [1, 2] (the @refs suffix "
+                        "stripped, other paths dropped)".format(ids))
+    days = [c[1] for c in fake.calls if c[2] and "/actions/runs?" in c[1]]
+    if len(days) != 31:
+        problems.append("deleted workflow: {0} day-sliced paged reads, expected 31".format(len(days)))
+    return problems
+
+
+def check_progress():
+    """#889: a build logs each phase, and every PROGRESS_EVERY merges, with
+    elapsed time and calls so far, so a slow build's log says where the time
+    went; it is silent until main() turns it on, and main() turns it off."""
+    import contextlib
+    import io
+    import re
+    problems = []
+    shape = re.compile(r"^wc_proof_list: .+ \(\d+\.\d s; \d+ gh and (\d+) git calls so far\)$")
+    quiet = io.StringIO()
+    with contextlib.redirect_stderr(quiet), contextlib.redirect_stdout(quiet):
+        pl.progress("not started")
+    if quiet.getvalue():
+        problems.append("progress: printed before main() turned it on: {0!r}".format(quiet.getvalue()))
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        for n in range(12):
+            _commit(repo.root, {".github/workflows/x.yml": "# {0}\n".format(n)},
+                    "2026-11-0{0}T{1:02d}:00:00 +0000".format(1 + n % 9, n))
+
+        def gh(args):
+            if "rate_limit" in args:
+                return "5000\n"
+            raise AssertionError("unexpected gh " + " ".join(args))
+        stream = io.StringIO()
+        pl.start_progress(stream)
+        try:
+            with _FakeReads(api=lambda path, paginate: [], gh=gh, tree=lambda s, c: []):
+                pl.collect("own/repo", "2026-11-10T12:00:00Z")
+        except (pl.ReadError, AssertionError) as exc:
+            return ["progress: the faked build failed: {0}".format(exc)]
+        finally:
+            pl._progress["stream"] = None
+    lines = stream.getvalue().splitlines()
+    for want in ("start: 5000 API requests remain", "entries: 10 of 12 merges read",
+                 "entries: 12 merges read, 12 need a run", "comments: 0 threads read",
+                 "runs: 0 runs of 0 reaching workflows read", "named runs: 0 read"):
+        if not any(line.startswith("wc_proof_list: " + want + " (") for line in lines):
+            problems.append("progress: no {0!r} line in {1}".format(want, lines))
+    bad = [line for line in lines if not shape.match(line)]
+    if bad or not lines:
+        problems.append("progress: lines without elapsed time and call counts: {0}".format(bad or lines))
+    elif int(shape.match(lines[-1]).group(1)) < 12:
+        # At least one per merge: each merge's changed-path listing is a git
+        # call, made by diff_name_list outside _subprocess.
+        problems.append("progress: {0} git calls counted for 12 merges; each merge's "
+                        "changed-path listing was not counted".format(shape.match(lines[-1]).group(1)))
+    saved = pl.collect
+    pl.collect = lambda *a, **k: (_ for _ in ()).throw(pl.ReadError("stop"))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.main(["build", "--repository", "own/repo", "--out", os.devnull])
+    finally:
+        pl.collect = saved
+    if pl._progress["stream"] is not None:
+        problems.append("progress: main() left the progress lines on")
+    return problems
+
+
+# Research D6 "Reused homes": wc_proof_list.py keeps no copy of these. Each
+# seed is a copy the scan must catch when appended to the real source.
+FORBIDDEN_HOME_SEEDS = (
+    ("a `Board item:` pattern", 'BOARD_ITEM_RE = re.compile(r"Board item: #(\\d+)")\n'),
+    ("a closing-keyword pattern",
+     'CLOSES_RE = re.compile(r"(?i)\\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\\s+#(\\d+)")\n'),
+    ("a run-link pattern", 'RUN_RE = re.compile(r"https://github\\.com/([^/]+/[^/]+)/actions/runs/(\\d+)")\n'),
+    ("the board item marker's name", 'MARKER = "<!-- wing-commander-board-item: "\n'),
+    ("a UTF-16 counter", 'def units(text):\n    return len(text.encode("utf-16-le")) // 2\n'),
+    ("a UTF-16 counter", 'def units(text):\n    return sum(2 if ord(c) > 0xFFFF else 1 for c in text)\n'),
+    ("a `git diff --name-only` call", 'def changed(a, b):\n    return git("diff", "--name-only", a, b)\n'),
+    ("a `git diff --name-only` call", 'CHANGED = "git diff --name-only {0} {1}"\n'),
+    ("a call to `_gh_json`", 'def read(path):\n    return wc_board_status._gh_json(path)\n'),
+    ("a call to `_gh_json`", 'from wc_board_status import _gh_json\n'),
+)
+_REGEX_CHARS = set("\\([|+*^$")
+
+
+def forbidden_home_problems(source):
+    """What `source` defines that research D6 puts in another home: a
+    `Board item:`, closing-keyword or run-link pattern, the board item
+    marker's name, a UTF-16 counter, a `git diff --name-only` call or a
+    `_gh_json` call. Docstrings are prose and are not read."""
+    import ast
+    import re
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+    closing = re.compile(r"(?i)\b(?:fix|close|resolve)")
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and id(node) not in docstrings:
+            value = node.value
+            if isinstance(value, str):
+                regexy = bool(_REGEX_CHARS & set(value)) or "#" in value
+                if "board item" in value.lower():
+                    found.add("a `Board item:` pattern")
+                if closing.search(value) and regexy:
+                    found.add("a closing-keyword pattern")
+                if "actions/runs" in value and bool(_REGEX_CHARS & set(value)):
+                    found.add("a run-link pattern")
+                if "wing-commander-board-item" in value:
+                    found.add("the board item marker's name")
+                if re.search(r"\bdiff\s+--name-only\b", value):
+                    found.add("a `git diff --name-only` call")
+            elif isinstance(value, int) and not isinstance(value, bool) and value in (0xFFFF, 0x10000):
+                found.add("a UTF-16 counter")
+        elif isinstance(node, (ast.Call, ast.List, ast.Tuple)):
+            items = node.args if isinstance(node, ast.Call) else node.elts
+            consts = {a.value for a in items if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+            if "diff" in consts and "--name-only" in consts:
+                found.add("a `git diff --name-only` call")
+            # An encoding to UTF-16 (a message naming "UTF-16 units" is prose).
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("encode", "decode")
+                    and any(re.search(r"(?i)utf[-_]?16", c) for c in consts)):
+                found.add("a UTF-16 counter")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and re.search(r"(?i)utf_?16", node.name):
+            found.add("a UTF-16 counter")
+        elif isinstance(node, ast.Name) and node.id == "_gh_json":
+            found.add("a call to `_gh_json`")
+        elif isinstance(node, ast.Attribute) and node.attr == "_gh_json":
+            found.add("a call to `_gh_json`")
+        elif isinstance(node, ast.alias) and node.name == "_gh_json":
+            found.add("a call to `_gh_json`")
+    return sorted(found)
+
+
+def check_forbidden_homes():
+    """Research D6: wc_proof_list.py defines none of the patterns, counters or
+    calls that have a home elsewhere; one seeded copy of each is caught."""
+    with open(os.path.join(HERE, "wc_proof_list.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    problems = ["wc_proof_list.py defines {0}; D6 puts it in its one home".format(what)
+                for what in forbidden_home_problems(source)]
+    for what, seed in FORBIDDEN_HOME_SEEDS:
+        if what not in forbidden_home_problems(source + "\n\n" + seed):
+            problems.append("forbidden-home fixture: a seeded copy of {0} was not caught: {1!r}".format(
+                what, seed.strip()))
+    return problems
+
+
+# -- review coverage (#889, found by the code review of #1154) ----------------
+# Each check below drives one branch of wc_proof_list.py that no case reached;
+# each fails when that branch is removed or its boundary moved.
+def check_rebase_merge():
+    """Collector.entries: a rebase merge leaves only its last commit as the
+    PR's merge_commit_sha, so an earlier commit takes the one merged PR the
+    commit lists; two merged PRs, or none merged, leave it a direct push."""
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"docs/a.md": "a\n"}, "2026-11-01T00:00:00 +0000")
+        merged = {"number": 77, "merge_commit_sha": "f" * 40, "merged_at": "2026-11-01T00:05:00Z"}
+        cases = [
+            ("the one merged PR of a rebase-merged commit", [merged, {"number": 78, "merged_at": None}], 77),
+            ("two merged PRs listing the commit", [merged, dict(merged, number=79)], None),
+            ("no merged PR listing the commit", [dict(merged, merged_at=None)], None),
+            ("the PR whose merge commit it is wins", [merged, dict(merged, number=80, merge_commit_sha=sha)], 80),
+        ]
+        view = {"title": "x", "headRefName": "fix/x", "body": "", "closingIssuesReferences": []}
+        for label, pulls, want in cases:
+            def api(path, paginate, pulls=pulls):
+                if path.endswith("/commits/{0}/pulls".format(sha)):
+                    return pulls
+                raise AssertionError("unexpected read " + path)
+            with _FakeReads(api=api, gh=lambda args: json.dumps(view), tree=lambda s, c: []):
+                try:
+                    entries = pl.Collector("own/repo", "2026-11-10T12:00:00Z").entries()
+                except (pl.ReadError, AssertionError) as exc:
+                    problems.append("rebase merge: {0}: the read failed: {1}".format(label, exc))
+                    continue
+            got = entries[0]["pr"] if len(entries) == 1 else entries
+            if got != want:
+                problems.append("rebase merge: {0}: PR {1!r}, expected {2!r}".format(label, got, want))
+    return problems
+
+
+def check_run_ancestry_skip():
+    """Collector.run_record: a run that started at or before a merge cannot
+    contain it, so no ancestry check is made and the run does not count;
+    a run started after it is checked."""
+    problems = []
+    entry = {"sha": "e1", "merged_at": "2026-11-01T00:00:00Z"}
+    saved = (pl.is_ancestor, pl.commit_present)
+    for started, want_calls in (("2026-10-31T23:59:59Z", 0), ("2026-11-01T00:00:00Z", 0),
+                                ("2026-11-01T00:00:01Z", 1)):
+        calls = []
+        pl.is_ancestor = lambda a, d, calls=calls: calls.append((a, d)) or True
+        pl.commit_present = lambda sha: True
+        try:
+            rec = pl.Collector("own/repo", "2026-11-10T12:00:00Z").run_record(
+                {"id": 1, "head_sha": "h1", "path": "p", "run_started_at": started}, [entry])
+        finally:
+            pl.is_ancestor, pl.commit_present = saved
+        if len(calls) != want_calls or (rec["contains"] == ["e1"]) != bool(want_calls):
+            problems.append("run ancestry: a run started {0} for a merge at {1} made {2} ancestry "
+                            "check(s) and contains {3}; expected {4}".format(
+                                started, entry["merged_at"], len(calls), rec["contains"], want_calls))
+    return problems
+
+
+def check_capture_clip():
+    """capture(): the corpus keeps what was known at `as_of` -- a merge, a
+    comment, a run or a named run at or before it, or with no time -- and
+    drops what came after."""
+    problems = []
+    as_of = "2026-11-16T12:00:00Z"
+    at, after = as_of, "2026-11-16T12:00:01Z"
+    bundle = {"repository": "own/repo", "built_at": "2026-11-17T00:00:00Z",
+              "entries": [{"sha": "k1", "merged_at": at}, {"sha": "d1", "merged_at": after}, {"sha": "k2"}],
+              "named_runs": {"own/repo/1": {"run_started_at": at}, "own/repo/2": {"run_started_at": after}},
+              "comments": {"k1": [{"comment_id": 1, "posted_at": at, "body": "x"},
+                                  {"comment_id": 2, "posted_at": after, "body": "x"}]},
+              "runs": {"w.yml": [{"run_id": 1, "run_started_at": at}, {"run_id": 2, "run_started_at": after}]}}
+    cap = pl.capture(bundle, as_of)
+    got = ([e["sha"] for e in cap["entries"]], sorted(cap["named_runs"]),
+           [c["comment_id"] for c in cap["comments"]["k1"]], [r["run_id"] for r in cap["runs"]["w.yml"]])
+    want = (["k1", "k2"], ["own/repo/1"], [1], [1])
+    if got != want:
+        problems.append("capture: kept {0} (entries, named runs, comments, runs), expected {1}".format(got, want))
+    return problems
+
+
+def check_git_failed_reads():
+    """FR-013: a shallow checkout, a `git archive` that fails, a
+    `git merge-base` that fails and a lifecycle spec-meta.json that does not
+    read each fail the build with their own ReadError, never an empty list."""
+    import subprocess
+    import tempfile
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"b.txt": "b\n", "specs/124-own/spec-meta.json": "not json\n",
+                                  "specs/125-null/spec-meta.json": '{"issue": null}\n'},
+                      "2026-11-01T00:00:00 +0000")
+        missing = "0123456789" * 4
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        cases = [
+            ("a git archive of a missing commit", lambda: pl.tree_reaching(missing, ["b.txt"]), "git archive"),
+            ("a merge-base of a missing commit", lambda: pl.is_ancestor(missing, sha), "git merge-base failed"),
+            ("a spec-meta.json that is not JSON",
+             lambda: col.lifecycle_issue(sha, "Finalize: own (#5)", "spec/124-own"), "unreadable at"),
+            ("a spec-meta.json with no issue",
+             lambda: col.lifecycle_issue(sha, "Finalize: own (#5)", "spec/125-null"), "unreadable at"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            shallow = os.path.join(tmp, "shallow")
+            subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + repo.root.replace(os.sep, "/"),
+                            shallow], check=True, capture_output=True)
+            previous = os.getcwd()
+
+            def in_shallow():
+                os.chdir(shallow)
+                try:
+                    return pl.first_parent_commits()
+                finally:
+                    os.chdir(previous)
+            cases.append(("a shallow checkout", in_shallow, "the checkout is shallow"))
+            for label, act, text in cases:
+                try:
+                    got = act()
+                    problems.append("git reads: {0} gave {1!r}, expected a failed read".format(label, got))
+                except Exception as exc:  # noqa: BLE001 - the type and message are the test
+                    if not isinstance(exc, pl.ReadError) or text not in str(exc):
+                        problems.append("git reads: {0} failed with {1}: {2!r}, not a failed read "
+                                        "saying {3!r}".format(label, type(exc).__name__, str(exc)[:160], text))
+    return problems
+
+
+def check_reusable_only_filter():
+    """tree_reaching (research D4): a workflow_call-only workflow is dropped
+    when an in-repository caller that reaches the same path is listed, and
+    kept, marked as having no runs of its own, when none is."""
+    problems = []
+    with _InRepo() as repo:
+        sha = _commit(repo.root, {
+            ".github/workflows/caller.yml": ("on: {push: {}}\njobs:\n  j:\n"
+                                             "    uses: ./.github/workflows/called.yml\n"),
+            ".github/workflows/called.yml": "on: {workflow_call: {}}\njobs: {}\n",
+            ".github/workflows/orphan.yml": "on: {workflow_call: {}}\njobs: {}\n"},
+            "2026-11-01T00:00:00 +0000")
+        try:
+            called = {w["path"]: w for w in pl.tree_reaching(sha, [".github/workflows/called.yml"])}
+            orphan = {w["path"]: w for w in pl.tree_reaching(sha, [".github/workflows/orphan.yml"])}
+        except (pl.ReadError, ValueError) as exc:
+            return ["reusable-only: the tree read failed: {0}".format(exc)]
+    if sorted(called) != [".github/workflows/caller.yml"]:
+        problems.append("reusable-only: a called workflow with a listed caller gave {0}, expected the "
+                        "caller only".format(sorted(called)))
+    got = orphan.get(".github/workflows/orphan.yml") or {}
+    if sorted(orphan) != [".github/workflows/orphan.yml"] or got.get("runs_of_its_own") is not False:
+        problems.append("reusable-only: a workflow_call-only workflow with no caller gave {0}, expected it "
+                        "kept with no runs of its own".format(orphan))
+    return problems
+
+
+def check_window_edges(fx):
+    """research D10 and FR-012 at their boundaries: a merge exactly at the
+    window start is aged out, not in the window; one exactly AGED_OUT_HOURS
+    before it is neither; one at the end is in. A comment posted, a named
+    run started or an unresolvable run started exactly at the merge does
+    not count and is not set apart."""
+    problems = []
+    start, end, repo = fx["window"]["start"], fx["window"]["end"], fx["repository"]
+    day = pl.parse_time(start) - pl.datetime.timedelta(hours=pl.AGED_OUT_HOURS)
+    edges = [("s_at_start", start), ("s_day_before", pl.utc_text(day)),
+             ("s_in_day", pl.utc_text(day + pl.datetime.timedelta(seconds=1))), ("s_at_end", end)]
+    entries = [make_entry(fx["base_entry"], {"sha": sha, "pr": 60 + i, "merged_at": when, "named_issues": []})
+               for i, (sha, when) in enumerate(edges)]
+    states, aged = pl.classify_all(entries, {}, {}, {}, repo, start, end)
+    if sorted(states) != ["s_at_end"] or aged != 2:
+        problems.append("window edges: in the window {0}, aged out {1}; expected only the merge at the end, "
+                        "and the merges at the start and one second into the aged-out day".format(sorted(states), aged))
+    entry = make_entry(fx["base_entry"])
+    merged = entry["merged_at"]
+    at_merge = dict(fx["base_comment"], posted_at=merged)
+    if pl.classify(entry, {}, [at_merge], {"own/repo/500": dict(fx["base_named"])}, set(), repo) == pl.STATE_ON_RECORD:
+        problems.append("window edges: a comment posted exactly at the merge counted")
+    named = {"own/repo/500": dict(fx["base_named"], run_started_at=merged)}
+    if pl.classify(entry, {}, [dict(fx["base_comment"])], named, set(), repo) == pl.STATE_ON_RECORD:
+        problems.append("window edges: a named run started exactly at the merge counted")
+    runs = {".github/workflows/wrap.yml": [dict(fx["base_run"], run_started_at=merged, resolvable=False,
+                                                contains=[])]}
+    if pl.set_apart([entry], runs, {}, {}, repo, start, end) != 0:
+        problems.append("window edges: an unresolvable run started exactly at the merge was set apart")
+    return problems
+
+
+def check_report_edges(fx):
+    """FR-020: the earliest and latest links are the first and last run by
+    start time, whatever order the runs were read in; the size limit is
+    applied to the names-only form, so a report whose full form is over it
+    still builds when the names-only form fits."""
+    from board_spec_request_body import utf16_len
+    problems = []
+    entry = make_entry(fx["base_entry"])
+    url = "https://github.com/own/repo/actions/runs/{0}".format
+    order = [("2026-11-05T00:00:00Z", 2), ("2026-11-02T00:00:00Z", 1), ("2026-11-09T00:00:00Z", 3),
+             ("2026-11-04T00:00:00Z", 4)]
+    runs = {".github/workflows/wrap.yml": [dict(fx["base_run"], run_id=n, run_started_at=when, html_url=url(n),
+                                                event="push", conclusion="success") for when, n in order]}
+    args = ([entry], runs, {}, {}, fx["repository"], "2026-11-10T12:00:00Z", "h")
+    huge = 10 ** 6
+    doc = pl.assemble_report(*args, huge, utf16_len)
+    if "[first]({0}), [last]({1})".format(url(1), url(3)) not in doc["full"]:
+        problems.append("report: the earliest and latest links are not runs 1 and 3: {0!r}".format(
+            [line for line in doc["full"].splitlines() if "first" in line]))
+    fits = utf16_len(doc["names_only"])
+    if utf16_len(doc["full"]) <= fits:
+        return problems + ["report fixture: the full form is not longer than the names-only form"]
+    try:
+        pl.assemble_report(*args, fits, utf16_len)
+    except ValueError as exc:
+        problems.append("report: a names-only form that fits failed the build: {0}".format(exc))
+    try:
+        pl.assemble_report(*args, fits - 1, utf16_len)
+        problems.append("report: a names-only form one unit over the limit did not fail the build")
+    except ValueError:
+        pass
+    return problems
+
+
+def check_closed_by_commit_edges():
+    """Collector.closed_by_commit: an issue the message names but another
+    commit closed is not this merge's, and a number that is no issue (404)
+    is no candidate, not a failed read."""
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"b.txt": "b\n"}, "2026-11-01T00:00:00 +0000",
+                      message="Fix #21, closes #22 and fixes #23\n")
+        events = {"21": [{"event": "closed", "commit_id": "f" * 40}],
+                  "23": [{"event": "closed", "commit_id": sha}]}
+
+        def api(path, paginate):
+            for number, rows in events.items():
+                if "/issues/{0}/events".format(number) in path:
+                    return rows
+            if "/issues/22/events" in path:
+                raise pl.NotFound("gh api {0}: (HTTP 404)".format(path))
+            raise AssertionError("unexpected read " + path)
+        with _FakeReads(api=api):
+            try:
+                got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").closed_by_commit(sha, {})
+            except (pl.ReadError, AssertionError) as exc:
+                return ["closed by commit: a 404 or another commit's close failed the read: {0}".format(exc)]
+    if got != [23]:
+        problems.append("closed by commit: {0}, expected [23] (#21 closed by another commit, #22 a 404)".format(got))
     return problems
 
 
@@ -1337,6 +1852,14 @@ def check_sc001_fixtures(fx):
             dict(diff), dict(diff, reason="FR-005")]), shape),
         ("a listed difference expecting state 2", moved, dict(good, expected_differences=[
             dict(diff, expected_state=2)]), shape),
+        # SC001_HALF_STATES each way: a listed half expects only 4 or 5, a
+        # proofs half only 2 (#889).
+        ("a listed difference expecting state 3", moved, dict(good, expected_differences=[
+            dict(diff, expected_state=3)]), shape),
+        ("a listed difference expecting state 1", moved, dict(good, expected_differences=[
+            dict(diff, expected_state=1)]), shape),
+        ("a proofs difference expecting state 4", dict(corpus, comments={}), dict(good, expected_differences=[
+            dict(diff, pr=1, sha="p1", half="proofs", expected_state=4, actual_state=4)]), shape),
     ]
     for label, case_corpus, expected, own in shaped:
         if not sc001_replay(case_corpus, expected, **own):
@@ -1387,7 +1910,10 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_snapshot() + check_tree_cost() + check_run_list_cost() + check_deleted_workflow_runs() + check_progress() + check_forbidden_homes() + check_workflow()
+                + check_rebase_merge() + check_run_ancestry_skip() + check_capture_clip() + check_git_failed_reads()
+                + check_reusable_only_filter() + check_window_edges(fx) + check_report_edges(fx)
+                + check_closed_by_commit_edges()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

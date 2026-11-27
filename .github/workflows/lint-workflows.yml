@@ -132,6 +132,20 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
+      # Gate 180 (i) and (l) read these live contracts (and docs/**, above):
+      # none may describe a comment admitted by its author's identity.
+      - "specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md"
+      - "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md"
+      - "specs/029-intake-issue-comments/contracts/comment-trust-gate.md"
+      - "specs/029-intake-issue-comments/contracts/notice-callout.md"
+      - "specs/032-structured-clarification-gate/contracts/decision-points.md"
+      - "specs/033-pr-conversation-commands/contracts/reusable-pr-conversation.md"
+      - "specs/033-pr-conversation-commands/contracts/wrapper-gate.md"
+      - "specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md"
+      - "specs/057-autonomous-board-loop/contracts/triage.md"
+      - "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md"
+      - "specs/115-board-loop-self-merge/contracts/board-merge.md"
+      - "specs/134-maintainer-only-comments/contracts/comment-author-rule.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
       # Gate 169 compares these three skills, and CLAUDE.md (covered by *.md
       # above), with wc_session_record.py: each tells a session to write a
@@ -2314,7 +2328,7 @@ jobs:
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
               "xargs", "xxd", "yes", "gzip", "gunzip", "zip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
-              "ulimit", "umask", "compgen", "complete",
+              "ulimit", "umask", "compgen", "complete", "shopt",
           }
           # Shell keyword/operator tokens that a naive first-word split can
           # still surface (e.g. after a line continuation or a `then` on its
@@ -2340,15 +2354,21 @@ jobs:
               "wc_harden_git_env",  # _shared/git-push-hardening.sh (spec 095)
               "wc_push_from_shim",  # _shared/git-push-hardening.sh (spec 095)
               "wc_current_branch",  # _shared/git-push-hardening.sh (spec 095)
+              "kv",                 # _shared/kv.sh (read-spec-meta.sh sources it)
           }
           NOT_A_COMMAND = ALWAYS_AVAILABLE | SHARED_SHELL_FUNCTIONS | {
               "[", "[[", "]]", "]", "{", "}", "DOLLARSUBST", "GHEXPR"}
 
-          HEREDOC_OPEN = re.compile(r"<<[-~]?\s*['\"]?(\w+)['\"]?")
+          # (?<!<)/(?!<): a here-string `<<< "word ..."` is not a heredoc opener.
+          HEREDOC_OPEN = re.compile(r"(?<!<)<<(?!<)[-~]?\s*['\"]?(\w+)['\"]?")
           TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")
 
           def run_texts():
-              """Every run: script body in workflows and composite actions."""
+              """Every run: script body in workflows and composite actions,
+              then every shell script under .github/actions/_shared/: a
+              composite runs those inside the adopter's container too, so a
+              tool called only from one (timeout, mktemp) is a call site the
+              image must serve like any run: block's (#889)."""
               paths = (glob.glob(".github/workflows/*.yml")
                       + glob.glob(".github/workflows/*.yaml")
                       + glob.glob(".github/actions/**/action.yml", recursive=True)
@@ -2365,6 +2385,9 @@ jobs:
                       run = (step or {}).get("run")
                       if isinstance(run, str):
                           yield path, run
+              for path in sorted(glob.glob(".github/actions/_shared/**/*.sh",
+                                           recursive=True)):
+                  yield path, open(path, encoding="utf-8").read()
 
           # A `case "$x" in` arm — `skipped|cancelled)`, `*)`, or a one-liner
           # like `OWNER|MEMBER) echo authorized=true ;;` — uses `|` to mean
@@ -2498,6 +2521,20 @@ jobs:
           GHEXPR = re.compile(r"\$\{\{.*?\}\}", re.S)
           FUNC_DEF = re.compile(
               r"^(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\s*\))?\s*\{$")
+          # A one-line definition, `fail() { echo "$*" >&2; exit 1; }`, splits
+          # at its `;` into a segment that runs on past the `{`; the `()`
+          # (or the `function` keyword) is what makes it a definition.
+          FUNC_DEF_ONE_LINE = re.compile(
+              r"^(?:function\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s*\(\s*\))?"
+              r"|([A-Za-z_][A-Za-z0-9_-]*)\s*\(\s*\))\s*\{\s")
+
+          def defined_function(segment):
+              """The name a function definition opening `segment` defines."""
+              m = FUNC_DEF.match(segment)
+              if m:
+                  return m.group(1)
+              m = FUNC_DEF_ONE_LINE.match(segment)
+              return (m.group(1) or m.group(2)) if m else None
 
           def strip_command_substitutions(text):
               """Collapse every well-formed $(...) to one opaque placeholder.
@@ -2634,8 +2671,8 @@ jobs:
               # CALL to that same name in this script is a local call, not
               # an external dependency the adopter's image needs to
               # provide. Collected first so both are excluded below.
-              local_funcs = {m.group(1).lower() for m in
-                             (FUNC_DEF.match(seg.strip()) for seg in segments) if m}
+              local_funcs = {name.lower() for name in
+                             (defined_function(seg.strip()) for seg in segments) if name}
 
               tokens = set()
               for segment in segments:
@@ -2681,6 +2718,7 @@ jobs:
           drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
           if drift:
               print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "
+                    f"or .github/actions/_shared/ script "
                     f"somewhere in this repository invokes {', '.join(drift)}, which "
                     f"is in neither the canonical required-tool list nor a recorded "
                     f"maintenance-only/always-available exclusion. Add it to "
@@ -3856,9 +3894,10 @@ jobs:
       # Gate 96 — #499 code review round 4: the trust-filter jq
       # wing-commander-issue-context ships had no behavioural coverage of
       # its own. Executes the real "Fetch issue and comments, apply the
-      # trust filter" step against a stubbed gh with Bot/NONE/author-by-id/
-      # MEMBER/OWNER/COLLABORATOR comments submitted out of order, and a
-      # mutation dropping the author-id clause.
+      # trust filter" step against a stubbed gh with Bot/NONE/MEMBER/OWNER/
+      # COLLABORATOR comments submitted out of order, among them the issue's
+      # own NONE-association author, who is excluded like any non-maintainer
+      # (spec 134), and a mutation that adds an identity clause back.
       - name: "Gate 96 — wing-commander-issue-context's trust-filter jq behaves correctly"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-trust-filter.py
@@ -5030,6 +5069,49 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
+      # Gate 180 — specs/134-maintainer-only-comments: comment-triggered
+      # stages admit a comment only from a non-bot OWNER, MEMBER or
+      # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
+      # comment-triggered wrapper, clarify's own check, the gating of every
+      # step after it and its grant, the shared comment filter, the Spec
+      # Kit updater's gate, pr-conversation's actor gate, the e2e clarify
+      # decision, the live docs and contracts, prose in workflows,
+      # composites and live docs that names the issue's author as
+      # admitted, the single homes of the relay paragraph and its step
+      # comment, and the rule contract's row for every comment-triggered
+      # wrapper, and runs the shipped clarify check and relay composite
+      # against a stub gh.
+      # Numbered 180: main's 170 to 176 are taken, and open PRs #1271,
+      # #1272 and #1296 claim 177 to 179.
+      - name: Gate 180 — comment-triggered stages act only on maintainers
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py
+      - name: Gate 180 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant, a copied relay paragraph or comment, and a rule contract missing a wrapper's row each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
+      # Gate 181 — #1310: wing-commander-context exports the App token
+      # job-wide as WC_BOT_TOKEN, and claude-code-action hands Claude its
+      # whole environment. An agent step that runs with a read-only
+      # github_token sets WC_BOT_TOKEN empty in its own env:, and every
+      # agent step with a model credential is denied Read(//proc/**) and
+      # Bash(*proc/*) through the tool-args composite. Runs the shipped
+      # compose step to prove the denies survive an override.
+      # Numbered 181: open PRs #1271, #1272 and #1296 claim 177 to 179.
+      - name: Gate 181 — read-only agent steps do not inherit the App token, and every agent step is denied /proc
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-credential-scrub.py
+      - name: Gate 181 self-test — a removed or App-valued override, the App token under another env name, a missing github_token, a non-tool-args deny source, a hand list without /proc, a stale exemption and each composite deny removed each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-credential-scrub.py --self-test
+      # Gate 182 — #889: a PR title, body or commit message that uses a
+      # closing keyword on an open disposition:tracking issue closes it on
+      # merge, and Gate 124 turns main red. The live check runs in
+      # pr-closing-keyword-guard.yml on every PR (no paths: filter, and on
+      # `edited`); this step runs its self-test.
+      - name: Gate 182 self-test — every closing-keyword form on a tracking issue, a cross-repo or URL reference and a commit message each fail; addresses, a longer number and another repo pass
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pr-closing-keywords.py --self-test
+
       # Gate 175 — a workflow_dispatch input reaches a typed reusable-workflow
       # input only in an allowlisted form: fromJSON(inputs.X), fromJSON over a
       # JSON literal fallback, or a boolean dispatch input bare into a boolean

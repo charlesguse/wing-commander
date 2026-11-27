@@ -31,7 +31,10 @@ newest review verdict for that PR, which must be a *converged* one.
    (moved — FR-006b's safe default) without calling `gh`. This covers no
    review ever having covered the PR, and an inconclusive or budget-spent
    verdict after an earlier converged one: none establishes a head
-   reviewed clean.
+   reviewed clean. The converged wording counts only as the review job's
+   whole comment: the sentence, an optional `**Run:**` line, then the
+   board item marker, and nothing else. The same sentence quoted inside
+   another loop comment is not a converged verdict (#889).
 3. Otherwise read its recorded `<sha>` (the commit the review job checked
    out, `steps.checkout-pr.outputs.head-sha`) and run
    `gh pr view <pr> -R "$GITHUB_REPOSITORY" --json headRefOid`. If the
@@ -61,4 +64,6 @@ directly with fixture cases:
 - no verdict, or only a budget-spent one (→ `review`, no lookup);
 - a converged verdict followed by a budget-spent one on the same head
   (→ `review`, no lookup);
+- the converged sentence quoted inside another loop comment (→ `review`,
+  no lookup);
 - the lookup fails (→ `review`).

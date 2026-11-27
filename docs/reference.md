@@ -46,7 +46,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | Stage | Starts when (wrapper) | Model default | Turn budget | Produces |
 |---|---|---|---|---|
 | intake | a maintainer applies `spec-request` to an issue | `claude-opus-5-5` | 50 | draft spec PR (`spec-draft/NNN-slug` → `main`), `spec:NNN-slug` and `stage:spec` labels, clarification questions on the issue |
-| clarify | a maintainer or the requester comments on a lifecycle issue in `stage:spec` or `stage:clarify` | `claude-opus-5-5` | 65 | the answers folded into the draft spec PR |
+| clarify | a maintainer comments on a lifecycle issue in `stage:spec` or `stage:clarify` | `claude-opus-5-5` | 65 | the answers folded into the draft spec PR |
 | plan | the spec PR merges | `claude-sonnet-5-5` | 110 | the plan on `spec/NNN-slug`; a plan PR, or a direct commit (see `plan-review`) |
 | tasks | the plan lands | `claude-sonnet-5-5` | 60 | `tasks.md`, then a dispatch of implement |
 | implement | dispatched by tasks, by itself for the next cycle, or by a review fold | `claude-sonnet-5-5` | 180 | one implement ⟲ converge cycle; then the next cycle or a dispatch of finalize |
@@ -88,6 +88,8 @@ clarification questions, merge the spec PR, merge the plan PR when
 | Rounds | 5 per spec PR; 2 failed attempts per head, then it stops |
 | May push | fixes and clarification markers inside the spec's own directory, at most 200 changed lines per push |
 | Never | approves, requests changes or merges. It posts one comment review and the `spec-pr-review` commit status, which is `success` only for "ready for the owner" |
+| Counts | only in-scope findings (a spec defect: buildability, a conflict, or a contradictory, untestable or undecided requirement) toward "not ready", fixes and markers. A plan-level finding is listed as report-only and recorded on the lifecycle issue for the plan stage |
+| Stopped round | a budget or convergence stop never announces the PR ready; markers it pushed still move the issue to `stage:clarify` |
 | Kill switch | `WING_COMMANDER_SPEC_REVIEW_PAUSED` |
 
 [CLAUDE.md](../CLAUDE.md) separately tells sessions to give a spec PR at most
@@ -204,7 +206,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | rebase | published stage, wrapper | every push to `main` by a non-bot actor; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
 | cleanup | published stage, wrapper | a lifecycle PR closes; daily, 06:53 UTC | see the lifecycle table |
 | metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
-| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the merge switches, the proof list's section and the feature-health section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
+| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the switches `WING_COMMANDER_AUTO_RELEASE_PAUSED`, `WING_COMMANDER_BOARD_LOOP_PAUSED`, `WING_COMMANDER_BOARD_AUTO_MERGE`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS`, `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` and `WING_COMMANDER_BOARD_BACKLOG_LINES` (each read by the one switch rule under "Kill switches"), the proof list's section and the feature-health section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
 | `wing-commander-proof-list.yml` | this repository | daily, 06:19 UTC; dispatch from the default branch only | builds the proof list: for each merge to the default branch in the last 30 days, whether a workflow run could show it working and whether anything is on record. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a collapsed section of "Board status". A dispatch from another branch is refused. A build that passes 23 minutes, or a single `git` or `gh` call that waits 2, fails with a one-line error before the job's 25-minute timeout. `WING_COMMANDER_PROOF_LIST_PAUSED` stops it |
 | `wing-commander-merge-evidence.yml` | this repository | hourly at :07 (verdicts) and daily, 05:41 UTC (audit); dispatch from the default branch only | the merge evidence audit ([spec](../specs/125-merge-evidence-audit/spec.md)): an hourly verdict for every open pull request into `main`, kept in the `merge-evidence-ledger` artifact, and a daily audit of every merge of the last 30 days with the verdict as of the merge and every commit that reached `main` without a pull request, which `board-status.yml` shows as a collapsed section. It only watches: read-only permissions, no agent, no App token, no merge, label, comment, check or status, and no merge job reads it. A dispatch from another branch is refused. `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` stops it; `WING_COMMANDER_BOT_LOGIN` names the pipeline App's login (`<slug>[bot]`) so its records can be told from a maintainer's; unset, it defaults to `wing-commander-bot[bot]`, and an empty login makes every verdict incomplete |
 | `wing-commander-feature-health.yml` | this repository | daily, 06:29 UTC; dispatch from the default branch only | gives each feature one health state (healthy, idle, quiet, not running, failing, paused, not configured or unreadable) from its run history, its kill switch and its own output signal, so a feature that runs green but produces nothing shows as quiet. Registry: `.github/scripts/feature-health-registry.json`, checked against this file by `verify-feature-health.py`. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a section of "Board status". It files nothing. A dispatch from another branch is refused. `WING_COMMANDER_FEATURE_HEALTH_PAUSED` stops it |
@@ -217,6 +219,14 @@ Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
 failure for the watchdog to find), `migrate-stranded-review-lifecycles.yml`,
 `auto-update-spec-kit-scratch-preflight.yml` (readiness check for a test
 repository) and `auto-release-switch.yml`.
+
+A pull-request check with no schedule: `pr-closing-keyword-guard.yml` runs on
+every pull request (opened, edited, reopened and each push; no `paths:`
+filter) and fails it when its title, body or a commit message uses a closing
+keyword (close, fix or resolve, any form) on an open `disposition:tracking`
+issue, read live from the label. Gate 182 runs its self-test. Read-only, no
+agent, no App token, a 5-minute timeout; a newer event on the same pull
+request cancels the run still going. It is not a required check.
 
 ## Merge classes
 
@@ -258,8 +268,26 @@ and spend, credentials, App permissions and repository variables.
 
 ## Kill switches
 
-Each is a repository variable; only the exact value `true` pauses, and unset
-means running. A pause takes effect no later than the next run.
+Each is a repository variable; unset means running. A pause takes effect no
+later than the next run.
+
+Every switch, pause or permission, is read by one rule (owner decision,
+2026-11-27): it is on when its value is `true` compared case-insensitively,
+with nothing trimmed. That is GitHub's own `vars.X == 'true'` comparison, so
+`True` and `TRUE` are on, while `true ` (with a space), `yes` and `1` are off.
+`verify-board-status.py` runs the readers of the switches the "Board status"
+issue reports against this rule, and fails on any other switch reader it does
+not know. Six readers do not follow it yet, until each is fixed (tracked on
+the Maintenance backlog). Five read only the exact text `true`:
+`board-loop.yml`'s merge decision (`WING_COMMANDER_BOARD_AUTO_MERGE`), and
+the shell pause checks in `spec-pr-review.yml`
+(`WING_COMMANDER_SPEC_REVIEW_PAUSED`), `lifecycle-review-gate.yml`'s live
+re-checks (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`, behind the jobs'
+own `if:`, which does follow the rule), `watchdog.yml`
+(`WING_COMMANDER_WATCHDOG_PAUSED`) and `auto-release.yml`'s container leg
+(`WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`). The sixth,
+`shared-pr-reviewer.yml`'s guard (`WING_COMMANDER_SHARED_REVIEWER_PAUSED`),
+also pauses on `1` and `yes`.
 
 | Switch | Stops |
 |---|---|
@@ -331,8 +359,8 @@ that waits on the owner).
 ## This repository's settings
 
 *This repository's instance, as read on 2026-11-10. A snapshot: check a live
-value with `gh variable list`, or read the merge switches in the daily "Board
-status" issue. Any variable not listed is unset and takes its default.*
+value with `gh variable list`, or read the switches the daily "Board
+status" issue reports. Any variable not listed is unset and takes its default.*
 
 | Variable | Default | Here |
 |---|---|---|
@@ -366,7 +394,10 @@ tables above. No kill switch is set except spec PR review's.
   remaining tasks all edit one very large file can make little progress per
   cycle and reach the iteration cap.
 - A session in a sandbox whose token cannot read Actions variables cannot see
-  the settings above. The "Board status" issue shows the merge switches only.
+  the settings above. The "Board status" issue shows only
+  `WING_COMMANDER_AUTO_RELEASE_PAUSED`, `WING_COMMANDER_BOARD_LOOP_PAUSED`,
+  `WING_COMMANDER_BOARD_AUTO_MERGE`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS`,
+  `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` and `WING_COMMANDER_BOARD_BACKLOG_LINES`.
 - Nothing enforces the three-lifecycle limit in implement.
 - The merge evidence audit records after the fact and blocks nothing: a
   session's merge of its own fix PR is still checked by nothing before it

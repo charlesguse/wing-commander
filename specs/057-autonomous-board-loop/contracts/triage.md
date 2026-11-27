@@ -81,7 +81,7 @@ agent proposed "already fixed on `main`", which is handed over (#578).
 
 The cited run is the first run URL in the issue's own title/body or in a
 comment that passed `wing-commander-issue-context`'s trust filter
-(OWNER/MEMBER/COLLABORATOR or the issue's own author, never a bot) --
+(OWNER/MEMBER/COLLABORATOR, never a bot) --
 scanned from that composite's `context-file`, never from a comments fetch
 of the triage job's own, by `board_triage.find_cited_run()`: `>`-quoted
 lines and fenced code blocks are skipped (quoting a stranger's link is not

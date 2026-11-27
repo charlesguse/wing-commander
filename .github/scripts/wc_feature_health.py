@@ -30,7 +30,8 @@ REGISTRY_PATH = os.path.join(HERE, "feature-health-registry.json")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import wc_board_status  # noqa: E402
-from board_triage import TRIAGE_CLOSE_COMMENT_PREFIX, TRIAGE_CLOSE_GROUNDS  # noqa: E402
+from board_triage import (  # noqa: E402
+    BACKLOG_TICK_COMMENT_PREFIX, BACKLOG_TICK_COMMENT_SUFFIX, TRIAGE_CLOSE_COMMENT_PREFIX, TRIAGE_CLOSE_GROUNDS)
 
 # data-model.md "Health state": earliest wins.
 STATE_ORDER = ["unreadable", "paused", "not configured", "failing", "not running",
@@ -52,6 +53,15 @@ COMMENT_PAGES = 10
 NOT_RUNNING_FLOOR_HOURS = 6
 MARKER_BEGIN = "<!-- wing-commander-feature-health -->"
 MARKER_END = "<!-- /wing-commander-feature-health -->"
+# The section's own built line: render_section writes it, section_built_at
+# reads the build time back from it (#889).
+BUILT_LINE = "**Feature health** — built "
+BUILT_LINE_RE = re.compile(r"^" + re.escape(BUILT_LINE) + r"(\d{4}-\d\d-\d\d \d\d:\d\d)Z", re.M)
+# The line wc_board_status.render opens the Board status issue with: the
+# board-status job's own write time, which a hand edit of the issue does not
+# move (#889). verify-feature-health.py reads it back from that renderer.
+BOARD_STATUS_UPDATED_RE = re.compile(
+    r"^Updated (\d{4}-\d\d-\d\d \d\d:\d\d) UTC by the daily `board-status` job", re.M)
 SWITCH_PREFIX = "WING_COMMANDER_"
 SIGNAL_KINDS = ("merged_pr", "release", "issue_or_comment", "triage_close",
                 "branch_commit", "issue_updated", "issue_section")
@@ -118,7 +128,15 @@ def classify_workflow(ref, entry, reading, ctx, now):
         detail["reason"] = "{0}: no cron found".format(ref["file"])
         return "unreadable", detail
     runs = sorted(reading.get("runs") or [], key=lambda r: r["started_at"], reverse=True)
-    qualifying = [r for r in runs if r.get("conclusion") not in NOT_QUALIFYING]
+    # collect() may read a scheduled workflow back past the window, to the
+    # not-running threshold (#1261); those earlier runs count only for the
+    # not-running test and last_run. Every other rule reads in-window runs,
+    # so a weekly or monthly cron whose only run predates the window is idle
+    # (FR-017), not healthy (#889).
+    window_start = reading.get("window_start")
+    in_window = ([r for r in runs if parse_time(r["started_at"]) >= parse_time(window_start)]
+                 if window_start else runs)
+    qualifying = [r for r in in_window if r.get("conclusion") not in NOT_QUALIFYING]
     detail["qualifying"] = len(qualifying)
     for r in qualifying:
         if r["conclusion"] == "success" and not detail["last_success"]:
@@ -128,7 +146,7 @@ def classify_workflow(ref, entry, reading, ctx, now):
     detail["last_run"] = runs[0]["started_at"] if runs else None
     if switch:
         return "paused", detail
-    if not have_var and runs and all(r.get("conclusion") == "skipped" for r in runs):
+    if not have_var and in_window and all(r.get("conclusion") == "skipped" for r in in_window):
         return "not configured", detail
     last = qualifying[:FAILING_WINDOW]
     if last and all(r["conclusion"] != "success" for r in last):
@@ -200,6 +218,13 @@ def classify_feature(entry, readings, signal_reading, ctx, now):
         row["signal_label"] = entry["signal"].get("label") or entry["signal"]["kind"]
         at = (signal_reading or {}).get("signal_at")
         row["last_signal"] = day(at) if "unreadable" not in (signal_reading or {"unreadable": 1}) else NOT_MEASURED
+    # A failing or not-running call-out quotes the dates of the workflows in
+    # that state, not a healthy sibling's (#889); the table keeps the
+    # feature-wide dates.
+    in_state = [d for _r, s, d in counted if s == state and s in ("failing", "not running")]
+    if in_state:
+        row["callout_dates"] = {k: max((d[k] for d in in_state if d[k]), default=None)
+                                for k in ("last_success", "last_failure", "last_run")}
     rows = [row]
     for ref, s, d in results:
         if ref.get("stage"):
@@ -228,9 +253,10 @@ def _callout(row):
 
 def _callout_line(row):
     name, state = row["feature"], row["state"]
+    dates = row.get("callout_dates") or row
     if state == "failing":
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
-            name, day(row["last_success"]), day(row["last_failure"]))
+            name, day(dates["last_success"]), day(dates["last_failure"]))
     if state == "quiet":
         if row["last_signal"] in (NOT_MEASURED, NEVER, None):
             return "- `{0}` — quiet: no {1} in the last {2} days".format(
@@ -238,7 +264,7 @@ def _callout_line(row):
         return "- `{0}` — quiet: no {1} since {2} (threshold {3} days)".format(
             name, row["signal_label"], row["last_signal"], row["threshold_days"])
     if state == "not running":
-        last = day(row["last_run"])
+        last = day(dates["last_run"])
         if last == NEVER:
             return "- `{0}` — not running: no run in the window".format(name)
         return "- `{0}` — not running: no run since {1}".format(name, last)
@@ -253,7 +279,7 @@ def render_section(rows, now, registry_size=None):
     features = [r for r in rows if not r["stage"]]
     unreadable = sum(1 for r in features if r["state"] == "unreadable")
     out = [MARKER_BEGIN,
-           "**Feature health** — built {0} · {1} features · {2} unreadable".format(
+           BUILT_LINE + "{0} · {1} features · {2} unreadable".format(
                now.strftime("%Y-%m-%d %H:%MZ"), registry_size or len(features), unreadable),
            "", "**Needs a look:**"]
     called = sorted((r for r in features if r["state"] in CALLED_OUT),
@@ -386,7 +412,7 @@ def fetch_runs(gh, repo, filename, start, end, events=None):
             continue
         out.append({"id": r["id"], "event": r.get("event"),
                     "started_at": r.get("run_started_at") or r["created_at"],
-                    "updated_at": r.get("updated_at"),
+                    "updated_at": r.get("updated_at"), "run_attempt": r.get("run_attempt") or 1,
                     "conclusion": r.get("conclusion") or "other"})
     return out
 
@@ -406,27 +432,35 @@ def _pages(gh, path, max_pages=10):
 # The comment board-loop.yml's triage step closes an issue with starts a line
 # with board_triage.TRIAGE_CLOSE_COMMENT_PREFIX and the ground, then a comma.
 # Anything else (a duplicate close at the route step, a deferral, a comment
-# that merely quotes a ground) is not a triage close (FR-003).
-TRIAGE_CLOSE_RE = re.compile(r"^{0}({1}),".format(
+# that merely quotes a ground) is not a triage close (FR-003). On a
+# Maintenance-backlog line the loop ticks the line instead and posts the same
+# sentence on the backlog issue, which stays open, behind BACKLOG_TICK_RE's
+# opening; that comment is a triage close too (#889).
+TRIAGE_CLOSE_RE = re.compile(r"^(?:{0}[^`\n]+{1})?{2}({3}),".format(
+    re.escape(BACKLOG_TICK_COMMENT_PREFIX), re.escape(BACKLOG_TICK_COMMENT_SUFFIX),
     re.escape(TRIAGE_CLOSE_COMMENT_PREFIX), "|".join(re.escape(g) for g in TRIAGE_CLOSE_GROUNDS)), re.M)
+BACKLOG_TICK_RE = re.compile(r"\A{0}[^`\n]+{1}".format(
+    re.escape(BACKLOG_TICK_COMMENT_PREFIX), re.escape(BACKLOG_TICK_COMMENT_SUFFIX)))
 
 
 def _triage_close_times(gh, repo, base, since, until=None):
-    """Times of triage closes in the window. The search API names the closed
-    issues whose comments carry the close sentence, newest update first, so
-    the read does not grow with the number of closed issues; each candidate's
+    """Times of triage closes in the window. The search API names the issues
+    whose comments carry the close sentence, newest update first, so the
+    read does not grow with the number of closed issues; each candidate's
     comments are then matched exactly. A candidate updated before the newest
     match found so far cannot hold a newer one, so the read stops there; a
     search still unresolved after SEARCH_PAGES pages raises (FR-010/011).
     `until` (the capture only) drops a close after it before the stop rule
     sees it, so a later close cannot end the read early and hide one in the
-    window. `is:closed` is today's state, so under `until` the search drops
-    it, and an issue open today with a close in the window raises: whether
-    it was still closed at `until` cannot be read back."""
+    window. The search does not ask for `is:closed`: a backlog-line tick
+    (BACKLOG_TICK_RE) is posted on the backlog issue, which stays open, and
+    counts whatever its state (#889). Any other close counts only on an issue
+    closed today; under `until`, an issue open today with such a close in the
+    window raises: whether it was still closed at `until` cannot be read
+    back."""
     s = fmt_time(since)
     u = fmt_time(until) if until else None
-    q = 'repo:{0} is:issue {1}updated:>={2} "{3}"'.format(
-        repo, "" if u else "is:closed ", s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
+    q = 'repo:{0} is:issue updated:>={1} "{2}"'.format(repo, s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
     path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
     times = []
     for page in range(1, SEARCH_PAGES + 1):
@@ -447,8 +481,11 @@ def _triage_close_times(gh, repo, base, since, until=None):
                 return times
             for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s),
                             COMMENT_PAGES):
-                if TRIAGE_CLOSE_RE.search(c.get("body") or "") and (u is None or c["created_at"] <= u):
-                    if u and i.get("state") == "open":
+                body = c.get("body") or ""
+                if TRIAGE_CLOSE_RE.search(body) and (u is None or c["created_at"] <= u):
+                    if i.get("state") == "open" and not BACKLOG_TICK_RE.match(body):
+                        if u is None:
+                            continue
                         raise RuntimeError("issue {0} was triage closed at {1} and is open now; its state "
                                            "at {2} cannot be read".format(i["number"], c["created_at"], u))
                     times.append(c["created_at"])
@@ -457,27 +494,50 @@ def _triage_close_times(gh, repo, base, since, until=None):
     raise RuntimeError("triage close search not resolved in {0} pages".format(SEARCH_PAGES))
 
 
-def section_built(body, marker):
-    """True when `marker` opens a section carrying built content, not a
-    paused/failed/never/stale notice (those carry the marker too, so the marker
-    alone would let a broken section read as seen)."""
+def section_built_at(body, marker):
+    """The build time (ISO) of the section `marker` opens when it carries
+    built content, else None: a paused/failed/never/stale notice carries the
+    marker too, so the marker alone would let a broken section read as seen.
+    The time is the section's own (its opener's `built="..."`, or the feature
+    health built line), never the issue's `updated_at`, which any edit moves
+    (#889)."""
     # Anchor on the opener comment: a bare mention of the marker text earlier
     # in the body is not the section.
     lead = "" if marker.startswith("<!--") else r"<!--\s*"
     opener_match = re.search(lead + re.escape(marker), body)
     if not opener_match:
-        return False
+        return None
     idx = opener_match.start()
     line_end = body.find("-->", idx)
     opener = body[idx:line_end if line_end >= 0 else len(body)]
     if 'status="' in opener:
-        return 'status="built"' in opener
+        built = re.search(r'\bbuilt="([^"]*)"', opener)
+        if 'status="built"' not in opener or not built:
+            return None
+        try:
+            return fmt_time(parse_time(built.group(1)))
+        except ValueError:
+            return None
     nxt = body.find("<!-- /", idx)
     block = body[idx:nxt if nxt >= 0 else len(body)]
     if "_Stale:" in block:
-        return False
-    return ("<details>" in block or "_Table shortened" in block
-            or "**Feature health** — built" in block)
+        return None
+    # A section with no status attribute is built only when it carries its
+    # own built line; a stray <details> block after the marker is not one.
+    line = BUILT_LINE_RE.search(block)
+    return line.group(1).replace(" ", "T") + ":00Z" if line else None
+
+
+def section_built(body, marker):
+    """True when `marker` opens a section carrying built content."""
+    return section_built_at(body, marker) is not None
+
+
+def board_status_updated_at(body):
+    """The board-status job's own write time (ISO) from the issue body, or
+    None when the body does not carry the job's Updated line."""
+    line = BOARD_STATUS_UPDATED_RE.search(body)
+    return line.group(1).replace(" ", "T") + ":00Z" if line else None
 
 
 def read_signal(signal, repo, since, gh, environ, until=None):
@@ -495,21 +555,34 @@ def read_signal(signal, repo, since, gh, environ, until=None):
         raise RuntimeError("{0} reads only the issue's current state; no read as of {1}".format(kind, u))
     times = []
     if kind == "merged_pr":
-        for page in (1, 2, 3):
+        # Closed PRs newest update first, paged until a page ends before the
+        # window: a PR merged in the window was updated in it, so nothing
+        # older can hold one (#889). No page count cuts the read short.
+        # `title_prefixes`, when declared, narrows the head-prefix match to
+        # PRs whose title also starts with one of them: every `spec/` PR is
+        # not a final PR, only the one finalize.yml titles `Finalize: ` (#889).
+        titles = signal.get("title_prefixes")
+        page = 0
+        while True:
+            page += 1
             got = gh("{0}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={1}".format(base, page))
             for p in got:
                 if p.get("merged_at") and p["merged_at"] >= s and any(
-                        p["head"]["ref"].startswith(x) for x in signal.get("head_prefixes", [])):
+                        p["head"]["ref"].startswith(x) for x in signal.get("head_prefixes", [])) and (
+                        not titles or any((p.get("title") or "").startswith(t) for t in titles)):
                     times.append(p["merged_at"])
             if len(got) < 100 or got[-1].get("updated_at", "") < s:
                 break
-        else:
-            raise RuntimeError("merged PR read truncated at 300 PRs")
     elif kind == "release":
-        got = gh("{0}/releases?per_page=30".format(base))
-        if len(got) >= 30 and all((r.get("published_at") or "") >= s for r in got):
-            raise RuntimeError("release read truncated at 30 releases")
-        times = [r["published_at"] for r in got if r.get("published_at")]
+        # Releases are listed newest first: page until one published before
+        # the window (#889). A draft has no published_at and does not stop it.
+        page = 0
+        while True:
+            page += 1
+            got = gh("{0}/releases?per_page=100&page={1}".format(base, page))
+            times.extend(r["published_at"] for r in got if r.get("published_at"))
+            if len(got) < 100 or any((r.get("created_at") or r.get("published_at") or s) < s for r in got):
+                break
     elif kind == "issue_or_comment":
         # Labeled issues and comments on them both count (the registry text).
         issues = _pages(gh, "{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
@@ -532,12 +605,17 @@ def read_signal(signal, repo, since, gh, environ, until=None):
         else:
             times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
     elif kind in ("issue_updated", "issue_section"):
+        # The issue's updated_at moves on any edit, so the time is read from
+        # the body: the section's own build time, or the board-status job's
+        # Updated line (#889).
         for i in gh("{0}/issues?state=open&labels=disposition:tracking&per_page=100".format(base)):
             if not i["title"].startswith(signal["title"]):
                 continue
-            if kind == "issue_section" and not section_built(i.get("body") or "", signal["marker"]):
-                continue
-            times.append(i["updated_at"])
+            body = i.get("body") or ""
+            at = (section_built_at(body, signal["marker"]) if kind == "issue_section"
+                  else board_status_updated_at(body))
+            if at:
+                times.append(at)
     else:
         raise RuntimeError("unknown signal kind {0}".format(kind))
     times = [t for t in times if t >= s and (u is None or t <= u)]
@@ -576,6 +654,8 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None, start
                     since = min(start, now - datetime.timedelta(hours=not_running_hours(interval)))
                 runs = fetch_runs(gh, repo, ref["file"], since, now, ref.get("events"))
                 readings[ref["file"]] = {"runs": runs, "interval_hours": interval}
+                if since < start:
+                    readings[ref["file"]]["window_start"] = fmt_time(start)
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 readings[ref["file"]] = {"unreadable": str(exc) or "read failed"}
         if entry.get("signal"):
@@ -629,23 +709,49 @@ def _workflow_text_at(commit):
     return read
 
 
-def _runs_as_of(readings, now):
+def _completed_at(gh, repo, run):
+    """When the attempt `run` reports finished (ISO), from its jobs: the
+    latest job `completed_at`, or None while any job has none (still in
+    flight) or the attempt has no jobs. A run's `updated_at` is not that
+    time: GitHub moves it on later edits too (a log or artifact deletion,
+    #889)."""
+    path = "repos/{0}/actions/runs/{1}/attempts/{2}/jobs?per_page=100".format(
+        repo, run["id"], run.get("run_attempt") or 1)
+    jobs, page = [], 0
+    while True:
+        page += 1
+        got = (gh(path + "&page={0}".format(page)) or {}).get("jobs") or []
+        jobs.extend(got)
+        if len(got) < 100:
+            break
+    done = [j.get("completed_at") for j in jobs]
+    return max(done) if done and all(done) else None
+
+
+def _runs_as_of(readings, now, gh, repo):
     """Keep only what classify_workflow reads of each run, in place. A run
     created before `now` but re-run after it reports its later attempt's
     start and conclusion, and what it showed at `now` cannot be read back, so
     the capture refuses rather than record a later result as the window's.
     A run still in progress at `now` (finished after it) is dropped: a build
-    at `now` reads only completed runs, so it could not have seen it."""
+    at `now` reads only completed runs, so it could not have seen it. A run
+    whose `updated_at` is after `now` is judged by its attempt's completion
+    time (_completed_at), not by `updated_at`, which a later edit moves; one
+    updated by `now` was already finished then."""
     for name, reading in readings.items():
         late = [r["started_at"] for r in reading.get("runs") or [] if parse_time(r["started_at"]) > now]
         if late:
             raise SystemExit("feature-health capture: {0} has a run attempt started at {1}, after {2}; "
                              "its state then cannot be read".format(name, max(late), fmt_time(now)))
         if "runs" in reading:
-            reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
-                                      for r in reading["runs"]
-                                      if not (r.get("updated_at") and parse_time(r["updated_at"]) > now)),
-                                     key=lambda r: r["started_at"])
+            kept = []
+            for r in reading["runs"]:
+                if r.get("updated_at") and parse_time(r["updated_at"]) > now:
+                    done = _completed_at(gh, repo, r)
+                    if done is None or parse_time(done) > now:
+                        continue
+                kept.append({"started_at": r["started_at"], "conclusion": r["conclusion"]})
+            reading["runs"] = sorted(kept, key=lambda r: r["started_at"])
 
 
 def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=None):
@@ -664,7 +770,7 @@ def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=Non
     environ = _environ_as_of(registry, repo, now, gh)
     readings, signals, ctx = collect(registry, repo, now, gh, environ, _workflow_text_at(commit),
                                      start=start, until=now)
-    _runs_as_of(readings, now)
+    _runs_as_of(readings, now, gh, repo)
     return {"schema": 1, "repository": repo, "window": {"start": fmt_time(start), "now": fmt_time(now)},
             "now": fmt_time(now), "workflow_commit": commit,
             "captured_at": fmt_time(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)),

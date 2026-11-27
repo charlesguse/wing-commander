@@ -24,12 +24,14 @@ import re
 import stat
 import sys
 import tempfile
+import types
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import wc_feature_health as fh  # noqa: E402
+import wc_proof_list  # noqa: E402
 import wc_shell_harness as harness  # noqa: E402
 from board_prove import Exemption  # noqa: E402
 
@@ -548,14 +550,14 @@ def check_capture_bounds():
     now = until
     kept = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T08:00:00Z",
                                 "conclusion": "failure"}], "interval_hours": 24}}
-    fh._runs_as_of(kept, now)
+    fh._runs_as_of(kept, now, None, "own/repo")
     if kept["a.yml"]["runs"] != [{"started_at": "2026-11-12T08:00:00Z", "conclusion": "failure"}]:
         problems.append("capture bound: runs kept {0}, not started_at and conclusion only".format(
             kept["a.yml"]["runs"]))
     rerun = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-15T08:00:00Z",
                                  "conclusion": "success"}], "interval_hours": 24}}
     try:
-        fh._runs_as_of(rerun, now)
+        fh._runs_as_of(rerun, now, None, "own/repo")
         problems.append("capture bound: a run attempt started after now was recorded")
     except SystemExit:
         pass
@@ -564,12 +566,31 @@ def check_capture_bounds():
     inflight = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T23:50:00Z",
                                     "updated_at": "2026-11-13T00:10:00Z", "conclusion": "failure"}],
                           "interval_hours": 24}}
-    fh._runs_as_of(inflight, now)
+    def jobs(done):
+        def gh(path):
+            if "/actions/runs/1/attempts/1/jobs?" not in path:
+                raise RuntimeError("unexpected read {0}".format(path))
+            return {"jobs": [{"completed_at": "2026-11-12T23:55:00Z"}, {"completed_at": done}]}
+        return gh
+    fh._runs_as_of(inflight, now, jobs("2026-11-13T00:10:00Z"), "own/repo")
     if inflight["a.yml"]["runs"]:
         problems.append("capture bound: a run still in progress at now was recorded as {0}".format(
             inflight["a.yml"]["runs"]))
-    # `is:closed` is today's state: under `until` the search must not ask for
-    # it, and an issue open today with a close in the window must raise.
+    # A run finished before `now` whose `updated_at` GitHub moved later (a log
+    # or artifact deletion) was complete at `now`: the capture keeps it, read
+    # from its jobs' completion time, not dropped for its `updated_at` (#889).
+    for label, done, want in (("finished before now, updated after", "2026-11-12T23:58:00Z", 1),
+                              ("a job still running", None, 0)):
+        bumped = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T23:50:00Z",
+                                      "updated_at": "2026-11-20T00:00:00Z", "run_attempt": 1,
+                                      "conclusion": "failure"}], "interval_hours": 24}}
+        fh._runs_as_of(bumped, now, jobs(done), "own/repo")
+        if len(bumped["a.yml"]["runs"]) != want:
+            problems.append("capture bound: a run {0} kept {1} runs, expected {2}".format(
+                label, len(bumped["a.yml"]["runs"]), want))
+    # `is:closed` is today's state: the search never asks for it (a backlog
+    # tick sits on an open issue), and under `until` an issue open today with
+    # a plain close in the window must raise.
     queries = []
 
     def reopened(path):
@@ -586,9 +607,53 @@ def check_capture_bounds():
     if any("is:closed" in q for q in queries):
         problems.append("capture bound: the triage close search asked for today's is:closed under until")
     queries.clear()
-    if fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {}) != "2026-11-01T00:00:00Z" \
-            or not all("is:closed" in q for q in queries):
-        problems.append("capture bound: the build's triage close search lost is:closed")
+    got = fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {})
+    if got is not None:
+        problems.append("triage close: a plain close on an issue open now counted in the build ({0})".format(got))
+    if any("is:closed" in q for q in queries):
+        problems.append("triage close: the build's search asks for is:closed, which hides the open "
+                        "Maintenance backlog issue a line tick is posted on")
+    problems += check_backlog_tick_closes(since, until)
+    return problems
+
+
+def check_backlog_tick_closes(since, until):
+    """A triage close of a Maintenance-backlog line ticks the line and posts
+    the close sentence on the backlog issue, which stays open, behind
+    board-loop.yml's `Backlog line `X` ticked, not closed: ` opening (with or
+    without a directed attribution between). It is a triage close in the
+    build and in the capture alike (#889)."""
+    problems = []
+    tick = (fh.BACKLOG_TICK_COMMENT_PREFIX + "bl-0123abcd" + fh.BACKLOG_TICK_COMMENT_SUFFIX
+            + fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", with evidence")
+    attributed = (fh.BACKLOG_TICK_COMMENT_PREFIX + "bl-4567cdef" + fh.BACKLOG_TICK_COMMENT_SUFFIX
+                  + "Directed by a maintainer.\n\n" + fh.TRIAGE_CLOSE_COMMENT_PREFIX
+                  + fh.TRIAGE_CLOSE_GROUNDS[-1] + ", with evidence")
+    routed = fh.BACKLOG_TICK_COMMENT_PREFIX + "bl-89ab0123` routed to #5 -- not a close"
+    for label, body, want in (("a backlog line tick", tick, "2026-11-01T00:00:00Z"),
+                              ("an attributed backlog line tick", attributed, "2026-11-01T00:00:00Z"),
+                              ("a backlog line routed, not closed", routed, None)):
+        def backlog(path, body=body):
+            if path.startswith("search/issues?"):
+                if "is:closed" in urllib.parse.unquote(path):
+                    return {"incomplete_results": False, "items": []}
+                return {"incomplete_results": False,
+                        "items": [{"number": 889, "state": "open", "updated_at": "2026-11-21T00:00:00Z"}]}
+            return [{"created_at": "2026-11-01T00:00:00Z", "body": body}]
+        for bound in (None, until):
+            try:
+                got = fh.read_signal({"kind": "triage_close"}, "own/repo", since, backlog, {}, until=bound)
+            except RuntimeError as exc:
+                got = "raised: {0}".format(exc)
+            if got != want:
+                problems.append("triage close: {0} on the open backlog issue (until={1}) gave {2}, "
+                                "expected {3}".format(label, bound, got, want))
+    with open(os.path.join(REPO, ".github", "workflows", "board-loop.yml"), encoding="utf-8") as fp:
+        loop = fp.read()
+    opening = "'{0}%s{1}%s'".format(fh.BACKLOG_TICK_COMMENT_PREFIX, fh.BACKLOG_TICK_COMMENT_SUFFIX)
+    if opening not in loop:
+        problems.append("board-loop.yml no longer ticks a backlog line with {0} "
+                        "(BACKLOG_TICK_COMMENT_PREFIX/SUFFIX)".format(opening))
     return problems
 
 
@@ -604,6 +669,85 @@ def self_check(fx):
     return [] if weakened else ["self-check: the state fixtures did not notice a disabled quiet rule"]
 
 
+def triage_close_grounds_reached(module):
+    """The grounds `module.triage()` returns with outcome "closed", found by
+    calling it with each evidence check stubbed to fire in turn (and none, to
+    check the no-evidence path closes nothing). The module's own evidence
+    checks are restored afterwards."""
+    saved = (module.check_rate_limit, module.check_action_bump)
+    grounds = set()
+    with tempfile.TemporaryDirectory() as tmp:
+        transcript = os.path.join(tmp, "transcript.jsonl")
+        with open(transcript, "w", encoding="utf-8") as out:
+            out.write("{}\n")
+        issue = {"cited_run_url": "https://example.invalid/run/1", "cited_run_commit_sha": "0" * 40,
+                 "cited_run_transcript_path": transcript, "cited_run_workflow_path": "x.yml",
+                 "workflow_files": ["x.yml"], "agent_proposal": {}}
+        try:
+            for rate, bump in ((None, None), ({"stub": 1}, None), (None, {"stub": 1})):
+                module.check_rate_limit = lambda _path, r=rate: r
+                module.check_action_bump = lambda *_a, b=bump: b
+                got = module.triage(dict(issue), issue["cited_run_url"])
+                if got.get("outcome") == "closed":
+                    grounds.add(got.get("ground"))
+        finally:
+            module.check_rate_limit, module.check_action_bump = saved
+    return grounds
+
+
+def check_board_status_updated_line():
+    """issue_updated reads the board-status job's own Updated line; read it
+    back from the renderer that writes it, so a change to that line's format
+    fails here instead of making the board status feature read quiet."""
+    import wc_board_status as bs
+    body = bs.render({"now": "2026-11-20T06:31:00Z"})
+    got = fh.board_status_updated_at(body)
+    if got != "2026-11-20T06:31:00Z":
+        return ["issue_updated: wc_board_status.render's Updated line reads back as {0}, "
+                "expected 2026-11-20T06:31:00Z".format(got)]
+    return []
+
+
+def check_paged_signal_reads():
+    """merged_pr and release page until the window cutoff, not a fixed page
+    count (#889): a match past the old 3-page / 30-release limit is found, and
+    the read stops at the first page that ends before the window."""
+    problems = []
+    since = fh.parse_time("2026-10-20T00:00:00Z")
+
+    def busy(path):
+        found = re.search(r"&page=(\d+)", path)
+        page = int(found.group(1)) if found else 1
+        if "/pulls?" in path:
+            if page < 6:
+                return [{"merged_at": None, "updated_at": "2026-11-15T00:00:00Z", "head": {"ref": "fix/x"}}] * 100
+            if page == 6:
+                return ([{"merged_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
+                          "head": {"ref": "fix/late"}}]
+                        + [{"merged_at": None, "updated_at": "2026-10-01T00:00:00Z", "head": {"ref": "fix/y"}}] * 99)
+            problems.append("merged_pr: read page {0} after a page that ended before the window".format(page))
+            return []
+        if "/releases?" in path:
+            if page == 1:
+                return [{"published_at": "2026-11-10T00:00:00Z"}] * 100
+            if page == 2:
+                # A draft has no published_at and must not end the read.
+                return ([{"published_at": None}, {"published_at": "2026-10-25T00:00:00Z"}]
+                        + [{"published_at": "2026-10-01T00:00:00Z"}] * 98)
+            problems.append("release: read page {0} after a page that reached before the window".format(page))
+            return []
+        return []
+    for signal, want in (({"kind": "merged_pr", "head_prefixes": ["fix/"]}, "2026-11-01T00:00:00Z"),
+                         ({"kind": "release"}, "2026-11-10T00:00:00Z")):
+        try:
+            got = fh.read_signal(signal, "own/repo", since, busy, {})
+        except RuntimeError as exc:
+            got = "raised: {0}".format(exc)
+        if got != want:
+            problems.append("{0}: a busy repository read {1}, expected {2}".format(signal["kind"], got, want))
+    return problems
+
+
 def check_shared_sources():
     """FR-003/FR-004 single home: triage grounds come from board_triage.py and
     switch values from wc_board_status._switch_on."""
@@ -612,15 +756,24 @@ def check_shared_sources():
     problems = []
     if fh.TRIAGE_CLOSE_GROUNDS is not board_triage.TRIAGE_CLOSE_GROUNDS:
         problems.append("triage grounds are not imported from board_triage.py")
-    with open(os.path.join(HERE, "board_triage.py"), encoding="utf-8") as fp:
-        src = fp.read()
-    for g in board_triage.TRIAGE_CLOSE_GROUNDS:
-        if '"outcome": "closed", "ground": "{0}"'.format(g) not in src:
-            problems.append("board_triage.py no longer closes on ground {0}".format(g))
+    # Drive board_triage.triage() itself down each close path rather than
+    # match its source text (#889): the grounds it closes on are the grounds
+    # the triage_close reader counts.
+    closed = triage_close_grounds_reached(board_triage)
+    if set(closed) != set(board_triage.TRIAGE_CLOSE_GROUNDS):
+        problems.append("board_triage.triage() closes on grounds {0}, but TRIAGE_CLOSE_GROUNDS is {1}".format(
+            sorted(closed), list(board_triage.TRIAGE_CLOSE_GROUNDS)))
+    fake = types.SimpleNamespace(check_rate_limit=None, check_action_bump=None,
+                                 triage=lambda issue, run: {"outcome": "closed", "ground": "new_ground"})
+    if triage_close_grounds_reached(fake) != {"new_ground"}:
+        problems.append("self-check: a triage() that closes on a new ground is not noticed")
     if re.search(r'"grounds"\s*:', json.dumps(fh.load_registry())):
         problems.append("registry holds a literal triage grounds list")
     if fh.TRIAGE_CLOSE_COMMENT_PREFIX is not board_triage.TRIAGE_CLOSE_COMMENT_PREFIX:
         problems.append("the triage close sentence is not imported from board_triage.py")
+    if (fh.BACKLOG_TICK_COMMENT_PREFIX is not board_triage.BACKLOG_TICK_COMMENT_PREFIX
+            or fh.BACKLOG_TICK_COMMENT_SUFFIX is not board_triage.BACKLOG_TICK_COMMENT_SUFFIX):
+        problems.append("the backlog line tick opening is not imported from board_triage.py")
     with open(os.path.join(REPO, ".github", "workflows", "board-loop.yml"), encoding="utf-8") as fp:
         loop = fp.read()
     if "'{0}%s,".format(board_triage.TRIAGE_CLOSE_COMMENT_PREFIX) not in loop:
@@ -709,7 +862,7 @@ def on_schedule(*crons):
     return "on:\n  schedule:\n" + "".join("    - cron: {0}\n".format(c) for c in crons)
 
 
-def check_review_round_three():
+def check_cron_forms_and_bounded_reads():
     """Unquoted and ranged cron, bounded triage and comment reads."""
     problems = []
     for text, want in ((on_schedule("0 */4 * * *"), 4),
@@ -832,22 +985,34 @@ def check_schedule_and_comment_reads():
             problems.append("an hourly cron with a run {0} h ago classed {1!r}, expected {2}".format(
                 hours_ago, state, want))
     # A monthly cron whose last run is older than the 31-day window but inside
-    # twice its interval: the run read must reach back to the threshold.
-    last = fh.fmt_time(now - datetime.timedelta(days=45))
+    # twice its interval: the run read must reach back to the threshold, so it
+    # is not "not running", and the run before the window counts for nothing
+    # else, so it is idle (FR-017, spec 126 scenario 6), not healthy and not
+    # failing (#889). Past the threshold it is "not running".
+    def monthly_at(days_ago, conclusion="success"):
+        last = fh.fmt_time(now - datetime.timedelta(days=days_ago))
 
-    def monthly(path):
-        m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
-        if m:
-            runs = ([{"id": 1, "event": "schedule", "conclusion": "success", "run_started_at": last,
-                      "created_at": last}] if m.group(1) <= last else [])
-            return {"total_count": len(runs), "workflow_runs": runs}
-        return []
+        def monthly(path):
+            m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
+            if m:
+                runs = ([{"id": 1, "event": "schedule", "conclusion": conclusion, "run_started_at": last,
+                          "created_at": last}] if m.group(1) <= last else [])
+                return {"total_count": len(runs), "workflow_runs": runs}
+            return []
+        return monthly
     entry = [{"name": "f", "workflows": [{"file": "m.yml", "cadence": "schedule"}]}]
-    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly, environ={},
+    for days_ago, conclusion, want in ((45, "success", "idle"), (45, "failure", "idle"),
+                                       (70, "success", "not running")):
+        readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(days_ago, conclusion),
+                                            environ={}, read_text=lambda _n: on_schedule('"0 6 1 * *"'))
+        rows = fh.classify_all(entry, readings, signals, ctx, now)
+        if rows[0]["state"] != want:
+            problems.append("a monthly cron whose only run ({0}) was {1} days ago classed {2!r}, expected "
+                            "{3}".format(conclusion, days_ago, rows[0]["state"], want))
+    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(45), environ={},
                                         read_text=lambda _n: on_schedule('"0 6 1 * *"'))
-    rows = fh.classify_all(entry, readings, signals, ctx, now)
-    if rows[0]["state"] != "healthy":
-        problems.append("a monthly cron that ran 45 days ago classed {0!r}, expected healthy".format(rows[0]["state"]))
+    if not fh.classify_all(entry, readings, signals, ctx, now)[0]["last_run"]:
+        problems.append("a monthly cron that ran 45 days ago lost its last run date")
     # One triage-close candidate with a full page of other comments: the close
     # on its second page is found, not a truncation error.
     close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
@@ -892,7 +1057,31 @@ def check_schedule_and_comment_reads():
     return problems
 
 
-def check_review_round_two():
+def check_multi_workflow_callouts():
+    """A feature with several workflows: its failing or not-running call-out
+    quotes the dates of the workflow in that state, not a healthy sibling's
+    (#889)."""
+    problems = []
+    now = fh.parse_time("2026-11-20T12:00:00Z")
+    ago = lambda hours: fh.fmt_time(now - datetime.timedelta(hours=hours))  # noqa: E731
+    entry = {"name": "f", "workflows": [{"file": "a.yml", "cadence": "schedule"},
+                                        {"file": "b.yml", "cadence": "schedule"}]}
+    ok = {"runs": [{"started_at": ago(1), "conclusion": "success"},
+                   {"started_at": ago(2), "conclusion": "failure"}], "interval_hours": 1}
+    stopped = {"runs": [{"started_at": ago(30), "conclusion": "success"}], "interval_hours": 1}
+    failing = {"runs": [{"started_at": ago(h), "conclusion": "failure"} for h in (3, 4, 5)]
+               + [{"started_at": ago(50), "conclusion": "success"}], "interval_hours": 1}
+    for b, want in ((stopped, "- `f` — not running: no run since {0}".format(fh.day(ago(30)))),
+                    (failing, "- `f` — failing: last success {0}, last failure {1}".format(
+                        fh.day(ago(50)), fh.day(ago(3))))):
+        rows = fh.classify_feature(entry, {"a.yml": ok, "b.yml": b}, None, {}, now)
+        got = fh._callout(rows[0])
+        if got != want:
+            problems.append("multi-workflow call-out: got {0!r}, expected {1!r}".format(got, want))
+    return problems
+
+
+def check_cron_truncation_and_shortening():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
     wf = "on:\n  schedule:\n    - cron: '0 */6 * * *'\n    # - cron: \"0 1 * * *\"\n    - cron: \"0 3,15 * * *\"\n"
@@ -911,7 +1100,7 @@ def check_review_round_two():
         problems.append("_pages: a full last page did not raise")
     except RuntimeError:
         pass
-    shortened = ("<!-- wing-commander-feature-health -->\n**Feature health** — built x\n\n"
+    shortened = ("<!-- wing-commander-feature-health -->\n**Feature health** — built 2026-11-20 06:38Z\n\n"
                  "_Table shortened: it did not fit._\n<!-- /wing-commander-feature-health -->")
     if not fh.section_built(shortened, fh.MARKER_BEGIN):
         problems.append("section_built: a shortened section reads as not built")
@@ -928,7 +1117,7 @@ def check_review_round_two():
     return problems
 
 
-def check_review_round_five(registry):
+def check_section_built_own_marker(registry):
     """section_built with the registry's own marker: a title mentioning the
     workflow file must not stand in for the section's opener."""
     problems = []
@@ -945,6 +1134,38 @@ def check_review_round_five(registry):
     return problems
 
 
+def check_final_pr_selector(registry, finalize_text, finalize_re=None):
+    """The lifecycle signal counts only final PRs: its `spec/` head match is
+    narrowed by a title prefix finalize.yml itself writes, so a `spec/` PR
+    that is not final cannot make a stalled lifecycle read healthy (#889).
+    The proof list reads the same title (wc_proof_list.FINALIZE_RE), so each
+    prefix must also be one that reader accepts: a prefix moved with a new
+    finalize.yml title cannot leave the proof list reading the old one."""
+    if finalize_re is None:
+        finalize_re = wc_proof_list.FINALIZE_RE
+    problems = []
+    sig = next((e.get("signal") or {}) for e in registry if e["name"] == "lifecycle")
+    titles = sig.get("title_prefixes") or []
+    if sig.get("kind") != "merged_pr" or not titles:
+        problems.append("lifecycle signal: a merged_pr with title_prefixes is required; any merged "
+                        "`spec/` PR would count as a final PR")
+    for t in titles:
+        if '--title "{0}'.format(t) not in finalize_text:
+            problems.append("lifecycle signal: title prefix {0!r} is not the title finalize.yml opens the "
+                            "final PR with".format(t))
+        if not finalize_re.match("{0}A feature (#1)".format(t)):
+            problems.append("lifecycle signal: title prefix {0!r} is not a final PR title the proof list's "
+                            "wc_proof_list.FINALIZE_RE reads".format(t))
+    return problems
+
+
+def check_check_names(source):
+    """This gate's checks are named for what they check, never for the review
+    round that added them (#889)."""
+    return ["check {0}() is named for a review round; name it by subject".format(m)
+            for m in re.findall(r"^def (check_\w*round\w*)\(", source, re.M)]
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -959,10 +1180,30 @@ def main():
     problems += check_unreadable(load("unreadable", "scenarios.json"))
     problems += check_workflow()
     problems += check_shared_sources()
-    problems += check_review_round_two()
-    problems += check_review_round_three()
-    problems += check_review_round_five(registry)
+    problems += check_cron_truncation_and_shortening()
+    problems += check_cron_forms_and_bounded_reads()
+    problems += check_section_built_own_marker(registry)
+    problems += check_board_status_updated_line()
+    problems += check_paged_signal_reads()
     problems += check_schedule_and_comment_reads()
+    problems += check_multi_workflow_callouts()
+    with open(os.path.join(REPO, ".github", "workflows", "finalize.yml"), encoding="utf-8") as fp:
+        finalize_text = fp.read()
+    problems += check_final_pr_selector(registry, finalize_text)
+    unnarrowed = copy.deepcopy(registry)
+    for e in unnarrowed:
+        if e["name"] == "lifecycle":
+            e["signal"].pop("title_prefixes", None)
+    if not check_final_pr_selector(unnarrowed, finalize_text):
+        problems.append("self-check: a lifecycle signal with no title_prefixes is not noticed")
+    if not check_final_pr_selector(registry, finalize_text.replace('--title "Finalize: ', '--title "Final: ')):
+        problems.append("self-check: a finalize.yml title that drifted from title_prefixes is not noticed")
+    if not check_final_pr_selector(registry, finalize_text, re.compile(r"^Final:.*\(#(\d+)\)\s*$")):
+        problems.append("self-check: a title prefix the proof list's FINALIZE_RE does not read is not noticed")
+    with open(os.path.abspath(__file__), encoding="utf-8") as fp:
+        problems += check_check_names(fp.read())
+    if check_check_names("def check_review_round_two():\n") == []:
+        problems.append("check_check_names self-test: a round-named check was not noticed")
     problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))

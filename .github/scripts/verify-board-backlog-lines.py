@@ -690,6 +690,123 @@ def run_link_single_home(path=os.path.join(HERE, "board_backlog_lines.py")):
     return []
 
 
+CLOSING_ALTERNATION_RE = re.compile(r"close\[sd\]|fix\((?:\?:)?e\[sd\]\)|resolve\[sd\]")
+
+
+def closing_keyword_single_home(path=os.path.join(HERE, "verify-pr-closing-keywords.py"), text=None):
+    """CLAUDE.md "Shared logic has exactly one home": the closing-keyword
+    pattern lives in board_backlog_lines.CLOSING_RE; Gate 182's
+    verify-pr-closing-keywords.py and wc_merge_evidence.py read it through
+    closing_keyword_refs() and carry no keyword alternation of their own
+    (found by the code review of #1314)."""
+    if text is None:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    name = os.path.basename(path)
+    errors = []
+    if CLOSING_ALTERNATION_RE.search(text):
+        errors.append("{0} carries its own closing-keyword pattern -- "
+                      "use board_backlog_lines.closing_keyword_refs()".format(name))
+    if "from board_backlog_lines import closing_keyword_refs" not in text:
+        errors.append("{0} does not read board_backlog_lines.closing_keyword_refs()".format(name))
+    return errors
+
+
+def closing_re_single_reader(paths=None, sources=None):
+    """CLAUDE.md "Shared logic has exactly one home", the decoding half:
+    which issue a CLOSING_RE hit names is read by
+    board_backlog_lines.closing_keyword_refs() alone. Another script that
+    reads CLOSING_RE itself (wc_proof_list.closing_targets() once split
+    the match by hand) is a second decoder that can drift (found by the
+    code review of #1314). `sources` maps a name to its text, for the
+    self-test."""
+    import ast
+    if sources is None:
+        sources = {}
+        for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                sources[os.path.basename(path)] = fh.read()
+    errors = []
+    for name, text in sorted(sources.items()):
+        for node in ast.walk(ast.parse(text)):
+            if ((isinstance(node, ast.Name) and node.id == "CLOSING_RE")
+                    or (isinstance(node, ast.Attribute) and node.attr == "CLOSING_RE")
+                    or (isinstance(node, ast.alias) and node.name == "CLOSING_RE")):
+                errors.append("{0} reads board_backlog_lines.CLOSING_RE itself -- "
+                              "use closing_keyword_refs()".format(name))
+                break
+    return errors
+
+
+# Scripts that may carry the closing-keyword stems in a pattern of their
+# own, each with why. verify-proof-list.py: its research D6 scan of
+# wc_proof_list.py carries a pasted copy as a self-test seed.
+# (wc_merge_evidence.py's _LINKED_ISSUE_RE was exempt here until PR #1319
+# removed it; the file is guarded like any other now.)
+CLOSING_COPY_EXEMPT = {
+    "verify-proof-list.py": "self-test seed of its own D6 scan",
+}
+# Two closing-keyword stems joined by a regex alternation, each stem
+# perhaps carrying its tense suffix: `close[sd]?|fix(?:e[sd])?`, `closes|fixes`.
+CLOSING_STEMS_RE = re.compile(
+    r"(?i)\b(?:close|fix|resolve)[\w\[\]()?:]*\|(?:\(\?:)?(?:close|fix|resolve)")
+
+
+def closing_pattern_copies(text):
+    """Line numbers of string constants in `text` (docstrings are prose and
+    are not read) that spell a closing-keyword pattern: two of the stems
+    close, fix and resolve joined by an alternation, and either an issue
+    reference `#` or a tense suffix (CLOSING_ALTERNATION_RE), so a keyword
+    list kept in a constant of its own -- the seed Gate 182's check uses --
+    is a copy too, while a shell `closed|CLOSED)` state case is not.
+    wc_shared_review.py's _CLOSES_RE (`closes|fixes|resolves|fix|close|resolve`)
+    was a fourth such copy, missing the past tenses and every reference
+    form but a bare #N (found by the code review of #1314)."""
+    import ast
+    import warnings
+    with warnings.catch_warnings():
+        # Another script's invalid escape is its own gate's business.
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(text)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+    lines = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
+                and ("#" in node.value or CLOSING_ALTERNATION_RE.search(node.value))
+                and CLOSING_STEMS_RE.search(node.value)):
+            lines.append(node.lineno)
+    return sorted(lines)
+
+
+def closing_pattern_single_home(paths=None, sources=None, exempt=None):
+    """CLAUDE.md "Shared logic has exactly one home", the pattern half: no
+    script but board_backlog_lines.py spells the closing-keyword pattern;
+    each reads it through closing_keyword_refs(). `sources` maps a name to
+    its text, for the self-test."""
+    exempt = CLOSING_COPY_EXEMPT if exempt is None else exempt
+    if sources is None:
+        sources = {}
+        for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                sources[os.path.basename(path)] = fh.read()
+    errors = []
+    for name, text in sorted(sources.items()):
+        lines = closing_pattern_copies(text)
+        if lines and name not in exempt:
+            errors.append("{0}:{1} carries its own closing-keyword pattern -- use "
+                          "board_backlog_lines.closing_keyword_refs()".format(name, lines[0]))
+    return errors
+
+
 def run(fixtures=None, verbose=True):
     failures = 0
     paths = sorted(glob.glob(FIXTURES)) if fixtures is None else fixtures
@@ -700,12 +817,17 @@ def run(fixtures=None, verbose=True):
         for error in board_loop_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: board-loop.yml: {0}".format(error))
-        for error in run_link_single_home():
+        for error in (run_link_single_home() + closing_keyword_single_home()
+                      + closing_keyword_single_home(os.path.join(HERE, "wc_merge_evidence.py"))
+                      + closing_re_single_reader()):
             failures += 1
             print("::error::verify-board-backlog-lines: {0}".format(error))
         for error in issue_context_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: wing-commander-issue-context: {0}".format(error))
+        for error in closing_pattern_single_home():
+            failures += 1
+            print("::error::verify-board-backlog-lines: {0}".format(error))
     for path in paths:
         with open(path, encoding="utf-8") as fh:
             case = json.load(fh)
@@ -729,6 +851,43 @@ def self_test():
              'gh issue close "$N" -R "$R"\n')
     if not unguarded_closes(unguarded) or unguarded_closes(guarded) or unguarded_closes(exits):
         print("::error::verify-board-backlog-lines --self-test: the close-guard check misreads a run block")
+        return 1
+    # #1314: a copy of the keyword alternation pasted back into Gate 182's
+    # script must fail the single-home check.
+    with open(os.path.join(HERE, "verify-pr-closing-keywords.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    seed = 'KEYWORD = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"\n'
+    if closing_keyword_single_home(text=source) or not closing_keyword_single_home(text=source + seed):
+        print("::error::verify-board-backlog-lines --self-test: the closing-keyword single-home check "
+              "misreads verify-pr-closing-keywords.py")
+        return 1
+    # #1314: a script decoding CLOSING_RE matches by hand must fail; one
+    # going through closing_keyword_refs() must pass.
+    by_hand = "from board_backlog_lines import CLOSING_RE\nhits = CLOSING_RE.finditer(text)\n"
+    via_refs = "from board_backlog_lines import closing_keyword_refs\nhits = closing_keyword_refs(text, repo)\n"
+    if (not closing_re_single_reader(sources={"seed.py": by_hand})
+            or closing_re_single_reader(sources={"seed.py": via_refs})):
+        print("::error::verify-board-backlog-lines --self-test: the CLOSING_RE single-reader check "
+              "misreads a script")
+        return 1
+    # The code review of #1314: wc_shared_review.py's drifted _CLOSES_RE,
+    # pasted back, must fail; the real tree must pass; an exempt script
+    # keeps its copy.
+    with open(os.path.join(HERE, "wc_shared_review.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    drifted = '_CLOSES_RE = re.compile(r"\\b(?:closes|fixes|resolves|fix|close|resolve)[:\\s]+#(\\d+)", re.I)\n'
+    if (closing_pattern_single_home(sources={"wc_shared_review.py": source}, exempt={})
+            or not closing_pattern_single_home(sources={"wc_shared_review.py": source + drifted}, exempt={})
+            or closing_pattern_single_home(sources={"x.py": source + drifted}, exempt={"x.py": "seed"})
+            # Pass 1 of the review of #1323: the keyword list alone, with
+            # no `#` in the same constant, is still a copy...
+            or not closing_pattern_single_home(sources={"x.py": source + seed}, exempt={})
+            # ...and a shell state case is not.
+            or closing_pattern_single_home(sources={"x.py": source + 'CASE = "  closed|CLOSED)\\n"\n'},
+                                           exempt={})
+            or closing_pattern_single_home()):
+        print("::error::verify-board-backlog-lines --self-test: the closing-keyword pattern single-home "
+              "check misreads a script")
         return 1
     original = bbl.FENCE_RE
     try:

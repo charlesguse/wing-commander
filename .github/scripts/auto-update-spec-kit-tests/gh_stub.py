@@ -230,6 +230,26 @@ def main():
                         return 0
             sys.stderr.write("gh: comment not found\n")
             return 1
+        # An issue's comments in the REST shape (spec 134: comment-reply
+        # filters them on user.login, user.type and author_association). A
+        # comment record may carry "user_type" and "author_association";
+        # otherwise a "[bot]" login is a Bot and the association is NONE.
+        parts = path.split("?")[0].rstrip("/").split("/")
+        if len(parts) >= 2 and parts[-1] == "comments" and parts[-3:-2] == ["issues"]:
+            iss = s["issues"].get(parts[-2])
+            if iss is None:
+                sys.stderr.write("gh: issue not found\n")
+                return 1
+            data = []
+            for c in iss.get("comments", []):
+                login = c.get("user", "someone")
+                data.append({
+                    "id": c.get("id"), "body": c.get("body", ""),
+                    "user": {"login": login,
+                             "type": c.get("user_type") or ("Bot" if str(login).endswith("[bot]") else "User")},
+                    "author_association": c.get("author_association", "NONE")})
+            emit_paginated(data, argv)
+            return 0
         # REST issue read (repos/O/R/issues/N), in REST's own shape: the
         # author is `user.login` in the App's `<slug>[bot]` form with a
         # `user.type`, labels are objects, and a PR carries `pull_request`.

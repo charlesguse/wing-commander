@@ -113,6 +113,8 @@ ITERATION = "3"
 PRIOR_ITERATION = "2"
 PRIMARY_MODEL = "claude-sonnet-5"
 ESCALATION_MODEL = "claude-opus-5"
+# The escalation tier's ID before a model-default bump (#889).
+BUMPED_FROM_MODEL = "claude-opus-4"
 BOT_SLUG = "wing-commander-bot"
 
 BASH = None
@@ -485,7 +487,7 @@ def make_blocked_push_workspace(root, starting_count):
     return work, repo, branch
 
 
-def run_count_step(steps, repo, truncated, tier=None):
+def run_count_step(steps, repo, truncated, tier=None, escalation_model=ESCALATION_MODEL):
     """The three steps that record the count: the commit, the hardened push
     (only when the commit step asked for one), and the report. Returns the
     report step's (rc, output, outputs, summary), with every step's output."""
@@ -493,7 +495,8 @@ def run_count_step(steps, repo, truncated, tier=None):
     if tier is None:
         tier = PRIMARY_MODEL if truncated == "true" else ""
     env = {"SLUG": SLUG, "SPEC_DIR": SPEC_DIR, "SPEC_PREFIX": SPEC_PREFIX,
-           "TRUNCATED": truncated, "TIER": tier, "BOT_SLUG": BOT_SLUG}
+           "TRUNCATED": truncated, "TIER": tier, "BOT_SLUG": BOT_SLUG,
+           "ESCALATION_MODEL": escalation_model}
     rc, out, outputs, _ = run_step(BASH, steps[COUNT_STEP], repo, env, runner_temp)
     push_outcome = "skipped"
     if outputs.get("push") == "true":
@@ -513,16 +516,19 @@ def run_count_step(steps, repo, truncated, tier=None):
     return (rc or rc2), out + out2, outputs2, summary2
 
 
-def run_effective_model_step(steps, root, truncated_tier):
+def run_effective_model_step(steps, root, truncated_tier, role=None):
     """Maintainer Feedback (tier persistence): "Resolve effective model
-    tier" reads $SPEC_DIR/spec-meta.json's truncated_tier field to decide
-    whether the NEXT cycle continues on inputs.escalation-model."""
+    tier" reads $SPEC_DIR/spec-meta.json's truncated_tier_role (or, for a
+    record written before the role, truncated_tier) to decide whether the
+    NEXT cycle continues on inputs.escalation-model."""
     workdir = tempfile.mkdtemp(dir=root)
     runner_temp = os.path.join(workdir, "runner_temp")
     os.makedirs(runner_temp, exist_ok=True)
     meta = {"stage": "implement", "iteration": int(ITERATION)}
     if truncated_tier is not None:
         meta["truncated_tier"] = truncated_tier
+    if role is not None:
+        meta["truncated_tier_role"] = role
     write_file(workdir, f"{SPEC_DIR}/spec-meta.json", json.dumps(meta) + "\n")
     env = {"SPEC_DIR": SPEC_DIR, "MODEL": PRIMARY_MODEL,
            "ESCALATION_MODEL": ESCALATION_MODEL}
@@ -1313,12 +1319,22 @@ def check_effective_model_tier(root):
     failures = []
     steps = {EFFECTIVE_MODEL_STEP: STEPS_CACHE[EFFECTIVE_MODEL_STEP]}
 
-    for label, carried_tier, want in (
-        ("no carried tier (fresh spec)", None, PRIMARY_MODEL),
-        ("carried tier is the ordinary tier", PRIMARY_MODEL, PRIMARY_MODEL),
-        ("carried tier is the escalation tier", ESCALATION_MODEL, ESCALATION_MODEL),
+    for label, carried_tier, role, want in (
+        ("no carried tier (fresh spec)", None, None, PRIMARY_MODEL),
+        ("carried tier is the ordinary tier", PRIMARY_MODEL, None, PRIMARY_MODEL),
+        ("carried tier is the escalation tier", ESCALATION_MODEL, None, ESCALATION_MODEL),
+        ("carried tier is the ordinary tier, by role", PRIMARY_MODEL, "primary", PRIMARY_MODEL),
+        ("carried tier is the escalation tier, by role", ESCALATION_MODEL, "escalation",
+         ESCALATION_MODEL),
+        # #889 (found by the code review of #970): a model-default bump
+        # between two cycles changes the escalation tier's ID; the role
+        # still carries the escalation forward instead of a cold restart.
+        ("carried escalation tier's ID was bumped since (#889)", BUMPED_FROM_MODEL, "escalation",
+         ESCALATION_MODEL),
+        ("an ordinary-role tier whose ID is unknown stays ordinary", BUMPED_FROM_MODEL, "primary",
+         PRIMARY_MODEL),
     ):
-        rc, out, outputs, _ = run_effective_model_step(steps, root, carried_tier)
+        rc, out, outputs, _ = run_effective_model_step(steps, root, carried_tier, role)
         where = f"effective-model({label})"
         if rc != 0:
             failures.append(f"{where}: exited {rc}: {out.strip()}")
@@ -1334,7 +1350,8 @@ def _mut_remove_tier_carry_read(steps):
     exists to prevent (a carried-forward top-tier cycle silently
     cold-restarting on the ordinary tier)."""
     steps[EFFECTIVE_MODEL_STEP] = steps[EFFECTIVE_MODEL_STEP].replace(
-        'if [ "$carried" = "$ESCALATION_MODEL" ]; then',
+        'if [ -n "$ESCALATION_MODEL" ] && { [ "$role" = "escalation" ] || '
+        '{ [ -z "$role" ] && [ "$carried" = "$ESCALATION_MODEL" ]; }; }; then',
         'if false; then', 1)
 
 
@@ -1387,6 +1404,55 @@ def check_counter(root):
     elif outputs3.get("count") != "3":
         failures.append(f"counter(start=2, truncated=true): expected count=3 "
                         f"(a second consecutive truncation), got {outputs3.get('count')!r}")
+    return failures
+
+
+def _read_meta(repo):
+    with open(os.path.join(repo, SPEC_DIR, "spec-meta.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def check_tier_role_persisted(root):
+    """#889 (found by the code review of #970): "Record truncated-cycle
+    count" records the carried tier's ROLE beside its ID, and a cycle
+    truncated on the escalation tier just before a model-default bump is
+    read back on the bumped escalation tier, not cold-restarted."""
+    failures = []
+    steps = {COUNT_STEP: STEPS_CACHE[COUNT_STEP]}
+    for label, tier, want in (("on the escalation tier", ESCALATION_MODEL, "escalation"),
+                              ("on the ordinary tier", PRIMARY_MODEL, "primary")):
+        _, repo, _ = make_count_workspace(root, 0)
+        rc, out, _o, _ = run_count_step(steps, repo, "true", tier=tier)
+        role = _read_meta(repo).get("truncated_tier_role")
+        if rc != 0 or role != want:
+            failures.append(f"tier-role(truncated {label}): expected truncated_tier_role="
+                            f"{want!r}, got {role!r} (rc={rc}): {out.strip()}")
+    _, repo, _ = make_count_workspace(root, 1, starting_tier=ESCALATION_MODEL)
+    rc, out, _o, _ = run_count_step(steps, repo, "true", tier=ESCALATION_MODEL)
+    if rc != 0 or _read_meta(repo).get("truncated_tier_role") != "escalation":
+        failures.append("tier-role(record written before the role): a second truncation "
+                        f"must add the role, got {_read_meta(repo)!r} (rc={rc}): {out.strip()}")
+    rc, out, _o, _ = run_count_step(steps, repo, "false")
+    if rc != 0 or "truncated_tier_role" in _read_meta(repo):
+        failures.append("tier-role(reset): a completed cycle must drop the role, got "
+                        f"{_read_meta(repo)!r} (rc={rc}): {out.strip()}")
+
+    # The round trip across a bump: truncated on the old escalation ID,
+    # read back by a cycle whose escalation-model input is the new ID.
+    _, repo, _ = make_count_workspace(root, 0)
+    rc, out, _o, _ = run_count_step(steps, repo, "true", tier=BUMPED_FROM_MODEL,
+                                    escalation_model=BUMPED_FROM_MODEL)
+    if rc != 0:
+        failures.append(f"tier-role(bump round trip): the count step exited {rc}: {out.strip()}")
+        return failures
+    rc, out, outputs, _ = run_step(
+        BASH, STEPS_CACHE[EFFECTIVE_MODEL_STEP], repo,
+        {"SPEC_DIR": SPEC_DIR, "MODEL": PRIMARY_MODEL, "ESCALATION_MODEL": ESCALATION_MODEL},
+        tempfile.mkdtemp(dir=os.path.dirname(repo)))
+    if rc != 0 or outputs.get("model") != ESCALATION_MODEL:
+        failures.append(f"tier-role(bump round trip): a cycle truncated on {BUMPED_FROM_MODEL!r} "
+                        f"must continue on the bumped escalation tier {ESCALATION_MODEL!r}, got "
+                        f"{outputs.get('model')!r} (rc={rc}): {out.strip()}")
     return failures
 
 
@@ -1765,6 +1831,7 @@ def main():
         failures.extend(check_refusal_probe_source_mutations(root))
         failures.extend(check_effective_model_tier(root))
         failures.extend(check_counter(root))
+        failures.extend(check_tier_role_persisted(root))
         failures.extend(check_reporting(root))
         failures.extend(check_annotation_kind(root))
         failures.extend(check_persist_failure(root))

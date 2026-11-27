@@ -772,10 +772,11 @@ jobs:
         run: |
           gh issue comment "$ISSUE" --body "📝 **Wing Commander · intake** — specification drafting started ([run]($RUN_URL), triggered by \`$ACTOR\`)."
 
-      # Foundational filter (specs/029-intake-issue-comments): fetch the
-      # issue author and every comment, apply the same association/author-id/
-      # bot rule wing-commander-2-clarify.yml's wrapper already applies to
-      # its single triggering comment, and stage only the qualifying
+      # Foundational filter (specs/029-intake-issue-comments): fetch every
+      # comment, apply the same maintainer-association and bot rule
+      # wing-commander-2-clarify.yml's wrapper already applies to its single
+      # triggering comment (no user id, specs/134-maintainer-only-comments),
+      # and stage only the qualifying
       # comments — ordered oldest to newest — for the agent step to read.
       # Comment bodies move only between gh api/jq and files, never through
       # a shell variable (contracts/comment-staging-format.md).
@@ -813,7 +814,7 @@ jobs:
           body: >
             ${{ steps.comment-trust-gate.outputs.excluded-human-count }} comment(s) on
             this issue did not qualify for the specification (not from a
-            maintainer or the original reporter) and were not used. If the
+            maintainer) and were not used. If the
             discussion actually settled something the body doesn't capture,
             update the body before this spec is finalized.
 
@@ -961,6 +962,9 @@ jobs:
                  the user. Do NOT wait. Leave the [NEEDS CLARIFICATION] markers
                  in spec.md and continue; the questions are posted to the issue
                  in step 7 instead.
+               - A marker quoted inside inline code
+                 or a fenced code block is not open: it is text the spec quotes,
+                 so never answer it, replace it or report it as a question.
                - The feature number <NNN> MUST be ${{ steps.num.outputs.num }}
                  (pre-computed to account for specs in flight on unmerged
                  branches). When the skill auto-generates the spec directory,
@@ -1622,6 +1626,7 @@ jobs:
       # the issue is waiting on the requester, and a resolvable spec dir with
       # no open questions means it is not. Deterministic, reading only this
       # step's own outputs above — never a second parse of the agent result.
+      # Either branch also clears stage:stalled -- see clarify.yml.
       - name: Flip stage label for clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
@@ -1638,8 +1643,10 @@ jobs:
               echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
             fi
             gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+            gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
           elif [ "$SPECIFIED" = "true" ] && [ "$BLOCKED" != "true" ] && [ -n "$SPEC_DIR" ]; then
             gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+            gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
           fi
 
       # Deterministic render (contracts/clarification-schema.md): turns the
@@ -1690,6 +1697,16 @@ jobs:
               )
             | join("\n")
           ' > "$RUNNER_TEMP/intake-clarification.md"
+
+      # The maintainer-relay note for a requester who is not a maintainer
+      # -- see clarify.yml.
+      - name: Add the maintainer-relay note for a requester who is not a maintainer
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-requester-relay-note
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          body-file: ${{ runner.temp }}/intake-clarification.md
 
       - name: Announce clarification needed
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'

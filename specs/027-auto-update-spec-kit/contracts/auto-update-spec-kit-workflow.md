@@ -20,7 +20,13 @@ on:
 jobs:
   auto-update-spec-kit:
     if: >-
-      vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true'
+      vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true' &&
+      (github.event_name != 'issue_comment' ||
+        (!github.event.issue.pull_request &&
+         github.event.comment.user.type != 'Bot' &&
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+         github.event.issue.user.type == 'Bot' &&
+         contains(github.event.issue.labels.*.name, 'auto-update:tracking')))
     permissions:
       contents: write
       issues: write
@@ -38,29 +44,36 @@ jobs:
       issue-number: ${{ github.event.issue.number || '' }}
       comment-id: ${{ github.event.comment.id || '' }}
       commenter-association: ${{ github.event.comment.author_association || '' }}
-      commenter-id: ${{ github.event.comment.user.id || '' }}
-      issue-author-id: ${{ github.event.issue.user.id || '' }}
       stabilization-checks: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS || '1' }}
-      model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
+      model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5-5' }}
+      e2e-stage-model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MODEL || 'claude-sonnet-5-5' }}
+      e2e-stage-max-turns: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_STAGE_MAX_TURNS || '20' }}
+      e2e-scratch-repo: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_E2E_SCRATCH_REPO || '' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
       speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
 ```
 
-The pause kill-switch is checked in the wrapper's job-level `if:`
+The wrapper's job-level `if:` carries the pause kill-switch
 (`wing-commander-8-watchdog.yml`'s own corrected shape — a stage-side
-check still bills for steps before discovering it's paused). The
-`pull_request`/`issue_comment` trigger paths are additionally filtered
-*inside* the stage's first job (never by the wrapper's `if:`, which
-would need to read PR/comment body content to recognize "is this one of
-ours" — that recognition is a data read, not a security gate, and
-belongs with the rest of the deterministic logic) — a `pull_request`
-event whose PR body lacks the
-`<!-- wing-commander-auto-update-spec-kit:` marker, or an `issue_comment`
-event on an issue that doesn't carry the settle-tracking marker, is a
-no-op run that exits immediately without writing anything.
+check still bills for steps before discovering it's paused) and an
+`issue_comment` pre-filter: only a non-bot OWNER, MEMBER or COLLABORATOR
+comment on a non-PR, Bot-authored issue carrying `auto-update:tracking`
+starts the stage, so the pipeline's own status comments and every other
+issue's comments no longer pay for a run (owner decision 2026-11-25,
+#890). Schedule, dispatch and `pull_request` pass the wrapper untouched.
+The rest of the recognition is filtered *inside* the stage, which can
+read what the wrapper cannot: a `pull_request` event whose PR body lacks
+the `<!-- wing-commander-auto-update-spec-kit:` marker, or an
+`issue_comment` on an issue that is not the App's own tracking issue
+(see the `comment-reply` job below), is a no-op run that exits without
+writing anything.
 
 ## Job contract (`auto-update-spec-kit.yml`, `workflow_call` only)
 
@@ -100,10 +113,10 @@ happens this cycle). "Settled" continues to `evaluate-path`.
 
 ### `evaluate-path` (`needs: settle` when settled, OR the resume path from `comment-reply` after a verified maintainer picks an option)
 
-`claude-sonnet-5` (input `model`), `--max-turns` bounded,
+`claude-sonnet-5-5` (input `model`), `--max-turns` bounded,
 `--allowedTools "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"`
 (no `gh` grant, spec 101: the only evidence is the staged `release-notes.json`),
-`--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"`,
+`--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*),Read(//proc/**),Bash(*proc/*)"`,
 structured output via `--json-schema` matching data-model.md's Upgrade
 decision record shape. Prompt frames every fetched release-notes body as
 untrusted data, never instructions (constitution V) — identical framing
@@ -114,7 +127,9 @@ convention every comment-triggered stage already uses for issue bodies.
   workflow ends (FR-018).
 - `outcome: ambiguous-options` → post the options + reasoning + sources
   as a question (`wing-commander-callout`, `kind: action`), workflow
-  ends, awaiting a comment reply (FR-012).
+  ends, awaiting a comment reply (FR-012). Since
+  specs/134-maintainer-only-comments the question's last line records its
+  option labels, as data the `comment-reply` read-back reads.
 - `outcome: clean-bump` → continue to `prepare`.
 
 ### `prepare` (`needs: evaluate-path` when `clean-bump`)
@@ -173,14 +188,14 @@ this job — nothing to record.
 
 1. Verify the commenter:
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-   inputs.commenter-association)`. Unlike `wing-commander-2-clarify.yml`,
-   the issue's own author is not admitted: a resumed reply picks the
-   candidate a bump PR proposes (owner decision 2026-11-25, #890).
-   `commenter-id` and `issue-author-id` are still accepted and no longer
-   consulted. Fails → no-op, no comment, no error surfaced (never react to
-   an untrusted commenter, constitution V). The wrapper pre-filters the
-   same way: only a maintainer's comment on a Bot-authored issue carrying
-   `auto-update:tracking` starts the stage.
+   inputs.commenter-association)` (the exact condition
+   `wing-commander-2-clarify.yml` uses; since
+   specs/134-maintainer-only-comments no user id is compared, and the
+   `commenter-id` and `issue-author-id` inputs are accepted and ignored;
+   owner decision 2026-11-25, #890). Fails → no-op, no comment, no error
+   surfaced (never react to an untrusted commenter, constitution V). The
+   wrapper pre-filters the same way: only a maintainer's comment on a
+   Bot-authored issue carrying `auto-update:tracking` starts the stage.
 2. The issue must be the App's own tracking issue — authored by the App
    (`<bot-slug>[bot]`) and carrying `auto-update:tracking`; a body marker
    alone is not enough — and must carry an `outcome: ambiguous-options`
@@ -191,11 +206,14 @@ this job — nothing to record.
    `.specify/init-options.json` on the default branch. An equal or older
    candidate, or one that cannot be compared, is refused: the job comments
    the refusal on the issue and does not resume.
-3. `claude-haiku-4-5`, `--max-turns` bounded, read-only
+3. `claude-haiku-5-5`, `--max-turns` bounded, read-only
    (`--allowedTools "Read"`), structured output mapping the comment body
    onto one of the previously posted options (or "unrecognized," in
    which case the workflow comments asking for a clearer reply and takes
-   no further action).
+   no further action). Since specs/134-maintainer-only-comments the
+   agent's context holds only the issue body, the pipeline's own comments
+   and maintainers' comments, and a chosen option counts only when it is
+   one of the labels the newest question records.
 4. Recognized choice → comment the human's decision on the issue
    (FR-013's "the decision made" now includes whose call it was), then
    re-enter at `prepare` with that chosen path.

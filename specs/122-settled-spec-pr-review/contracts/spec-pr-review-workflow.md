@@ -13,7 +13,7 @@ Layer: consuming instrument only (Constitution VII). Adds no
 
 1. **select** — stand-down check on `vars.WING_COMMANDER_SPEC_REVIEW_PAUSED`; list open PRs; build a `SpecPrSnapshot` per candidate; call `spec_pr_review.py select`; emit at most one PR and head SHA, or a recorded skip reason per PR.
 2. **review** — checkout the PR head (same-repo `spec-draft/` ref only); re-check eligibility on a fresh snapshot; run the reviewer (`claude-opus-5-5`, `high`, bounded turns) with spec content framed as untrusted data; extract and validate findings; `spec_pr_review.py classify-and-check` produces the verified `ActionPlan`; post one `COMMENT` review (verdict, findings, round record last, cost line from the metrics-summary composite).
-3. **act** — re-fetch PR state and head; if still open and head unchanged, push fixes/markers via the hardened-push composite (spec directory only), move label (only after markers pushed), post issue questions, post the one-line outcome, post the ready announcement when `ActionPlan.post_announcement`; post commit status (own context, workflow token, job-level `statuses: write`).
+3. **act** — re-fetch PR state and head; if still open and head unchanged, push fixes/markers via the hardened-push composite (spec directory only), move label (only after markers pushed), post issue questions, post the one-line outcome, post the ready announcement when `ActionPlan.post_announcement` (never from a stopped round); record the round's out-of-scope findings for the plan stage, in one App-authored note, when `ActionPlan.record_out_of_scope`; post commit status (own context, workflow token, job-level `statuses: write`).
 
 ## Guarantees
 

@@ -1,0 +1,1 @@
+{"note": "project_dir was never passed by the workflow; the spec dir alone bounds a fix.", "input": {"spec_dir": "specs/122-x", "project_dir": "proj", "fixes": [{"id": 0, "finding": "t", "kind": "marker", "paths": ["specs/122-x/spec.md"], "lines_changed": 1, "options_count": 2, "has_recommendation": true}]}, "expect": {"pushable": [0], "blocked": []}}

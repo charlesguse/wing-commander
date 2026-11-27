@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import (  # noqa: E402
     is_loop_branch, is_loop_marker_author, last_marker_match, marker_json, marker_regexes)
 from wc_review_finding_fingerprint import fingerprint as finding_fingerprint  # noqa: E402
+from board_backlog_lines import closing_keyword_refs  # noqa: E402
 
 MARKER = "wing-commander-shared-review-round"
 MARKER_RE, MARKER_OPEN_RE = marker_regexes(MARKER)
@@ -414,20 +415,25 @@ def parse_dismissals(text):
     return parsed, None
 
 
-_CLOSES_RE = re.compile(r"\b(?:closes|fixes|resolves|fix|close|resolve)[:\s]+#(\d+)", re.I)
 _ISSUE_RE = re.compile(r"(?<![\w/])#(\d+)\b")
 _LINE_RE = re.compile(r"\bbacklog line[:\s]+([a-z0-9][a-z0-9-]*)", re.I)
 _RUN_RE = re.compile(r"https://[^\s/]+/[^\s/]+/[^\s/]+/actions/runs/(\d+)")
 
 
-def resolve_purpose_source(pr_number, body):
+def resolve_purpose_source(pr_number, body, repository=None):
     """D10 order: a cited issue (not the PR itself), a backlog line, a run.
-    None means 'no source of purpose'."""
+    None means 'no source of purpose'. A closing-keyword reference to an
+    issue of `repository` (default: $GITHUB_REPOSITORY) comes first, read
+    through board_backlog_lines.closing_keyword_refs(), the pattern's one
+    home (a copy here once missed `fixed #N` and `GH-N`); then any `#N`."""
     body = body or ""
-    for pattern in (_CLOSES_RE, _ISSUE_RE):
-        for match in pattern.finditer(body):
-            if match.group(1) != str(pr_number):
-                return {"type": "issue", "ref": match.group(1)}
+    if repository is None:
+        repository = os.environ.get("GITHUB_REPOSITORY", "")
+    refs = [str(number) for number, _hit in closing_keyword_refs(body, repository)]
+    refs += [match.group(1) for match in _ISSUE_RE.finditer(body)]
+    for ref in refs:
+        if ref != str(pr_number):
+            return {"type": "issue", "ref": ref}
     match = _LINE_RE.search(body)
     if match:
         return {"type": "backlog", "ref": match.group(1)}
@@ -1177,6 +1183,7 @@ def main(argv=None):
     p = sub.add_parser("prepare")
     p.add_argument("--pr", required=True); p.add_argument("--body-file", required=True)
     p.add_argument("--head-branch", default=""); p.add_argument("--labels", default="")
+    p.add_argument("--repository", default=None)
     s = sub.add_parser("state")
     s.add_argument("--pr", required=True); s.add_argument("--bot-login", required=True)
     s.add_argument("--default-branch", required=True); s.add_argument("--repository", required=True)
@@ -1220,7 +1227,7 @@ def main(argv=None):
             body = fh.read()
         labels = [x for x in args.labels.split(",") if x]
         print(json.dumps({"kind": derive_kind(args.head_branch, labels),
-                          "purpose_source": resolve_purpose_source(args.pr, body)}))
+                          "purpose_source": resolve_purpose_source(args.pr, body, args.repository)}))
         return 0
     if args.cmd == "finalize":
         def opt(path):

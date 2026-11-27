@@ -4,7 +4,8 @@ The deterministic step this feature adds to `intake.yml`, placed after the
 existing "Report run started on issue" step and before "Compose tool args
 (intake)" — the same relative position `clarify.yml` uses for its own
 "Stage the answer as a data file" step, run with the bot token
-(`steps.ctx.outputs.token`) that step already establishes, gated on
+(`env.WC_BOT_TOKEN`, the relay of the token the "Wing Commander context"
+step mints) that step already uses, gated on
 `steps.lifecycle-gate.outputs.is-open == 'true'` like every other step in
 the job.
 
@@ -12,11 +13,12 @@ the job.
 
 | Source | Field(s) used |
 |---|---|
-| `gh api repos/${GITHUB_REPOSITORY}/issues/${{ inputs.issue-number }}` | `.user.id` (issue author id) |
-| `gh api repos/${GITHUB_REPOSITORY}/issues/${{ inputs.issue-number }}/comments --paginate` | `.user.id`, `.user.login`, `.user.type`, `.author_association`, `.created_at`, `.body` per comment |
+| `gh api repos/${GITHUB_REPOSITORY}/issues/${{ inputs.issue-number }}/comments --paginate` | `.user.login`, `.user.type`, `.author_association`, `.created_at`, `.body` per comment |
 
-Both calls use `steps.ctx.outputs.token` (the App-installation token every
-other read/write in this stage already uses) via `GH_TOKEN`.
+The step calls the `wing-commander-issue-context` composite with
+`token: ${{ env.WC_BOT_TOKEN }}` (the App-installation token every other
+read/write in this stage already uses), and the composite makes the call
+with it via `GH_TOKEN`.
 
 ## Qualification rule (FR-002, FR-003 — data-model.md's `qualifies()`)
 
@@ -24,9 +26,9 @@ A comment qualifies for incorporation if and only if:
 
 1. `user.type != "Bot"` — unconditional; a bot's `author_association` is
    never consulted (FR-003: "regardless of the bot account's association").
-2. AND at least one of:
-   - `author_association` ∈ `{OWNER, MEMBER, COLLABORATOR}`, or
-   - `user.id == <issue author's id>` (comparison by id, not login).
+2. AND `author_association` ∈ `{OWNER, MEMBER, COLLABORATOR}`. No user id
+   is consulted, the issue's own author included (constitution 3.0.0,
+   Principle V; specs/134-maintainer-only-comments).
 
 This is exactly `wing-commander-2-clarify.yml`'s existing trigger-level `if:`
 condition, applied per-comment instead of to one triggering comment.

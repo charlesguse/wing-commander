@@ -1,0 +1,1 @@
+{"note": "No readable in_scope fails toward visibility: counted as in scope.", "input": [{"title": "a"}, {"title": "b", "in_scope": "false"}], "expect": {"verdict": "not ready", "in_scope_count": 2}}

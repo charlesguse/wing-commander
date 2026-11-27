@@ -102,6 +102,66 @@ def crafted_iteration_failures():
     return failures
 
 
+def input_guard_failures():
+    """#889 (found by the code review of #1119): the branch input must be a
+    spec/* branch, and a spec-meta.json that fails the self-identity check
+    must decide nothing. Runs the shipped `run:` text of Derive slug and
+    Decide; Decide must refuse before it fetches or calls gh."""
+    import shutil
+    import tempfile
+    sys.path.insert(0, HERE)
+    from wc_shell_harness import find_step, resolve_bash, run_step
+    wf_path = os.path.join(".github", "workflows", "migrate-stranded-review-lifecycles.yml")
+    bash = resolve_bash()
+    failures = []
+    root = tempfile.mkdtemp(prefix="wc-migrate-guard-")
+    try:
+        slug_script = find_step(wf_path, "Derive slug").get("run") or ""
+        cases = (("spec/123-implement-task-completion", True),
+                 ("spec/P/123-x", True),
+                 ("main", False), ("fix/889-x", False), ("spec/", False),
+                 ("spec/../main", False), ("spec/-x", False),
+                 ("refs/heads/spec/1-x", False), ("spec/1-x\nmain", False))
+        for i, (branch, ok) in enumerate(cases):
+            rt = os.path.join(root, f"rt-slug-{i}")
+            os.makedirs(rt)
+            rc, out, outputs, _ = run_step(bash, slug_script, root,
+                                           {"BRANCH": branch}, rt)
+            if ok and (rc != 0 or outputs.get("slug") != branch[len("spec/"):]):
+                failures.append(f"migrate workflow: Derive slug refused spec branch {branch!r}: {out.strip()}")
+            if not ok and (rc == 0 or outputs.get("slug")):
+                failures.append(f"migrate workflow: Derive slug accepted non-spec branch {branch!r}")
+        decide = find_step(wf_path, "Decide")
+        if "steps.meta.outputs.identity-ok" not in str((decide.get("env") or {}).get("META_IDENTITY_OK", "")):
+            failures.append("migrate workflow: Decide does not read the spec-meta identity-ok output")
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        calls = os.path.join(root, "calls")
+        for tool in ("gh", "git"):
+            with open(os.path.join(bindir, tool), "w") as fh:
+                fh.write(f'#!/bin/sh\necho "{tool} $*" >> "$GH_CALLS"\nexit 0\n')
+            os.chmod(os.path.join(bindir, tool), 0o755)
+        for i, ident in enumerate(("false", "")):
+            open(calls, "w").close()
+            rt = os.path.join(root, f"rt-decide-{i}")
+            os.makedirs(rt)
+            env = {"GH_TOKEN": "x", "STAGE": "review", "META_IDENTITY_OK": ident,
+                   "ISSUE": "250", "BRANCH": "spec/999-x", "SPEC_DIR": "specs/999-x",
+                   "GITHUB_REPOSITORY": "example/repo", "GH_CALLS": calls,
+                   "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
+            rc, out, outputs, _ = run_step(bash, decide.get("run") or "", root, env, rt)
+            where = f"migrate workflow: Decide with identity-ok={ident!r}"
+            if rc == 0:
+                failures.append(f"{where} exited 0")
+            if outputs.get("verdict"):
+                failures.append(f"{where} wrote a verdict: {outputs.get('verdict')!r}")
+            if open(calls).read().strip():
+                failures.append(f"{where} ran git/gh before refusing: {open(calls).read().strip()!r}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return failures
+
+
 def main():
     failures = []
     d = os.path.join(vbc.FIXTURES, "migration")
@@ -148,6 +208,7 @@ def main():
     if "iteration=recorded+1" in wf:
         failures.append("migrate workflow: literal recorded+1 iteration")
     failures.extend(crafted_iteration_failures())
+    failures.extend(input_guard_failures())
     if failures:
         for f in failures:
             print(f"FAIL: {f}")

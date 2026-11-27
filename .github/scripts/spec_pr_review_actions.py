@@ -14,7 +14,9 @@ touches git, the filesystem or `gh`, so spec_pr_review.py stays pure.
 
 The reviewer output is DATA (IX): an action entry that does not name an
 existing finding index, or whose fix text is not found exactly once, is
-dropped and its finding stays report-only.
+dropped and its finding stays report-only. An out-of-scope finding
+(spec_pr_review.in_scope) gets no fix and no marker: its item is class
+`out-of-scope`, listed in the review and recorded for the plan stage only.
 """
 import json
 import os
@@ -22,6 +24,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from spec_pr_review import in_scope  # noqa: E402
 
 CLASSES = ("unambiguous-error", "owner-decision")
 
@@ -77,6 +81,18 @@ def _plain(text):
     return str(text).replace("<!--", "&lt;!--")
 
 
+ANNOUNCEMENT_PHRASE = "Action needed:"
+
+
+def _plain_note(text):
+    """Agent text bound for the plan-stage note, which the App posts on the
+    lifecycle issue while it stays in stage:spec: on top of `_plain`, it
+    must not carry the announcement phrase, or select would read the note
+    as the App's "Action needed: Review the spec PR" callout, newer than
+    the round's pushed commit. `&#58;` renders as ":"."""
+    return _plain(text).replace(ANNOUNCEMENT_PHRASE, "Action needed&#58;")
+
+
 def resolve_precedent(prec, spec_dir=""):
     if not isinstance(prec, dict):
         return {}
@@ -109,10 +125,18 @@ def prepare(findings_path, actions_path, spec_dir, out_path):
                 if isinstance(a, dict) and isinstance(a.get("index"), int)}
     items, fixes = [], []
     for i, f in enumerate(findings):
+        if not in_scope(f):
+            # Report-only: no fix, no marker, no question (owner decision
+            # 2026-11-27, #890). The item keeps its index so `apply` and
+            # the join stay positional.
+            items.append({"finding": dict(f, title=_plain_note(f.get("title", "")),
+                                          what=_plain_note(f.get("what", ""))),
+                          "class": "out-of-scope", "in_scope": False})
+            continue
         act = by_index.get(i, {})
         # Doubtful classification is an owner decision (FR-015a).
         cls = act.get("class") if act.get("class") in CLASSES else "owner-decision"
-        item = {"finding": f, "class": cls}
+        item = {"finding": f, "class": cls, "in_scope": True}
         if cls == "unambiguous-error":
             fx = act.get("fix") if isinstance(act.get("fix"), dict) else {}
             path = fx.get("path") or ""

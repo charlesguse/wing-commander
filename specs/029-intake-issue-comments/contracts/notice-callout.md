@@ -43,8 +43,7 @@ kind: action
 summary: "Confirm the issue body reflects the discussion before relying on this spec"
 body: >
   <excluded-human-count> comment(s) on this issue did not qualify for
-  the specification (not from a maintainer or the original reporter) and
-  were not used. If the discussion actually settled something the body
+  the specification (not from a maintainer) and were not used. If the discussion actually settled something the body
   doesn't capture, update the body before this spec is finalized.
 ```
 

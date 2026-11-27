@@ -25,6 +25,8 @@ REPO = subprocess.run(
     capture_output=True, text=True, check=True).stdout.strip()
 STAGE = os.path.join(REPO, ".github", "workflows", "auto-update-spec-kit.yml")
 WRAP = os.path.join(REPO, ".github", "workflows", "wing-commander-auto-update-spec-kit.yml")
+CONTRACT = os.path.join(REPO, "specs", "027-auto-update-spec-kit", "contracts",
+                        "auto-update-spec-kit-workflow.md")
 
 PASS = FAIL = 0
 FAILED = []
@@ -181,6 +183,31 @@ def act_steps(ifs_steps, ctx, arm):
         ],
         "rollback": ["Rollback (health-check failed)"],
     }[arm])
+
+
+def contract_checks(text, stage_doc):
+    """[(label, ok, detail)] for the 027 contract against the workflows."""
+    out = []
+    m = re.search(r"## Trigger contract[^\n]*\n+```yaml\n(.*?)```", text, re.S)
+    wrap_doc = yaml.safe_load(open(WRAP, encoding="utf-8"))
+    block = yaml.safe_load(m.group(1)) if m else None
+    for key, shown in ((True, "on:"), ("jobs", "jobs:")):
+        want = wrap_doc.get(key)
+        got = (block or {}).get(key) if isinstance(block, dict) else None
+        out.append(("Trigger contract %s equals the wrapper's" % shown,
+                    got == want and want is not None,
+                    "contract %r != wrapper %r" % (got, want)))
+    run_model = None
+    for st in stage_doc["jobs"]["comment-reply"]["steps"]:
+        if st.get("name") == "Interpret the maintainer's reply":
+            mm = re.search(r"--model\s+(\S+)", str((st.get("with") or {}).get("claude_args") or ""))
+            run_model = mm.group(1) if mm else None
+    mc = re.search(r"### `comment-reply` job.*?^3\. `([^`]+)`", text, re.S | re.M)
+    doc_model = mc.group(1) if mc else None
+    out.append(("comment-reply step 3 names the step's --model",
+                bool(run_model) and doc_model == run_model,
+                "contract %r != workflow %r" % (doc_model, run_model)))
+    return out
 
 
 def main():
@@ -344,8 +371,8 @@ def main():
         ("OWNER", "1", "1", True, "OWNER"),
         ("MEMBER", "9", "1", True, "MEMBER"),
         ("COLLABORATOR", "9", "1", True, "COLLABORATOR"),
-        # Owner decision 2026-11-25 (#890): the issue's own author is no
-        # longer admitted -- a resume picks the candidate a bump PR proposes.
+        # Owner decision 2026-11-25 (#890) and spec 134: the issue's own
+        # author gets no exception.
         ("NONE", "7", "7", False, "non-maintainer who IS the issue author"),
         ("CONTRIBUTOR", "7", "7", False, "CONTRIBUTOR who IS the issue author"),
         ("", "7", "7", False, "empty association, matching ids"),
@@ -631,6 +658,36 @@ def main():
         FAIL += 1
         FAILED.append("refusal does not say to close the stranded issue")
         print("    FAIL refusal body: %r" % refuse_body)
+
+    # ---- the live contract shows the wrapper and the reply model as run ----
+    # specs/027's contract is live (contracts are fixed like code): its
+    # Trigger contract block must parse to the wrapper's own `on:` and
+    # `jobs:`, and its comment-reply step 3 must name the model the
+    # "Interpret the maintainer's reply" step runs. Both drifted once (#889).
+    print("\n--- contract: wrapper block and reply model match the workflows ---")
+    c_text = open(CONTRACT, encoding="utf-8").read()
+    for label, ok, detail in contract_checks(c_text, stage_doc):
+        if ok:
+            PASS += 1
+            print("    ok   %s" % label)
+        else:
+            FAIL += 1
+            FAILED.append("contract drift: %s" % label)
+            print("    FAIL %s: %s" % (label, detail))
+    for label, mutate in (
+            ("a contract wrapper `if:` with only the pause check",
+             lambda t: t.replace("vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true' &&",
+                                 "vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true'", 1)),
+            ("a contract naming the retired reply model",
+             lambda t: t.replace("3. `claude-haiku-5-5`", "3. `claude-haiku-4-5`", 1))):
+        mutated = mutate(c_text)
+        if mutated != c_text and not all(ok for _, ok, _ in contract_checks(mutated, stage_doc)):
+            PASS += 1
+            print("    ok   (expected) caught: %s" % label)
+        else:
+            FAIL += 1
+            FAILED.append("contract check missed: %s" % label)
+            print("    FAIL not caught: %s" % label)
 
     print("\n==================== T7 job gating ====================")
     print("passed: %d   failed: %d" % (PASS, FAIL))

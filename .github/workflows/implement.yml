@@ -774,10 +774,13 @@ jobs:
       # #1239).
       agent-started: ${{ (steps.agent-ran-retry.outputs.started == 'true' || steps.agent-ran-cycle.outputs.started == 'true') && 'true' || steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
-      # Most-recent-wins across retry/cycle only, same convention as
-      # agent-conclusion above.
-      commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
-      push-ok: ${{ steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
+      # Retry/cycle only, and both from the same chain: the retry's pair
+      # when it published commits, else the cycle's when that did, else
+      # most-recent-wins as agent-conclusion above. A retry whose agent
+      # never started still runs its publish step and counts 0, which must
+      # not hide the commits the cycle published (code review of #1239).
+      commits-published: ${{ (steps.publish-stranded-retry.outputs.commits-published != '' && steps.publish-stranded-retry.outputs.commits-published != '0') && steps.publish-stranded-retry.outputs.commits-published || (steps.publish-stranded-cycle.outputs.commits-published != '' && steps.publish-stranded-cycle.outputs.commits-published != '0') && steps.publish-stranded-cycle.outputs.commits-published || steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
+      push-ok: ${{ (steps.publish-stranded-retry.outputs.commits-published != '' && steps.publish-stranded-retry.outputs.commits-published != '0') && steps.publish-stranded-retry.outputs.push-ok || (steps.publish-stranded-cycle.outputs.commits-published != '' && steps.publish-stranded-cycle.outputs.commits-published != '0') && steps.publish-stranded-cycle.outputs.push-ok || steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
       # Record-only (not read by the stall path): 'true' when ANY chain
       # that ran failed/could not refresh, even one a later chain healed.
       agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
@@ -1124,10 +1127,14 @@ jobs:
       # continues on that tier — there is nowhere higher to escalate to, so a
       # cold restart on inputs.model would silently discard the escalation
       # the prior cycle already earned. No new workflow_dispatch input: the
-      # carried tier is read back from the field "Record truncated-cycle
-      # count" persists in spec-meta.json (truncated_tier), which is already
-      # up to date in this checkout because the guard above only admits the
-      # next expected iteration.
+      # carried tier is read back from the fields "Record truncated-cycle
+      # count" persists in spec-meta.json, which are already up to date in
+      # this checkout because the guard above only admits the next expected
+      # iteration. truncated_tier_role ("escalation"/"primary") is matched,
+      # not the model ID in truncated_tier, so a model-default bump between
+      # two cycles (claude-opus-5 -> claude-opus-5-5) still carries the
+      # escalation forward. A spec-meta.json written before the role was
+      # recorded falls back to the ID comparison.
       - name: Resolve effective model tier (cycle)
         id: effective-model
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -1137,7 +1144,8 @@ jobs:
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
         run: |
           carried=$(jq -r '.truncated_tier // empty' "$SPEC_DIR/spec-meta.json")
-          if [ "$carried" = "$ESCALATION_MODEL" ]; then
+          role=$(jq -r '.truncated_tier_role // empty' "$SPEC_DIR/spec-meta.json")
+          if [ -n "$ESCALATION_MODEL" ] && { [ "$role" = "escalation" ] || { [ -z "$role" ] && [ "$carried" = "$ESCALATION_MODEL" ]; }; }; then
             echo "model=$ESCALATION_MODEL" >> "$GITHUB_OUTPUT"
           else
             echo "model=$MODEL" >> "$GITHUB_OUTPUT"
@@ -3731,6 +3739,7 @@ jobs:
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TIER: ${{ steps.final.outputs.tier }}
+          ESCALATION_MODEL: ${{ inputs.escalation-model }}
           DROPPED_IDS: ${{ steps.final.outputs.dropped-ids }}
           DROPPED_KNOWN: ${{ steps.final.outputs.dropped-known }}
           GATE_READY_NOW: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
@@ -3741,17 +3750,25 @@ jobs:
           git reset -q --hard "origin/${SPEC_PREFIX}$SLUG"
           current=$(jq -r '.truncated_count // 0' "$SPEC_DIR/spec-meta.json")
           current_tier=$(jq -r '.truncated_tier // empty' "$SPEC_DIR/spec-meta.json")
+          current_role=$(jq -r '.truncated_tier_role // empty' "$SPEC_DIR/spec-meta.json")
           if [ "$TRUNCATED" = "true" ]; then
             new_count=$((current + 1))
             # The tier a carried-forward cycle actually ran on (ordinary or
             # inputs.escalation-model) — read back by "Resolve effective
             # model tier" at the START of the next cycle so a truncated run
             # already on the escalation tier is never cold-restarted on the
-            # ordinary tier (FR-007, FR-021).
+            # ordinary tier (FR-007, FR-021). Its role is what that step
+            # matches, so a bumped escalation model ID still continues.
             new_tier="$TIER"
+            if [ -n "$ESCALATION_MODEL" ] && [ "$TIER" = "$ESCALATION_MODEL" ]; then
+              new_role="escalation"
+            else
+              new_role="primary"
+            fi
           else
             new_count=0
             new_tier=""
+            new_role=""
           fi
           current_dropped=$(jq -c '[.dropped_task_ids // [] | .[]?]' "$SPEC_DIR/spec-meta.json")
           new_dropped="$current_dropped"
@@ -3759,14 +3776,15 @@ jobs:
             new_dropped=$(jq -cn --arg ids "${DROPPED_IDS:-}" '$ids | split(" ") | map(select(. != ""))')
           fi
           current_ready=$(jq -r 'if .gate_suite_ready == false then "false" elif .gate_suite_ready == true then "true" else "" end' "$SPEC_DIR/spec-meta.json")
-          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ] && { [ -z "${GATE_READY_NOW:-}" ] || [ "$GATE_READY_NOW" = "$current_ready" ]; }; then
+          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_role" = "$current_role" ] && [ "$new_dropped" = "$current_dropped" ] && { [ -z "${GATE_READY_NOW:-}" ] || [ "$GATE_READY_NOW" = "$current_ready" ]; }; then
             # Nothing to persist — the value already on the branch is
             # current, so the count reported here is trustworthy as-is.
             echo "count=$new_count" >> "$GITHUB_OUTPUT"
           else
-            jq --argjson n "$new_count" --arg tier "$new_tier" --argjson dropped "$new_dropped" \
-              --arg ready "${GATE_READY_NOW:-}" \
+            jq --argjson n "$new_count" --arg tier "$new_tier" --arg role "$new_role" \
+              --argjson dropped "$new_dropped" --arg ready "${GATE_READY_NOW:-}" \
               '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)
+               | if $role == "" then del(.truncated_tier_role) else .truncated_tier_role = $role end
                | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end
                | if $ready == "" then . else .gate_suite_ready = ($ready == "true") end' \
               "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
@@ -3776,7 +3794,7 @@ jobs:
             git add "$SPEC_DIR/spec-meta.json"
             if [ "$TRUNCATED" = "true" ]; then
               git commit -q -m "implement: record truncated cycle (consecutive count=$new_count, tier=$new_tier)"
-            elif [ "$new_count" != "$current" ] || [ "$new_tier" != "$current_tier" ]; then
+            elif [ "$new_count" != "$current" ] || [ "$new_tier" != "$current_tier" ] || [ "$new_role" != "$current_role" ]; then
               git commit -q -m "implement: reset truncated-cycle count"
             elif [ "$new_dropped" != "$current_dropped" ]; then
               git commit -q -m "implement: record dropped task ids ($(printf '%s' "$new_dropped" | jq -r 'join(" ")'))"
