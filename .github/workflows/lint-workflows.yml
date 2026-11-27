@@ -5079,6 +5079,14 @@ jobs:
       - name: Gate 181 self-test — a removed or App-valued override, the App token under another env name, a missing github_token, a non-tool-args deny source, a hand list without /proc, a stale exemption and each composite deny removed each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-credential-scrub.py --self-test
+      # Gate 182 — #889: a PR title, body or commit message that uses a
+      # closing keyword on an open disposition:tracking issue closes it on
+      # merge, and Gate 124 turns main red. The live check runs in
+      # pr-closing-keyword-guard.yml on every PR (no paths: filter, and on
+      # `edited`); this step runs its self-test.
+      - name: Gate 182 self-test — every closing-keyword form on a tracking issue, a cross-repo or URL reference and a commit message each fail; addresses, a longer number and another repo pass
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pr-closing-keywords.py --self-test
 
       # Gate 175 — a workflow_dispatch input reaches a typed reusable-workflow
       # input only in an allowlisted form: fromJSON(inputs.X), fromJSON over a
