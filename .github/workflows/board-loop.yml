@@ -6886,7 +6886,8 @@ jobs:
 
       # research.md D15 + contracts/prove-step.md "Re-drive". The
       # dispatchable set and the uses-graph are read off the checked-out
-      # tree at this exact moment (the merge commit's own tree), so a
+      # tree at this exact moment (the default branch's tip, which holds
+      # the merge being proven; this file's header says why), so a
       # wrapper added or removed by the very merge being proven is
       # accounted for.
       - name: Decide whether this merge needs a re-driven run, and which
