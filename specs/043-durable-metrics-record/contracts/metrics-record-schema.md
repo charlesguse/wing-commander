@@ -122,8 +122,10 @@ definition that every already-persisted value already satisfied.
 
 `permission_denials` (additive per rule 1 above) counts the tool calls
 the permission system refused in the run. One refusal is one entry of
-the transcript's terminal result record's `permission_denials` list,
-the same list the watchdog's denied-tool signal reads. `total` is the
+the transcript's terminal result record's `permission_denials` list.
+The watchdog's denied-tool signal reads the same field from every
+result record; this group, like the record's other fields, reads only
+the terminal one. `total` is the
 number of entries, and `by_tool` maps a tool class to its count. A
 class is the tool's own name when it is one of the action's built-in
 tools (`Bash`, `Edit`, `MultiEdit`, `Write`, `Read`, `Glob`, `Grep`,

@@ -510,9 +510,11 @@ runs:
         refusal=false
         [ "$(jqget '.stop_reason')" = "refusal" ] && refusal=true
         # Tool calls the permission system refused: one entry of the terminal
-        # result record's permission_denials list is one refusal, the same
-        # list watchdog.yml's "Collect: execution-output artifacts" step
-        # reads for its denied-tool signal. Only the count and a fixed tool
+        # result record's permission_denials list is one refusal. It is the
+        # field watchdog.yml's "Collect: execution-output artifacts" step
+        # reads for its denied-tool signal, though that step reads it from
+        # every result record and this record, like its other fields, reads
+        # only the terminal one. Only the count and a fixed tool
         # class reach the record, never the denied command, its input or
         # any other text the agent wrote: records are persisted to the
         # metrics branch. A tool outside the fixed list counts as "other"
