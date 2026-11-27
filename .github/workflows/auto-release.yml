@@ -1479,11 +1479,12 @@ jobs:
           rate_limited=""
           rate_limit_hits=0
           MAX_RATE_LIMIT_POLLS=3
-          # cleanup.yml closes the lifecycle issue (close-with-comment) and only
-          # then swaps its last stage label for stage:done, so a poll can read
-          # it CLOSED with neither stage:done nor stage:stalled for a few
-          # seconds (#1083, 2026-11-04: closed 09:31:20, stage:done 09:31:22).
-          # A closed issue in that state is re-read for up to this many more
+          # cleanup.yml used to close the lifecycle issue (close-with-comment)
+          # before adding stage:done, so a poll could read it CLOSED with
+          # neither stage:done nor stage:stalled for a few seconds (#1083,
+          # 2026-11-04: closed 09:31:20, stage:done 09:31:22). It now adds
+          # stage:done first (#889); the settle window stays as a guard. A
+          # closed issue in that state is re-read for up to this many more
           # polls before it counts as terminal.
           closed_settle_polls=0
           MAX_CLOSED_SETTLE_POLLS=4

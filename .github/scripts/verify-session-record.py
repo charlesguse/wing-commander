@@ -325,6 +325,16 @@ def self_test():
     finally:
         wsr.record, wsr.read = strict_record, strict_read
 
+    # The attribution pattern before #889: any marks and any link around
+    # the phrase.
+    footer_line = wsr.FOOTER_LINE_RE
+    wsr.FOOTER_LINE_RE = re.compile(r"^[\W_]*" + wsr.FOOTER_RE.pattern + r"(?:\([^()\s]*\))?[\W_]*$")
+    try:
+        if not _fixture_failures():
+            failures.append("an attribution pattern wider than the two real forms passed every fixture")
+    finally:
+        wsr.FOOTER_LINE_RE = footer_line
+
     kind, fields = SAMPLES["decision"]
     if run_case({"build": kind, "fields": fields}) is None:
         failures.append("a fixture that states no expectation passed")

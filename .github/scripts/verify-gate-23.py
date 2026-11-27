@@ -796,6 +796,16 @@ DRIFT_CASES = [
      {},
      True, ("somesharedtool6",)),
 
+    # #889: a here-string (`<<<`) is not a heredoc. HEREDOC_OPEN used to
+    # match the `<< "word` inside `<<< "word ..."`, and the scan then skipped
+    # every later line looking for a `word` closer, so a tool called after
+    # it was never compared with the canonical list.
+    ("a here-string with a literal word does not hide the lines after it",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             run='read -ra helpers <<< "containment.sh x"\n'
+                                 "somefancytool7 --check"))},
+     True, ("somefancytool7",)),
+
     ("no false positive: a one-line function definition, its calls, and the "
      "bash builtin shopt",
      {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",

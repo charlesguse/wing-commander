@@ -975,7 +975,13 @@ jobs:
           echo "summary-file=$f" >> "$GITHUB_OUTPUT"
 
       # Atomic close-with-comment avoids a separate close call that could
-      # race a duplicate comment on retry.
+      # race a duplicate comment on retry. stage:done goes on BEFORE the
+      # close (#889), so no reader -- board-status, the watchdog, a
+      # stage-filtered list, auto-release's poll -- ever sees a closed
+      # lifecycle without it. A retry is harmless either way: a failed
+      # label call stops the step before the close, and a failed close
+      # leaves the issue open, so this job's idempotency check (closed
+      # only) runs the step again, re-adding a label already there.
       - name: Close lifecycle issue and flip label
         if: steps.idempotency.outputs.skip != 'true'
         env:
@@ -983,9 +989,9 @@ jobs:
           ISSUE: ${{ steps.meta.outputs.issue }}
           PR_NUMBER: ${{ inputs.pr-number }}
         run: |
-          gh issue close "$ISSUE" --comment "$(cat "${{ steps.summary.outputs.summary-file }}")"
           gh label create "stage:done" --color 5319E7 --description "Lifecycle complete" --force
           gh issue edit "$ISSUE" --add-label "stage:done"
+          gh issue close "$ISSUE" --comment "$(cat "${{ steps.summary.outputs.summary-file }}")"
           stale=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("stage:") and . != "stage:done")] | .[]')
           for l in $stale; do
             gh issue edit "$ISSUE" --remove-label "$l"
