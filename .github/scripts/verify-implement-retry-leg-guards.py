@@ -40,6 +40,12 @@ Checks (on implement.yml's `implement` job):
             transcript, so a retry that fails in its own setup reports
             'false' after a cycle agent that ran and pushed (code review
             of #1239).
+  published the job's `commits-published` and `push-ok` outputs come
+            from one chain: the retry's when it published commits, else
+            the cycle's when that did, else the most recent. A retry
+            whose agent never started still runs its publish step and
+            counts 0, which hid the cycle's published commits from the
+            stall notice (#889, found by the code review of #1239, pass 2).
   stall     the exhausted-retry notice ("Report stalled on lifecycle
             issue"), fed agent-started='false', says the agent never
             started instead of "no higher model tier remains", which the
@@ -369,13 +375,55 @@ def check_message(doc):
     return errs
 
 
+# (commits-published, push-ok) pairs one publish-stranded-commits call can
+# leave: never ran, nothing to publish, or commits pushed or refused.
+PUBLISH_PAIRS = (("", ""), ("0", "true"), ("0", "false"), ("2", "true"),
+                 ("3", "false"))
+
+
+def check_published(doc):
+    """commits-published/push-ok: one chain's pair, a nonzero count first."""
+    outputs = ((doc.get("jobs") or {}).get(JOB) or {}).get("outputs") or {}
+    exprs = {k: outputs.get(k) for k in ("commits-published", "push-ok")}
+    missing = [k for k, v in exprs.items() if v is None]
+    if missing:
+        return ["published: the {0!r} job has no {1} output".format(JOB, ", ".join(missing))]
+    errs = []
+    for retry, cycle in itertools.product(PUBLISH_PAIRS, repeat=2):
+        ctx = {}
+        for sid, (count, ok) in (("publish-stranded-retry", retry),
+                                 ("publish-stranded-cycle", cycle)):
+            ctx["steps.{0}.outputs.commits-published".format(sid)] = count
+            ctx["steps.{0}.outputs.push-ok".format(sid)] = ok
+        if retry[0] not in ("", "0"):
+            want = retry
+        elif cycle[0] not in ("", "0"):
+            want = cycle
+        else:
+            want = retry if retry[0] else cycle
+        got = []
+        for key in ("commits-published", "push-ok"):
+            try:
+                v = evaluate_value(exprs[key], ctx, KNOWN)
+            except ValueError as exc:
+                return ["published: cannot evaluate {0}: {1}".format(key, exc)]
+            got.append("" if v is None else str(v).lower() if isinstance(v, bool) else str(v))
+        if tuple(got) != want:
+            errs.append("published: (commits-published, push-ok) is {0!r} for retry={1!r}, "
+                        "cycle={2!r}; want {3!r} (a retry that published nothing must not "
+                        "hide the cycle's published commits, and both values come from one "
+                        "chain)".format(tuple(got), retry, cycle, want))
+    return errs
+
+
 def run_checks(stage_text, workflow_texts):
     doc = yaml.safe_load(stage_text) or {}
     steps = ((doc.get("jobs") or {}).get(JOB) or {}).get("steps") or []
     if not steps:
         return ["{0} has no {1!r} job steps".format(WORKFLOW, JOB)]
     return (check_clear(steps) + check_started(steps) + check_pointers(workflow_texts)
-            + check_output(doc) + check_stall(doc) + check_message(doc))
+            + check_output(doc) + check_published(doc) + check_stall(doc)
+            + check_message(doc))
 
 
 def load(root):
@@ -464,6 +512,17 @@ def self_test(root):
             "${{ steps.agent-ran-retry.outputs.started || "
             "steps.agent-ran-cycle.outputs.started }}")
 
+    def published_most_recent(doc):
+        outs = doc["jobs"][JOB]["outputs"]
+        for key in ("commits-published", "push-ok"):
+            outs[key] = ("${{ steps.publish-stranded-retry.outputs.%s || "
+                         "steps.publish-stranded-cycle.outputs.%s }}" % (key, key))
+
+    def published_mixed_chains(doc):
+        doc["jobs"][JOB]["outputs"]["push-ok"] = (
+            "${{ steps.publish-stranded-retry.outputs.push-ok || "
+            "steps.publish-stranded-cycle.outputs.push-ok }}")
+
     def stall_unbranched(doc):
         s = next(x for x in doc["jobs"][STALL_JOB]["steps"] if x.get("name") == STALL_STEP)
         s["run"] = re.sub(r'if \[ "\$AGENT_STARTED" = "false" \]; then\n.*?\n\s*else\n(.*?)\n\s*fi\n',
@@ -492,6 +551,8 @@ def self_test(root):
         s["run"] = s["run"].replace('if [ ! -f "$file" ]; then', "if true; then", 1)
 
     doc_cases = [("agent-started most-recent-wins", output_most_recent, "output:"),
+                 ("commits-published/push-ok most-recent-wins", published_most_recent, "published:"),
+                 ("push-ok read from a different chain", published_mixed_chains, "published:"),
                  ("never-started headline names a higher tier", stall_names_tier, "stall:"),
                  ("clear deletes the cycle transcript", clear_deletes, "message:"),
                  ("extract has no cycle fallback", extract_no_fallback, "message:"),

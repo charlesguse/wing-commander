@@ -35,6 +35,14 @@ the poll's own sleeps, not wall time. A no-op `sleep` on PATH used to leave
 the 2-second wall-clock budget racing the machine's load, and the suite
 failed under `run-local-gates.py --jobs 6` while passing alone (#963).
 
+The merge decision is two lines (`merge`, then the PR number). Its first
+line was read with `printf '%s\n' "$merge_decision" | head -1`; under the
+step's pipefail a `head` that exits before the second line is written
+SIGPIPEs the printf, rc 141 ends the step, and the poll dies just before it
+merges (about 1 in 3,000 calls; #889, found by the code review of #1287).
+A `head` stub that fails on a merge decision every time makes that
+deterministic.
+
 Usage: python3 .github/scripts/verify-auto-release-gate-waits-for-stage.py
 Requires: bash, jq.
 """
@@ -108,6 +116,19 @@ esac
 VIRTUAL_CLOCK = 'sleep() { SECONDS=$((SECONDS + $1)); }\n'
 PASS_SECONDS = 30
 
+# A `head` that fails its pipeline whenever it is fed a two-line merge
+# decision, as a `printf` SIGPIPE'd by an early-exiting `head` does about
+# once in 3,000 calls under pipefail (rc 141). Any other input goes to the
+# real head, so only a pipe into head at the merge decision can trip it.
+STUB_HEAD_DIES = r'''#!/usr/bin/env bash
+input="$(cat; printf x)"; input="${input%x}"
+case "$input" in
+  merge$'\n'*) printf 'merge\n'; exit 141 ;;
+esac
+printf '%s' "$input" | "@REAL_HEAD@" "$@"
+'''
+REAL_HEAD = shutil.which("head") or "/usr/bin/head"
+
 BASH = None
 failures = []
 
@@ -120,8 +141,11 @@ def check(name, cond, detail=""):
         print("::error::verify-auto-release-gate-waits-for-stage: {0} -- {1}".format(name, detail))
 
 
-def run(script, gate, label_seq, **env_over):
-    """-> (rc, out, verdict dict, merge count, issue views)."""
+def run(script, gate, label_seq, pipe_dies=False, **env_over):
+    """-> (rc, out, verdict dict, merge count, issue views).
+
+    pipe_dies puts STUB_HEAD_DIES on PATH: a pipe into `head` fails the
+    way a SIGPIPE'd writer does, every time, for a merge decision."""
     root = tempfile.mkdtemp(prefix="wc-ar-gate-wait-")
     try:
         workdir = tempfile.mkdtemp(dir=root)
@@ -132,7 +156,10 @@ def run(script, gate, label_seq, **env_over):
         for name in SHARED:
             shutil.copyfile(os.path.join(".github", "actions", "_shared", name),
                             os.path.join(shared, name))
-        for name, body in (("gh", STUB_GH),):
+        stubs = [("gh", STUB_GH)]
+        if pipe_dies:
+            stubs.append(("head", STUB_HEAD_DIES.replace("@REAL_HEAD@", REAL_HEAD)))
+        for name, body in stubs:
             path = os.path.join(bindir, name)
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(body)
@@ -207,6 +234,11 @@ def cases(script, ck):
     ck("the plan PR is merged once the plan stage has written stage:plan",
        rc == 0 and merges == 1 and v.get("outcome") == "fail-timeout",
        "rc={0} merges={1} verdict={2}\n{3}".format(rc, merges, v, out))
+
+    rc, out, v, merges, views = run(script, "plan/", ["stage:plan"], pipe_dies=True)
+    ck("the merge decision's first line is read without a pipe, so a SIGPIPE'd "
+       "writer cannot end the poll just before it merges (#889, found by the code review of #1287)",
+       rc == 0 and merges == 1, "rc={0} merges={1}\n{2}".format(rc, merges, out))
 
     rc, out, v, merges, views = run(script, "spec/", ["stage:implement"])
     ck("a mergeable finalize PR waits for stage:review the same way",
