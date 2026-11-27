@@ -60,7 +60,9 @@ import yaml
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from wc_gate_suite_sites import (CONTAINED_COMPOSITE, COVERED_WORKFLOWS,  # noqa: E402
-                                 EXEMPT_GATE_SUITE_SITES, SITES, Site, suite_steps)
+                                 EXEMPT_GATE_SUITE_SITES, SITES, SUITE_INVOCATION_RE, Site,
+                                 suite_steps)
+from wc_regex_probe import finishes  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
@@ -346,6 +348,19 @@ def self_test():
                 label, next(p for p in got if expect in p)))
         else:
             failures.append("mutation {0!r} not caught for {1!r}: {2}".format(label, expect, got))
+    for line in ("python3 .github/scripts/run-local-gates.py", "if ! python3 x/run-local-gates.py",
+                 "if !python3 run-local-gates.py", 'cd "$d" && python3 run-local-gates.py',
+                 "timeout 600 python3 run-local-gates.py", "( exec python3 -u run-local-gates.py",
+                 "if ! timeout 5 python3 run-local-gates.py"):
+        if not SUITE_INVOCATION_RE.search(line):
+            failures.append("`{0}` not recognised as a suite invocation".format(line))
+    for line in ("echo python3 run-local-gates.py", "# python3 run-local-gates.py"):
+        if SUITE_INVOCATION_RE.search(line):
+            failures.append("`{0}` misread as a suite invocation".format(line))
+    for label, line in (("if", "if" + "  if" * 40), ("cd", "cd " + "!&&timeout && cd " * 40)):
+        if not finishes(SUITE_INVOCATION_RE, line):
+            failures.append("SUITE_INVOCATION_RE takes unbounded time on a long run of "
+                            "`{0}` prefixes".format(label))
     for f in failures:
         print("::error::Gate 152 self-test: " + f)
     if failures:
