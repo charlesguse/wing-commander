@@ -743,14 +743,10 @@ def closing_re_single_reader(paths=None, sources=None):
 # Scripts that may carry the closing-keyword stems in a pattern of their
 # own, each with why. verify-proof-list.py: its research D6 scan of
 # wc_proof_list.py carries a pasted copy as a self-test seed.
-# wc_merge_evidence.py: its _LINKED_ISSUE_RE is a known copy, tracked by
-# the Maintenance backlog line held by the board loop (bl-ddf2cb8b) and
-# removed by PR #1319, after which closing_keyword_single_home() guards
-# that file too; drop the entry then. An entry whose copy is gone does not
-# fail, so the two PRs can land in either order.
+# (wc_merge_evidence.py's _LINKED_ISSUE_RE was exempt here until PR #1319
+# removed it; the file is guarded like any other now.)
 CLOSING_COPY_EXEMPT = {
     "verify-proof-list.py": "self-test seed of its own D6 scan",
-    "wc_merge_evidence.py": "_LINKED_ISSUE_RE, Maintenance backlog line bl-ddf2cb8b",
 }
 # Two closing-keyword stems joined by a regex alternation, each stem
 # perhaps carrying its tense suffix: `close[sd]?|fix(?:e[sd])?`, `closes|fixes`.
@@ -761,8 +757,10 @@ CLOSING_STEMS_RE = re.compile(
 def closing_pattern_copies(text):
     """Line numbers of string constants in `text` (docstrings are prose and
     are not read) that spell a closing-keyword pattern: two of the stems
-    close, fix and resolve joined by an alternation, and an issue
-    reference `#`.
+    close, fix and resolve joined by an alternation, and either an issue
+    reference `#` or a tense suffix (CLOSING_ALTERNATION_RE), so a keyword
+    list kept in a constant of its own -- the seed Gate 182's check uses --
+    is a copy too, while a shell `closed|CLOSED)` state case is not.
     wc_shared_review.py's _CLOSES_RE (`closes|fixes|resolves|fix|close|resolve`)
     was a fourth such copy, missing the past tenses and every reference
     form but a bare #N (found by the code review of #1314)."""
@@ -781,7 +779,8 @@ def closing_pattern_copies(text):
     lines = []
     for node in ast.walk(tree):
         if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
-                and "#" in node.value and CLOSING_STEMS_RE.search(node.value)):
+                and ("#" in node.value or CLOSING_ALTERNATION_RE.search(node.value))
+                and CLOSING_STEMS_RE.search(node.value)):
             lines.append(node.lineno)
     return sorted(lines)
 
@@ -880,6 +879,12 @@ def self_test():
     if (closing_pattern_single_home(sources={"wc_shared_review.py": source}, exempt={})
             or not closing_pattern_single_home(sources={"wc_shared_review.py": source + drifted}, exempt={})
             or closing_pattern_single_home(sources={"x.py": source + drifted}, exempt={"x.py": "seed"})
+            # Pass 1 of the review of #1323: the keyword list alone, with
+            # no `#` in the same constant, is still a copy...
+            or not closing_pattern_single_home(sources={"x.py": source + seed}, exempt={})
+            # ...and a shell state case is not.
+            or closing_pattern_single_home(sources={"x.py": source + 'CASE = "  closed|CLOSED)\\n"\n'},
+                                           exempt={})
             or closing_pattern_single_home()):
         print("::error::verify-board-backlog-lines --self-test: the closing-keyword pattern single-home "
               "check misreads a script")

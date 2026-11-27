@@ -298,8 +298,9 @@ def title_for(text, prefix="Fix: "):
 
 # The one home of the closing-keyword pattern: the board loop's keyword
 # hold reads it, and verify-pr-closing-keywords.py (Gate 182),
-# wc_proof_list.closing_targets() and wc_shared_review.resolve_purpose_source()
-# read it through closing_keyword_refs(). verify-board-backlog-lines.py
+# wc_proof_list.closing_targets(), wc_merge_evidence.linked_issue() and
+# wc_shared_review.resolve_purpose_source() read it through
+# closing_keyword_refs(). verify-board-backlog-lines.py
 # fails if another script spells its own copy or reads CLOSING_RE itself.
 # The named groups say which issue a hit names; they change no match.
 CLOSING_RE = re.compile(
