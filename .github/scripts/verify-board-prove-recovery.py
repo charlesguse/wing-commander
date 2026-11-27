@@ -479,6 +479,8 @@ def run_board_pr_owned_jq_single_home():
 
 
 OWN_STEP_NAME = "Check the closed pull request is this loop's own, before any App token"
+OWN_STEP_ENV = {"EVENT_NAME": "${{ github.event_name }}",
+                "PR_NUMBER": "${{ github.event.pull_request.number }}"}
 
 
 def _prove_gate_steps(doc=None):
@@ -495,11 +497,25 @@ def mint_order_problems(steps):
     it read `owned == 'true'` (owner decision, 2026-11-27)."""
     problems = []
     names = [(s or {}).get("name") for s in steps]
-    ctx = next((i for i, s in enumerate(steps)
-                if str((s or {}).get("uses", "")).endswith("/wing-commander-context")), None)
+    mints = [i for i, s in enumerate(steps)
+             if str((s or {}).get("uses", "")).endswith("/wing-commander-context")]
+    ctx = mints[0] if mints else None
     own = names.index(OWN_STEP_NAME) if OWN_STEP_NAME in names else None
     if own is None or ctx is None:
         return ["prove-gate has no {0!r} step or no wing-commander-context step".format(OWN_STEP_NAME)]
+    # Code review of #1345: only one step may mint -- a second, ungated
+    # wing-commander-context step would put the App token on the runner
+    # for every closed pull request, and the rules below read only one.
+    if len(mints) != 1:
+        problems.append("prove-gate has {0} wing-commander-context steps -- exactly one, run only "
+                        "after the ownership check, may mint the App token".format(len(mints)))
+    # Code review of #1345: the run below supplies the step's env itself,
+    # so the step's own env: is pinned here -- an EVENT_NAME read off the
+    # wrong field reads owned=false on every directed prove dispatch (or
+    # owned=true on every closed PR), and an extra key could shadow
+    # BOARD_PR_OWNED_JQ, all with the run still green.
+    if ((steps[own] or {}).get("env") or {}) != OWN_STEP_ENV:
+        problems.append("prove-gate's ownership check's env: is not exactly {0!r}".format(OWN_STEP_ENV))
     if own > ctx:
         problems.append("prove-gate's ownership check comes after the App token is minted")
     if "secrets." in json.dumps(steps[own]):
@@ -601,6 +617,26 @@ def run_prove_gate_mints_after_ownership():
             return st
         return mutate
 
+    def own_env(key, value):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            env = dict(st[names.index(OWN_STEP_NAME)].get("env") or {})
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+            st[names.index(OWN_STEP_NAME)]["env"] = env
+            return st
+        return mutate
+
+    def second_mint(at):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            extra = {k: v for k, v in st[ctx].items() if k not in ("if", "id")}
+            st.insert(at(st), dict(extra, id="ctx2"))
+            return st
+        return mutate
+
     for label, mutate in (("the ownership check moved after the mint", moved_after),
                           ("the mint's if: dropped", mint_ungated),
                           ("the decision's if: dropped", decision_ungated),
@@ -608,7 +644,18 @@ def run_prove_gate_mints_after_ownership():
                           ("the ownership check given an if:",
                            own_given("if", "github.event_name == 'pull_request'")),
                           ("the ownership check given continue-on-error",
-                           own_given("continue-on-error", True))):
+                           own_given("continue-on-error", True)),
+                          ("the ownership check's EVENT_NAME pinned to pull_request",
+                           own_env("EVENT_NAME", "pull_request")),
+                          ("the ownership check's EVENT_NAME read off github.event.action",
+                           own_env("EVENT_NAME", "${{ github.event.action }}")),
+                          ("the ownership check's PR_NUMBER dropped", own_env("PR_NUMBER", None)),
+                          ("the ownership check shadowing BOARD_PR_OWNED_JQ",
+                           own_env("BOARD_PR_OWNED_JQ", "true")),
+                          ("a second, ungated mint after the decision",
+                           second_mint(lambda st: names.index(GATE_STEP_NAME) + 1)),
+                          ("a second, ungated mint between the ownership check and the mint",
+                           second_mint(lambda st: ctx))):
         if not mint_order_problems(mutate(steps)):
             failures += 1
             print("::error::verify-board-prove-recovery: self-check: {0} was not noticed".format(label))
