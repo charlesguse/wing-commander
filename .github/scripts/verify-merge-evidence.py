@@ -78,7 +78,11 @@ def build_snapshot(base_doc, case):
     bot = {"login": base_doc["bot_login"], "type": "Bot"}
     if verdict_head:
         snap["issue_comments"] = [{"id": 1, "created_at": "2026-11-10T09:00:00Z", "user": bot,
-                                   "body": "Review round 1 converged -- clean on PR #{0} (head {1})".format(
+                                   # The whole comment the review job posts: board_item_marker
+                                   # reads a converged verdict only in that shape (#889).
+                                   "body": ("Review round 1 converged -- zero open in-scope findings on PR #{0} "
+                                            "(head {1}). Proceeding to readiness.\n\n"
+                                            "<!-- wing-commander-board-item: {{\"step\": \"readiness\"}} -->").format(
                                        snap["number"], verdict_head)}]
     if bump_comment:
         snap["comments"] = [{"id": 2, "created_at": "2026-11-10T09:00:00Z", "user": bot,
