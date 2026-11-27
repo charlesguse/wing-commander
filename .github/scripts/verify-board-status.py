@@ -795,6 +795,175 @@ def fit_half():
           bs.append_section("body\n", "") == "body\n" and bs.append_section("body\n", "x\n") == "body\n\nx\n")
 
 
+# Each switch's real reader, as SWITCH_READERS names it (#889; owner decision
+# 2026-11-27: mirror each switch's real reader). Each entry is the file and
+# the literal reader statement there; a site that moves or changes its
+# comparison fails here before Board status can drift from it again.
+READER_SITES = {
+    "auto_release_paused": [(".github/workflows/auto-release.yml",
+                             "if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'")],
+    "board_auto_merge": [(".github/workflows/board-loop.yml",
+                          "SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}"),
+                         (".github/workflows/board-loop.yml",
+                          "switch_on: ($switch_on == \"true\")")],
+    "board_backlog_lines": [(".github/workflows/board-loop.yml",
+                             "BACKLOG_LINES_SWITCH: ${{ vars.WING_COMMANDER_BOARD_BACKLOG_LINES }}"),
+                            (".github/workflows/board-loop.yml",
+                             "\"switch\": os.environ.get(\"BACKLOG_LINES_SWITCH\") or \"\","),
+                            (".github/scripts/board_backlog_lines.py",
+                             "if env.get(\"backlog_lines_switch\") != \"true\":")],
+    "board_can_push_workflows": [(".github/workflows/board-loop.yml",
+                                  "CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}")],
+    "board_loop_paused": [(".github/workflows/board-loop.yml",
+                           "if [ \"${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}\" = \"true\" ]; then")],
+    "lifecycle_auto_merge": [(".github/workflows/lifecycle-review-gate.yml",
+                              "!cancelled() && vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'")],
+    "review_gate_paused": [(".github/workflows/lifecycle-review-gate.yml",
+                            "if: vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED != 'true'")],
+    "feature_health_paused": [(".github/workflows/wing-commander-feature-health.yml",
+                               "switch-value: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}")],
+    "merge_evidence_paused": [(".github/workflows/wing-commander-merge-evidence.yml",
+                               "switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}")],
+    "proof_list_paused": [(".github/workflows/wing-commander-proof-list.yml",
+                           "switch-value: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}")],
+}
+# What each reader kind must show at its site: an expression compares the
+# variable to 'true' inside ${{ }} or an if:, an exact reader compares a raw
+# copy to "true", a guard hands the raw value to wing-commander-watch-guard.
+READER_SHAPE = {
+    "expression": re.compile(r"vars\.WING_COMMANDER_[A-Z_]+ [!=]= 'true'"),
+    "exact": re.compile(r'== \\?"true\\?"|!= "true"|\$\{\{ vars\.WING_COMMANDER_[A-Z_]+ \}\}|os\.environ\.get'),
+    "guard": re.compile(r"^switch-value: \$\{\{ vars\.WING_COMMANDER_[A-Z_]+ \}\}$"),
+}
+GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
+# Values a person could type into a variable, and how each kind reads them.
+READER_VALUES = ("true", "True", "TRUE", "true ", " true", "\ttrue\n", "false", "", None, "yes", "1")
+
+
+def reader_sites_problems(root, readers, sites):
+    """The mirror is tied to each reader: every switch has a reader kind and
+    a site, every site's statement is in a line of its file, names its own variable
+    and has its kind's shape, and a guard's workflow hands the value to the
+    watch-guard composite."""
+    problems = []
+    for key in sorted(set(bs.SWITCH_ENV) - {"tasks_review"}):
+        kind = readers.get(key)
+        if kind not in READER_SHAPE:
+            problems.append("{0}: no reader kind (got {1!r})".format(key, kind))
+            continue
+        if not sites.get(key):
+            problems.append("{0}: no reader site".format(key))
+        var = "WING_COMMANDER_" + bs.SWITCH_ENV[key]
+        for path, statement in sites.get(key, []):
+            try:
+                with open(os.path.join(root, path), encoding="utf-8") as fh:
+                    lines = [line.strip() for line in fh.read().splitlines()]
+            except OSError as err:
+                problems.append("{0}: {1} unreadable ({2})".format(key, path, err))
+                continue
+            at = [i for i, line in enumerate(lines) if statement in line]
+            if not at:
+                problems.append("{0}: {1} no longer has the line {2!r}".format(key, path, statement))
+            if not READER_SHAPE[kind].search(statement):
+                problems.append("{0}: {2!r} is not a {1} reader".format(key, kind, statement))
+            if "WING_COMMANDER_" in statement and var not in statement:
+                problems.append("{0}: {1!r} reads another variable".format(key, statement))
+            if kind == "guard":
+                near = lines[max(0, at[0] - 10):at[0] + 1] if at else []
+                if not any(line.startswith("uses:") and "wing-commander-watch-guard" in line for line in near) \
+                        or "switch-name: " + var not in near:
+                    problems.append("{0}: {1} does not hand {2} to wing-commander-watch-guard".format(key, path, var))
+    for key in sorted(set(readers) - set(bs.SWITCH_ENV)):
+        problems.append("{0}: a reader for a switch SWITCH_ENV does not have".format(key))
+    return problems
+
+
+def reader_half():
+    """#889 (code review of #1092): Board status reads each switch the way
+    its own reader does. A fixture per switch drives switch_set() over the
+    values a person might type; the exact readers are run for real (the
+    shipped jq comparison and board_backlog_lines.selection_gate), the
+    guard ones through _switch_on (the watch-guard composite's own test),
+    and the sites are checked to still read that way."""
+    import ast
+    import inspect
+    import subprocess
+    import board_backlog_lines as bbl
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def expression(value):
+        # GitHub compares strings case-insensitively and never trims.
+        return str(value or "").lower() == "true"
+
+    def jq_merge(value):
+        out = subprocess.run(["jq", "-n", "--arg", "switch_on", str(value or ""), '($switch_on == "true")'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        return out == "true"
+
+    def backlog(value):
+        ok, reason = bbl.selection_gate({"backlog_lines_switch": str(value or ""), "loop_paused": False,
+                                         "constitution_text": None})
+        return reason != "backlog lines switch is not true"
+
+    real = {"expression": expression, "guard": bs._switch_on,
+            "exact": {"board_auto_merge": jq_merge, "board_backlog_lines": backlog}}
+    with open(os.path.join(root, GUARD_ACTION), encoding="utf-8") as fh:
+        check("wing-commander-watch-guard still tests the pause with wc_board_status._switch_on",
+              "bs._switch_on(" in fh.read())
+    for key in sorted(set(bs.SWITCH_ENV) - {"tasks_review"}):
+        kind = bs.SWITCH_READERS.get(key)
+        reader = real.get(kind)
+        if isinstance(reader, dict):
+            reader = reader.get(key)
+        if reader is None:
+            check("{0} has a real reader this check can run".format(key), False, kind)
+            continue
+        if kind == "exact" and not shutil.which("jq") and key == "board_auto_merge":
+            check("jq is available to run board-loop.yml's merge comparison", False, "jq not on PATH")
+            continue
+        wrong = [(v, bs.switch_set({key: v}, key), reader(v)) for v in READER_VALUES
+                 if bs.switch_set({key: v}, key) != reader(v)]
+        check("Board status reads {0} as its {1} reader does".format(key, kind), not wrong, wrong)
+
+    expected = {"board_auto_merge": "exact", "board_backlog_lines": "exact",
+                "feature_health_paused": "guard", "merge_evidence_paused": "guard", "proof_list_paused": "guard"}
+    check("only board auto-merge and backlog lines are read exactly, the pause sections through the guard, "
+          "the rest case-insensitively",
+          bs.SWITCH_READERS == dict({k: "expression" for k in bs.SWITCH_ENV if k != "tasks_review"}, **expected),
+          bs.SWITCH_READERS)
+
+    problems = reader_sites_problems(root, bs.SWITCH_READERS, READER_SITES)
+    check("every switch's reader site still reads it the way SWITCH_READERS says", not problems, problems)
+    # The check must fail on a drifted site, a wrong kind and a missing entry.
+    moved = dict(READER_SITES, board_auto_merge=[(".github/workflows/board-loop.yml",
+                                                  "switch_on: ($switch_on | ascii_downcase == \"true\")")])
+    check("a drifted reader site fails the tie", reader_sites_problems(root, bs.SWITCH_READERS, moved))
+    check("a reader kind that does not match its site fails the tie",
+          reader_sites_problems(root, dict(bs.SWITCH_READERS, review_gate_paused="guard"), READER_SITES))
+    check("a switch with no reader fails the tie",
+          reader_sites_problems(root, {k: v for k, v in bs.SWITCH_READERS.items() if k != "proof_list_paused"},
+                                READER_SITES))
+
+    # Everything in wc_board_status reads a switch through switch_set().
+    tree = ast.parse(inspect.getsource(bs))
+    direct = sorted({node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Name) and node.func.id == "_switch_on"})
+    check("wc_board_status reads no switch with _switch_on directly", not direct, direct)
+
+    # The bug as Board status showed it: "True" read on while the loop merged nothing.
+    shown = bs.render(dict(SNAP, switches=dict(SNAP["switches"], board_auto_merge="True",
+                                                board_can_push_workflows="True")))
+    check("board auto-merge set to 'True' renders off, as the loop's merge decision reads it",
+          "board auto-merge off; workflow-file fixes allowed" in shown, shown)
+    padded = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], lifecycle_auto_merge="true ")))
+                            ["owner"])
+    check("a padded lifecycle auto-merge leaves the final PR with the owner, as the gate's if: reads it",
+          675 in padded, padded.get(675))
+    cased = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], lifecycle_auto_merge="TRUE")))
+                           ["pipeline"])
+    check("lifecycle auto-merge set to 'TRUE' hands the final PR to the review gate", 675 in cased, cased.get(675))
+
+
 def docs_half():
     """#889: docs/setup.md says where Board status reports each switch. The
     switches render() states are read from its own state() calls, so a
@@ -817,11 +986,27 @@ def docs_half():
         check("docs/setup.md's {0} row says Board status reports it".format(var),
               'The "Board status" issue reports this switch' in rows.get(var, ""), rows.get(var, "")[-160:])
 
+    # #889 (code review of #1301): docs/reference.md names the switches
+    # Board status reports, in its board-status.yml row and its Known
+    # limits line, rather than calling them "the merge switches".
+    with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+        reference = fh.read()
+    check("docs/reference.md no longer calls Board status's switch lines the merge switches",
+          "merge switches" not in reference)
+    ref_row = next((line for line in reference.splitlines() if line.startswith("| `board-status.yml` |")), "")
+    limits = reference.split("## Known limits", 1)[-1]
+    limit = next((item for item in re.split(r"\n- ", limits) if '"Board status" issue shows' in item), "")
+    for key in keys:
+        var = "`WING_COMMANDER_{0}`".format(bs.SWITCH_ENV[key])
+        check("docs/reference.md's board-status.yml row names {0}".format(var), var in ref_row, ref_row[:160])
+        check("docs/reference.md's Known limits line names {0}".format(var), var in limit, limit[:200])
+
 
 def main():
     render_half()
     runtime_half()
     switches_half()
+    reader_half()
     docs_half()
     proof_list_half()
     merge_evidence_half()

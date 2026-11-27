@@ -206,7 +206,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | rebase | published stage, wrapper | every push to `main` by a non-bot actor; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
 | cleanup | published stage, wrapper | a lifecycle PR closes; daily, 06:53 UTC | see the lifecycle table |
 | metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
-| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the merge switches, the proof list's section and the feature-health section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
+| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the switches `WING_COMMANDER_AUTO_RELEASE_PAUSED`, `WING_COMMANDER_BOARD_LOOP_PAUSED`, `WING_COMMANDER_BOARD_AUTO_MERGE`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS`, `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` and `WING_COMMANDER_BOARD_BACKLOG_LINES` (each read the way its own reader reads it), the proof list's section and the feature-health section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
 | `wing-commander-proof-list.yml` | this repository | daily, 06:19 UTC; dispatch from the default branch only | builds the proof list: for each merge to the default branch in the last 30 days, whether a workflow run could show it working and whether anything is on record. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a collapsed section of "Board status". A dispatch from another branch is refused. A build that passes 23 minutes, or a single `git` or `gh` call that waits 2, fails with a one-line error before the job's 25-minute timeout. `WING_COMMANDER_PROOF_LIST_PAUSED` stops it |
 | `wing-commander-merge-evidence.yml` | this repository | hourly at :07 (verdicts) and daily, 05:41 UTC (audit); dispatch from the default branch only | the merge evidence audit ([spec](../specs/125-merge-evidence-audit/spec.md)): an hourly verdict for every open pull request into `main`, kept in the `merge-evidence-ledger` artifact, and a daily audit of every merge of the last 30 days with the verdict as of the merge and every commit that reached `main` without a pull request, which `board-status.yml` shows as a collapsed section. It only watches: read-only permissions, no agent, no App token, no merge, label, comment, check or status, and no merge job reads it. A dispatch from another branch is refused. `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` stops it; `WING_COMMANDER_BOT_LOGIN` names the pipeline App's login (`<slug>[bot]`) so its records can be told from a maintainer's; unset, it defaults to `wing-commander-bot[bot]`, and an empty login makes every verdict incomplete |
 | `wing-commander-feature-health.yml` | this repository | daily, 06:29 UTC; dispatch from the default branch only | gives each feature one health state (healthy, idle, quiet, not running, failing, paused, not configured or unreadable) from its run history, its kill switch and its own output signal, so a feature that runs green but produces nothing shows as quiet. Registry: `.github/scripts/feature-health-registry.json`, checked against this file by `verify-feature-health.py`. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a section of "Board status". It files nothing. A dispatch from another branch is refused. `WING_COMMANDER_FEATURE_HEALTH_PAUSED` stops it |
@@ -341,8 +341,8 @@ that waits on the owner).
 ## This repository's settings
 
 *This repository's instance, as read on 2026-11-10. A snapshot: check a live
-value with `gh variable list`, or read the merge switches in the daily "Board
-status" issue. Any variable not listed is unset and takes its default.*
+value with `gh variable list`, or read the switches the daily "Board
+status" issue reports. Any variable not listed is unset and takes its default.*
 
 | Variable | Default | Here |
 |---|---|---|
@@ -376,7 +376,10 @@ tables above. No kill switch is set except spec PR review's.
   remaining tasks all edit one very large file can make little progress per
   cycle and reach the iteration cap.
 - A session in a sandbox whose token cannot read Actions variables cannot see
-  the settings above. The "Board status" issue shows the merge switches only.
+  the settings above. The "Board status" issue shows only
+  `WING_COMMANDER_AUTO_RELEASE_PAUSED`, `WING_COMMANDER_BOARD_LOOP_PAUSED`,
+  `WING_COMMANDER_BOARD_AUTO_MERGE`, `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS`,
+  `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` and `WING_COMMANDER_BOARD_BACKLOG_LINES`.
 - Nothing enforces the three-lifecycle limit in implement.
 - The merge evidence audit records after the fact and blocks nothing: a
   session's merge of its own fix PR is still checked by nothing before it

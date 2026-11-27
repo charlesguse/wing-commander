@@ -87,7 +87,45 @@ def _title(text):
 
 
 def _switch_on(value):
+    """The wing-commander-watch-guard composite's pause test: "true" in any
+    case, padding stripped. Board status reads a switch through
+    switch_set(), which uses this only for the switches that guard reads."""
     return str(value or "").strip().lower() == "true"
+
+
+# How each switch's own reader turns its value into on or off, so the status
+# says what the pipeline will do (#889; owner decision 2026-11-27, on the
+# Roadmap issue: mirror each switch's real reader). verify-board-status.py
+# ties every entry to the reader it names and drives a fixture per switch.
+#   exact       only the exact text "true": board-loop.yml's merge decision
+#               (jq `$switch_on == "true"`) and board_backlog_lines.
+#               selection_gate (`!= "true"`)
+#   expression  "true" in any case, padding kept: a workflow's
+#               `vars.WING_COMMANDER_* == 'true'` (or `!= 'true'`), which
+#               GitHub compares case-insensitively and never trims
+#   guard       _switch_on, the watch-guard composite's own test
+SWITCH_READERS = {
+    "auto_release_paused": "expression",
+    "board_auto_merge": "exact",
+    "board_backlog_lines": "exact",
+    "board_can_push_workflows": "expression",
+    "board_loop_paused": "expression",
+    "lifecycle_auto_merge": "expression",
+    "feature_health_paused": "guard",
+    "merge_evidence_paused": "guard",
+    "proof_list_paused": "guard",
+    "review_gate_paused": "expression",
+}
+_READS = {
+    "exact": lambda value: str(value or "") == "true",
+    "expression": lambda value: str(value or "").lower() == "true",
+    "guard": _switch_on,
+}
+
+
+def switch_set(switches, key):
+    """Whether switch `key` is on, read the way its own reader reads it."""
+    return _READS[SWITCH_READERS[key]]((switches or {}).get(key))
 
 
 def lifecycle_wait(issue, prs, switches):
@@ -117,8 +155,8 @@ def lifecycle_wait(issue, prs, switches):
     elif stage in PIPELINE_STAGES:
         who, what = "pipeline", PIPELINE_STAGES[stage]
     elif stage == "stage:review":
-        gate_merges = (_switch_on(switches.get("lifecycle_auto_merge"))
-                       and not _switch_on(switches.get("review_gate_paused")))
+        gate_merges = (switch_set(switches, "lifecycle_auto_merge")
+                       and not switch_set(switches, "review_gate_paused"))
         if gate_merges:
             who, what = "pipeline", "final PR {0} with the lifecycle review gate".format(pr_ref or "(none open)")
         else:
@@ -164,7 +202,7 @@ def classify(snap):
             # WING_COMMANDER_AUTO_RELEASE_PAUSED is on auto-release.yml's
             # detect job never runs, so nothing closes it until unpaused.
             what = "fix the release failure; auto-release closes this once every mode it records has passed"
-            if _switch_on(switches.get("auto_release_paused")):
+            if switch_set(switches, "auto_release_paused"):
                 what += " -- but auto-release is paused, so it cannot close this until the pause is lifted"
             owner.append((ref, what, age))
         elif "spec-proposal" in labels:
@@ -209,7 +247,7 @@ def render(snap):
         rel_text = "none"
 
     def state(key, on_text, off_text):
-        return on_text if _switch_on(switches.get(key)) else off_text
+        return on_text if switch_set(switches, key) else off_text
 
     lines.append("- **main:** {0}".format(ci_text))
     lines.append("- **last release:** {0}; auto-release {1}".format(
@@ -617,7 +655,7 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
     section's reader) and `stale_keeps_section` serve feature health."""
     gh_obj = gh_obj or _gh_obj
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    paused = _switch_on(switches.get(switch_key))
+    paused = switch_set(switches, switch_key)
     last_good = "unknown"
     try:
         default = gh_obj("repos/{0}".format(repo))["default_branch"]
