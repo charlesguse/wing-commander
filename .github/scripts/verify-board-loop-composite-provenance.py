@@ -58,7 +58,12 @@ PR's own unreviewed tree, and the job would run its composites with the
 App's private key and import its .github/scripts with the bot token.
   (h) in every job that can run on a pull_request event, every checkout of
       this repository -- the trusted copy and the workspace root alike --
-      names `ref: ${{ github.event.repository.default_branch }}`.
+      names `ref: ${{ github.event.repository.default_branch }}`. The
+      trusted copy is held whatever `repository:` it names, and so is any
+      checkout whose `repository:` is an expression; only a literal
+      owner/name is another repository. A pull_request_review or
+      pull_request_review_comment trigger (github.sha is the merge commit
+      there too) holds every job.
 Which jobs can run on that event is worked out from the file, never
 listed. Each job's `if:` is evaluated as it would read on a pull_request
 event: no inputs, `github.event_name` known, every job that cannot run
@@ -130,6 +135,7 @@ TRUSTED_ROOT_REPOS = (None, "${{ github.repository }}")
 # can run on a pull_request event.
 PR_SAFE_REF = "${{ github.event.repository.default_branch }}"
 PR_EVENT = "pull_request"
+PR_REVIEW_EVENTS = {"pull_request_review", "pull_request_review_comment"}
 
 
 # --- rule (h): which jobs can run on a pull_request event -------------------
@@ -363,6 +369,10 @@ def pr_reachable_jobs(doc):
     on = (doc or {}).get("on", (doc or {}).get(True))
     events = set(on) if isinstance(on, (dict, list)) else ({on} if on else set())
     jobs = (doc or {}).get("jobs") or {}
+    if events & PR_REVIEW_EVENTS:
+        # github.sha is the PR's merge commit on these too, and the
+        # evaluator reads only pull_request: every job counts (fail closed).
+        return set(jobs)
     if PR_EVENT not in events:
         return set()
     skipped, done = set(), set()
@@ -389,7 +399,12 @@ def rule_h_problems(job_id, job):
         if not str(step.get("uses", "")).startswith("actions/checkout@"):
             continue
         w = step.get("with") or {}
-        if w.get("repository") not in TRUSTED_ROOT_REPOS:
+        repo = w.get("repository")
+        # The trusted copy is held whatever repository it names (rule (c)
+        # was), and so is any checkout whose repository is an expression,
+        # which can name this one; only a literal owner/name is another.
+        if step.get("name") != CHECKOUT_NAME and repo not in TRUSTED_ROOT_REPOS \
+                and "${{" not in str(repo):
             continue
         if w.get("ref") != PR_SAFE_REF:
             problems.append(
@@ -724,6 +739,24 @@ def mut_select_runs_on_pull_request(doc):
     return doc
 
 
+def mut_prove_gate_side_repo_spelled_out(doc):
+    """prove-gate's trusted copy spells this repository out as an expression
+    and goes back to github.sha: rule (c) no longer holds a job that can run
+    on a pull_request event, so rule (h) must."""
+    w = _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]
+    w["repository"] = "${{ github.event.repository.full_name }}"
+    w["ref"] = EXPECTED_REF
+    return doc
+
+
+def mut_review_trigger_added(doc):
+    """A pull_request_review trigger is added: github.sha is the PR's merge
+    commit there too, so every job is held to rule (h)."""
+    on = doc["on"] if "on" in doc else doc[True]
+    on["pull_request_review"] = {"types": ["submitted"]}
+    return doc
+
+
 # Rule (h)'s evaluator on fixed conditions: (if:, jobs certainly skipped on
 # a pull_request event, this job's needs, True when it is certainly skipped).
 PR_CONDITION_CASES = [
@@ -851,6 +884,10 @@ MUTATIONS = [
      "doc", mut_prove_root_ref_dropped, "rule (h)"),
     ("select can run on the pull_request trigger with its checkouts still at github.sha",
      "doc", mut_select_runs_on_pull_request, "rule (h)"),
+    ("prove-gate's trusted copy names this repository as an expression, at github.sha",
+     "doc", mut_prove_gate_side_repo_spelled_out, "rule (h)"),
+    ("a pull_request_review trigger is added with every other job still at github.sha",
+     "doc", mut_review_trigger_added, "rule (h)"),
 ]
 
 
