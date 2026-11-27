@@ -81,6 +81,18 @@ def _plain(text):
     return str(text).replace("<!--", "&lt;!--")
 
 
+ANNOUNCEMENT_PHRASE = "Action needed:"
+
+
+def _plain_note(text):
+    """Agent text bound for the plan-stage note, which the App posts on the
+    lifecycle issue while it stays in stage:spec: on top of `_plain`, it
+    must not carry the announcement phrase, or select would read the note
+    as the App's "Action needed: Review the spec PR" callout, newer than
+    the round's pushed commit. `&#58;` renders as ":"."""
+    return _plain(text).replace(ANNOUNCEMENT_PHRASE, "Action needed&#58;")
+
+
 def resolve_precedent(prec, spec_dir=""):
     if not isinstance(prec, dict):
         return {}
@@ -117,8 +129,8 @@ def prepare(findings_path, actions_path, spec_dir, out_path):
             # Report-only: no fix, no marker, no question (owner decision
             # 2026-11-27, #890). The item keeps its index so `apply` and
             # the join stay positional.
-            items.append({"finding": dict(f, title=_plain(f.get("title", "")),
-                                          what=_plain(f.get("what", ""))),
+            items.append({"finding": dict(f, title=_plain_note(f.get("title", "")),
+                                          what=_plain_note(f.get("what", ""))),
                           "class": "out-of-scope", "in_scope": False})
             continue
         act = by_index.get(i, {})

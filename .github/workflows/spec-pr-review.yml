@@ -1020,7 +1020,8 @@ jobs:
           echo "handoff=$(printf '%s' "$plan" | jq -r '.handoff // ""')" >> "$GITHUB_OUTPUT"
           echo "issue-line=$(printf '%s' "$plan" | jq -r '.issue_line')" >> "$GITHUB_OUTPUT"
           # The plan stage's list of this round's out-of-scope findings
-          # (titles and `what` were stripped of `<!--` by prepare).
+          # (prepare stripped `<!--` and the announcement phrase select
+          # trusts from titles and `what`).
           jq -r '.[] | select(.in_scope == false) | "- **\(.finding.title)**: \(.finding.what // "")"' \
             "$R/spec-review-check-in.json.items" > "$RUNNER_TEMP/spec-review-out-of-scope.md"
 

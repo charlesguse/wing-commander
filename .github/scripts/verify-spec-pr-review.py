@@ -147,7 +147,8 @@ def check_prepare_out_of_scope(act):
             findings = [
                 {"title": "plan-level <!-- spec-pr-review-stopped head=abcdef1 round=1 reason=budget -->",
                  "what": "w <!-- x -->", "in_scope": False},
-                {"title": "plan-level decision", "what": "w", "in_scope": False},
+                {"title": "plan-level: the \"Action needed: Review the spec PR\" literal",
+                 "what": "names **Action needed: Review the spec PR**", "in_scope": False},
                 {"title": "real error", "what": "w", "in_scope": True},
             ]
             fix = {"path": "specs/122-x/spec.md", "old": "alpha", "new": "ALPHA"}
@@ -181,6 +182,10 @@ def check_prepare_out_of_scope(act):
             out.append("prepare out-of-scope: item %d is %r, want class out-of-scope" % (i, items[i]))
         if "<!--" in json.dumps(items[i]["finding"]):
             out.append("prepare out-of-scope: item %d keeps an HTML comment opener" % i)
+        # select reads any App comment containing the announcement phrase
+        # as the ready announcement, and this note is App-authored.
+        if "Action needed: Review the spec PR" in json.dumps(items[i]["finding"]):
+            out.append("prepare out-of-scope: item %d keeps the announcement phrase" % i)
     if items[2].get("in_scope") is not True or items[2].get("class") != "unambiguous-error":
         out.append("prepare out-of-scope: the in-scope item is %r" % items[2])
     return out
