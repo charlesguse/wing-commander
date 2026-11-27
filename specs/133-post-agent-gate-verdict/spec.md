@@ -195,8 +195,9 @@ and quote the first failing gate.
   verdict that is absent, unreadable, malformed or bound to a different head,
   MUST make the cycle not converged (spec 095 FR-004's fail-closed reading).
 - **FR-005**: A cycle held back by FR-004 MUST follow today's non-converged
-  path — the next implement cycle is dispatched within the existing iteration
-  cap — and MUST NOT dispatch finalize.
+  path: below the iteration cap the next implement cycle is dispatched and
+  finalize MUST NOT be; at the cap it takes today's cap-reached path (finalize
+  dispatched with converged=false), never a converged hand-off.
 - **FR-006**: The dispatch of the next stage, the converged output the stage
   publishes to its callers, and the metrics record's convergence field MUST all
   reflect the post-agent verdict, never the pre-verdict tasks-only reading.
@@ -288,3 +289,6 @@ and quote the first failing gate.
   the owner with the final PR.
 - An earlier comment on #1180 mentions a `--changed` filter; the later owner
   decision (closing #1281) supersedes it, and the existing name filter is used.
+
+[NEEDS CLARIFICATION: Which of spec 117's hand-offs to finalize get the informational post-agent suite run: blocker hand-offs only, or cap-reached hand-offs too?]
+[NEEDS CLARIFICATION: On a stall hand-off, does finalize's dispatch wait (bounded by the suite budget) for the informational verdict, and where must finalize show it?]
