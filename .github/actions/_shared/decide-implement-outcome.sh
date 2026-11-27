@@ -20,7 +20,8 @@
 # specs/123 adds BUILDABLE_CHECKED_BASE BUILDABLE_CHECKED_TIP
 # BUILDABLE_UNCHECKED_TIP (the buildable view): progress uses the buildable
 # checked delta, and a cap or blocker hands off only while buildable work
-# (plus dropped ids) remains. Unset, they fall back to the IMPL_* values.
+# (plus dropped ids) remains. Unset or unreadable (any one of the three),
+# they all fall back to the IMPL_* values.
 # Task identity (owner decisions A and C on #992, option (a)): an id that was
 # unchecked implementation work at base, or that an earlier cycle dropped
 # (CARRIED_DROPPED_IDS, spec-meta.json's dropped_task_ids at the cycle base),
@@ -74,13 +75,17 @@ unchecked=$((unchecked + dropped_count))
 # hold a hand-off open). Unset means a caller that predates the buildable
 # view: fall back to the implementation counts, the old behaviour.
 #
-# All-or-nothing: the buildable view is used only when the counter's
-# BUILDABLE_UNCHECKED_TIP is present. If it is empty (the counter output was
-# lost), base, tip and unchecked ALL come from the implementation counts, so
-# progress is never computed across two different bases.
-if [ -n "${BUILDABLE_UNCHECKED_TIP:-}" ]; then
-  b_base="$(num "${BUILDABLE_CHECKED_BASE:-}" 0)"
-  b_tip="$(num "${BUILDABLE_CHECKED_TIP:-}" 0)"
+# All-or-nothing: the buildable view is used only when all three buildable
+# counts are readable base-10 integers -- the base count as well as the tip's
+# two. If any one is empty or garbled (that counter's output was lost), base,
+# tip and unchecked ALL come from the implementation counts, so a lost base
+# count is never read as 0 (which made any ticked tip look like progress) and
+# progress is never computed across two different views (#889).
+is_count() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+if is_count "${BUILDABLE_UNCHECKED_TIP:-}" && is_count "${BUILDABLE_CHECKED_BASE:-}" \
+    && is_count "${BUILDABLE_CHECKED_TIP:-}"; then
+  b_base="$(num "$BUILDABLE_CHECKED_BASE" 0)"
+  b_tip="$(num "$BUILDABLE_CHECKED_TIP" 0)"
   b_unchecked="$(num "$BUILDABLE_UNCHECKED_TIP" 1)"
   b_unchecked=$((b_unchecked + dropped_count))
 else
