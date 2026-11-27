@@ -962,6 +962,9 @@ jobs:
                  the user. Do NOT wait. Leave the [NEEDS CLARIFICATION] markers
                  in spec.md and continue; the questions are posted to the issue
                  in step 7 instead.
+               - A marker quoted inside inline code
+                 or a fenced code block is not open: it is text the spec quotes,
+                 so never answer it, replace it or report it as a question.
                - The feature number <NNN> MUST be ${{ steps.num.outputs.num }}
                  (pre-computed to account for specs in flight on unmerged
                  branches). When the skill auto-generates the spec directory,
@@ -1623,6 +1626,7 @@ jobs:
       # the issue is waiting on the requester, and a resolvable spec dir with
       # no open questions means it is not. Deterministic, reading only this
       # step's own outputs above — never a second parse of the agent result.
+      # Either branch also clears stage:stalled -- see clarify.yml.
       - name: Flip stage label for clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
@@ -1639,8 +1643,10 @@ jobs:
               echo "::warning::wing-commander intake: could not add stage:clarify to issue #$ISSUE (the clarification questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
             fi
             gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+            gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
           elif [ "$SPECIFIED" = "true" ] && [ "$BLOCKED" != "true" ] && [ -n "$SPEC_DIR" ]; then
             gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+            gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
           fi
 
       # Deterministic render (contracts/clarification-schema.md): turns the

@@ -103,6 +103,12 @@ MARKER_CANDIDATE = ('{"name": "%s", "conclusion": '
 # cap, where any earlier "denied" line masked them permanently.
 SENTINEL_PREFIX = "WC-SENTINEL: "
 
+# The quoted-marker rule each stage's agent prompt carries (whitespace
+# collapsed), matching what open-clarification-marker.sh counts (#1112).
+QUOTED_MARKER_RULE = ("A marker quoted inside inline code or a fenced code "
+                      "block is not open: it is text the spec quotes, so never "
+                      "answer it, replace it or report it as a question.")
+
 # specs/065-intake-silent-path-cost: the single home of the uniform cost
 # report. Every stage's `Report run cost` step must point at this composite.
 COST_REPORT_ACTION = "wing-commander-cost-report"
@@ -1339,6 +1345,31 @@ def structural_checks(loaded):
             "render fix lands on one stage, the suite stays green, and the "
             "two stages post differently-shaped questionnaires.")
 
+    # The agent prompts read markers the way the scan does (#889, found by
+    # the code review of #1112): since #1112 the scan ignores a marker
+    # quoted in code, so a prompt that still treats every occurrence as
+    # open has the agent answer, rewrite or re-ask a quote the pipeline
+    # already reads as settled. Every agent prompt in these stages that
+    # names the marker carries the one rule, word for word.
+    for stage, steps, _ in loaded:
+        prompts = [(name, " ".join(str(((st or {}).get("with") or {}).get("prompt") or "").split()))
+                   for name, st in steps.items()
+                   if isinstance(st, dict) and isinstance(st.get("with"), dict)
+                   and "prompt" in st["with"]]
+        naming = [(n, p) for n, p in prompts if "[NEEDS CLARIFICATION" in p]
+        if not naming:
+            failures.append(f"{stage.path}: no agent prompt names the "
+                            f"[NEEDS CLARIFICATION] marker; this check has "
+                            f"nothing to hold to the quoted-marker rule.")
+        for name, prompt in naming:
+            if QUOTED_MARKER_RULE not in prompt:
+                failures.append(
+                    f"{stage.path} step {name!r}: its agent prompt names the "
+                    f"[NEEDS CLARIFICATION] marker but does not carry the "
+                    f"quoted-marker rule {QUOTED_MARKER_RULE!r}. The scan "
+                    f"ignores a marker quoted in code (#1112); the agent must "
+                    f"read the spec the same way.")
+
     # 2. The inline --json-schema strings match the published contract.
     try:
         contract = open(SCHEMA_CONTRACT, encoding="utf-8").read()
@@ -1667,8 +1698,22 @@ def smut_clarify_stall_job_drops_permissions(loaded):
                 steps[NOTICE_JOB_PSEUDO]["jobs"][job_id] = None
 
 
+def _drop_quoted_marker_rule(stage_name, step_name):
+    def m(loaded):
+        for stage, steps, _ in loaded:
+            if stage.name == stage_name:
+                w = steps[step_name]["with"]
+                w["prompt"] = re.sub(r"A marker quoted inside inline code.*?as a question\.",
+                                     "", w["prompt"], flags=re.S)
+    return m
+
+
 # Mutations of what only structural_checks() can see.
 STRUCTURAL_MUTATIONS = [
+    ("clarify's agent prompt treating a marker quoted in code as open (#889)",
+     _drop_quoted_marker_rule("clarify", "Fold answers into the draft spec")),
+    ("intake's agent prompt treating a marker quoted in code as open (#889)",
+     _drop_quoted_marker_rule("intake", "Create spec from issue")),
     ("intake carrying its own copy of the marker scan", smut_intake_inlines_scan),
     ("clarify re-pasting the bare grep as `grep ... && marker=true`",
      smut_clarify_pastes_scan_unconditionally),
