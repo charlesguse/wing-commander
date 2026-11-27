@@ -824,14 +824,68 @@ READER_EXCEPTIONS = {
         "line": "'{class: $class, switch_on: ($switch_on == \"true\"),",
     },
 }
-# Shell pause re-checks that still compare the exact text "true", tracked
-# on #889 ("One rule for all switches"): (workflow file, switch). Not run by
-# one_rule_problems(); docs_half() requires docs/reference.md to name them.
+# Shell pause checks that do not follow the rule yet, tracked on #889
+# ("One rule for all switches"): (workflow file that relays the raw value,
+# switch, workflow file whose check reads it). Not run by
+# one_rule_problems(); docs_half() requires docs/reference.md to name each,
+# and relay_problems() fails on a raw relay of a switch that is neither here
+# nor in ONE_RULE_RELAYS, and on an entry whose relay is gone.
 PENDING_SHELL_READERS = (
-    ("spec-pr-review.yml", "WING_COMMANDER_SPEC_REVIEW_PAUSED"),
-    ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED"),
-    ("watchdog.yml", "WING_COMMANDER_WATCHDOG_PAUSED"),
+    ("spec-pr-review.yml", "WING_COMMANDER_SPEC_REVIEW_PAUSED", "spec-pr-review.yml"),
+    ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED", "lifecycle-review-gate.yml"),
+    ("watchdog.yml", "WING_COMMANDER_WATCHDOG_PAUSED", "watchdog.yml"),
+    ("auto-release.yml", "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED", "auto-release.yml"),
+    ("wing-commander-shared-pr-reviewer.yml", "WING_COMMANDER_SHARED_REVIEWER_PAUSED",
+     "shared-pr-reviewer.yml"),
 )
+# Raw relays of a switch to a reader one_rule_problems() runs (or to the
+# registered exception): workflow file -> the switches it relays that way
+# (None: every switch). A `switch-value:` hand-off to the watch-guard
+# composite is checked by READER_SITES' guard shape instead.
+ONE_RULE_RELAYS = {
+    "board-status.yml": None,  # wc_board_status
+    "wing-commander-feature-health.yml": None,  # wc_feature_health.collect
+    "board-loop.yml": {"WING_COMMANDER_BOARD_BACKLOG_LINES", "WING_COMMANDER_BOARD_LOOP_PAUSED",
+                       "WING_COMMANDER_BOARD_AUTO_MERGE"},  # selection_gate; the exception
+}
+# A value handed out of GitHub's expression untouched (with or without an
+# empty-string default), for some later reader to compare.
+RAW_RELAY_RE = re.compile(r"\$\{\{\s*vars\.(WING_COMMANDER_[A-Z0-9_]+)\s*(?:\|\|\s*''\s*)?\}\}")
+
+
+def kill_switch_vars(reference):
+    """The switches docs/reference.md's Kill switches table lists."""
+    kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
+    return set(re.findall(r"^\| `(WING_COMMANDER_[A-Z0-9_]+)` \|", kill, re.M))
+
+
+def relay_problems(root, switch_vars, pending, conforming):
+    """Every raw relay of a switch in .github/workflows goes to a reader the
+    one-rule check runs, or is a registered pending reader; every pending
+    reader still has its relay, so it is dropped with its fix."""
+    wf_dir = os.path.join(root, ".github", "workflows")
+    found = set()
+    for name in sorted(os.listdir(wf_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        for line in _file_lines(root, os.path.join(".github", "workflows", name)):
+            if line.startswith("#") or line.startswith("switch-value:"):
+                continue
+            for var in RAW_RELAY_RE.findall(line):
+                if var in switch_vars:
+                    found.add((name, var))
+    problems = []
+    registered = {(relay, var) for relay, var, _reader in pending}
+    for name, var in sorted(found):
+        allowed = conforming.get(name, set())
+        if (allowed is None or var in allowed) or (name, var) in registered:
+            continue
+        problems.append("{0} relays {1} raw to a reader this check does not run; bring it under "
+                        "the one switch rule or register it in PENDING_SHELL_READERS".format(name, var))
+    for relay, var in sorted(registered - found):
+        problems.append("{0} no longer relays {1} raw; drop its PENDING_SHELL_READERS entry and "
+                        "its docs/reference.md mention".format(relay, var))
+    return problems
 # Where each switch Board status reports is read, as the literal statement
 # in its file. Every statement must have one of SITE_SHAPES' shapes (or be
 # an exception's line), so a switch cannot pick up a reader of its own that
@@ -1056,6 +1110,23 @@ def reader_half():
 
     problems = reader_sites_problems(root, READER_SITES, READER_EXCEPTIONS)
     check("every switch's reader site still reads it by the one rule", not problems, problems)
+
+    # Code review of #1318 (pass 2): the readers that do not follow the rule
+    # yet are all registered, found from the workflows' raw relays rather
+    # than from memory.
+    with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+        switch_vars = kill_switch_vars(fh.read())
+    switch_vars |= {"WING_COMMANDER_" + v for k, v in bs.SWITCH_ENV.items() if k != "tasks_review"}
+    check("docs/reference.md's Kill switches table is read", len(switch_vars) > len(bs.SWITCH_ENV), switch_vars)
+    problems = relay_problems(root, switch_vars, PENDING_SHELL_READERS, ONE_RULE_RELAYS)
+    check("every raw relay of a switch reaches a one-rule reader or a registered pending reader",
+          not problems, problems)
+    check("an unregistered exact shell reader fails the relay check",
+          relay_problems(root, switch_vars, PENDING_SHELL_READERS[:-1], ONE_RULE_RELAYS))
+    check("a pending reader whose relay is gone fails the relay check",
+          relay_problems(root, switch_vars, PENDING_SHELL_READERS
+                         + (("board-status.yml", "WING_COMMANDER_NO_SUCH_SWITCH", "board-status.yml"),),
+                         ONE_RULE_RELAYS))
     drifted = dict(READER_SITES, board_auto_merge=[(BOARD_LOOP, "switch_on: ($switch_on | ascii_downcase == \"true\")")])
     check("a drifted reader site fails the tie", reader_sites_problems(root, drifted, READER_EXCEPTIONS))
     check("an exact comparison that is not the exception's line fails the tie",
@@ -1129,7 +1200,7 @@ def docs_half():
     kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
     kill_flat = " ".join(kill.split())
     pending = [(ex["path"].rsplit("/", 1)[-1], "WING_COMMANDER_BOARD_AUTO_MERGE")
-               for ex in READER_EXCEPTIONS.values()] + list(PENDING_SHELL_READERS)
+               for ex in READER_EXCEPTIONS.values()] + [(reader, var) for _r, var, reader in PENDING_SHELL_READERS]
     for path, var in pending:
         check("docs/reference.md's Kill switches section names {0}'s reader of {1}".format(path, var),
               "`{0}`".format(path) in kill_flat and "`{0}`".format(var) in kill_flat, kill_flat[:400])
