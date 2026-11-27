@@ -7,14 +7,14 @@ unreadable input exits non-zero rather than earning a pass (VIII).
 
     spec_pr_review.py select       list of snapshots   -> {selected, skips}
     spec_pr_review.py eligible     one snapshot        -> {eligible, reason}
-    spec_pr_review.py verdict      findings[]          -> {verdict}
+    spec_pr_review.py verdict      findings[]          -> {verdict, in_scope_count}
     spec_pr_review.py check-fixes  fixes + caps        -> {pushable, blocked}
     spec_pr_review.py plan-actions findings + results  -> ActionPlan
     spec_pr_review.py failed-cap   {failures}          -> {stop}
 
 REUSE NOTES (T001) -- what this module consumes rather than re-implements:
-  wc_convergence.decide(history, budget=)   the spec 116 stop arithmetic;
-        a snapshot's `convergence_history` is run through it here.
+  wc_convergence.py rearmed / evaluate   the spec 116 stop arithmetic; the
+        workflow runs it and a snapshot carries its answer as `stop_note`.
   wc_review_finding_fingerprint.fingerprint(issue, title, file_path)
         the finding dedup key; findings keep that fingerprint_basis shape.
   wc_lifecycle_review_marker.read_marker(comments, bot_login)
@@ -27,12 +27,7 @@ REUSE NOTES (T001) -- what this module consumes rather than re-implements:
   refresh-remote composites, and the post-review-comment composite.
 """
 import json
-import os
 import sys
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import wc_convergence  # noqa: E402
 
 READY = "ready for the owner"
 NOT_READY = "not ready"
@@ -119,9 +114,6 @@ def eligible(snap):
         return {"eligible": False, "reason": "already-reviewed"}
     if len(rounds) >= ROUND_BUDGET:
         return {"eligible": False, "reason": "budget-exhausted"}
-    hist = snap.get("convergence_history")
-    if hist and wc_convergence.decide(hist, budget=ROUND_BUDGET)["stop"]:
-        return {"eligible": False, "reason": "convergence-stop"}
     # FR-018/FR-019: a persisted stop note (the App's durable note on the
     # lifecycle issue) holds until the diff against main moves; `rearmed` is
     # the select step's wc_convergence.py `rearmed` answer for the current head.
@@ -151,23 +143,30 @@ def select(snaps):
     return {"selected": selected, "skips": skips}
 
 
+def in_scope(finding):
+    """Owner decision (2026-11-27, #890): only an in-scope finding -- a spec
+    defect under the review's three checks -- counts toward "not ready" and
+    is acted on. An out-of-scope (plan-level) finding is report-only. A
+    finding with no readable `in_scope` counts as in scope, so a malformed
+    datum fails toward visibility, never toward "ready"."""
+    return not (isinstance(finding, dict) and finding.get("in_scope") is False)
+
+
 def verdict(findings):
     if not isinstance(findings, list):
         raise InputError("findings must be a list")
-    return {"verdict": NOT_READY if findings else READY}
+    count = sum(1 for f in findings if in_scope(f))
+    return {"verdict": NOT_READY if count else READY, "in_scope_count": count}
 
 
-def _in_spec_dir(path, spec_dir, project_dir):
+def _in_spec_dir(path, spec_dir):
     base = spec_dir.strip("/")
-    if project_dir:
-        base = project_dir.strip("/") + "/" + base
     return (isinstance(path, str) and ".." not in path.split("/")
             and (path == base or path.startswith(base + "/")))
 
 
 def check_fixes(data):
     spec_dir = _need(data, "spec_dir", str)
-    project_dir = data.get("project_dir", "")
     cap = data.get("size_cap", FIX_SIZE_CAP)
     fixes = _need(data, "fixes", list)
     pushable, blocked = [], []
@@ -180,7 +179,7 @@ def check_fixes(data):
         if fx.get("kind") == "marker" and (
                 fx.get("options_count", 2) < 2 or not fx.get("has_recommendation", True)):
             reason = "question-incomplete"
-        elif not all(_in_spec_dir(p, spec_dir, project_dir)
+        elif not all(_in_spec_dir(p, spec_dir)
                    for p in fx.get("paths", [])) or not fx.get("paths"):
             reason = "path-outside-spec-dir"
         elif fx.get("lines_changed", 0) > cap:
@@ -202,10 +201,19 @@ def check_fixes(data):
 
 
 def plan_actions(data):
-    findings = _need(data, "findings", list)
+    every = _need(data, "findings", list)
+    # Only in-scope findings drive fixes, markers, the label move, the
+    # announcement, the status and the "not ready (N findings)" line; the
+    # rest are listed in the review and recorded for the plan stage.
+    findings = [f for f in every if in_scope(f)]
+    out_of_scope = len(every) - len(findings)
     results = data.get("push_results", {})
     fresh = data.get("freshness", {})
     writable = not (fresh.get("stale") or fresh.get("closed"))
+    # Owner decision (2026-11-26, #890): a stopped round (budget or
+    # convergence) still moves the issue to clarify for markers it pushed,
+    # but never announces the PR as ready.
+    stopped = bool(data.get("stopped"))
     # Doubtful classification is an owner decision.
     decisions = [f for f in findings if f.get("class") != "unambiguous-error"]
     errors = [f for f in findings if f.get("class") == "unambiguous-error"]
@@ -214,12 +222,13 @@ def plan_actions(data):
     push_markers = writable and bool(decisions)
     fixes_ok = bool(results.get("fixes_pushed")) and not blocked
     markers_ok = bool(results.get("markers_pushed"))
+    announce_ok = writable and bool(errors) and not decisions and fixes_ok
     plan = {
         "push_fixes": push_fixes,
         "push_markers": push_markers,
         "move_label": writable and push_markers and markers_ok,
-        "post_announcement": (writable and bool(errors) and not decisions
-                              and fixes_ok),
+        "post_announcement": announce_ok and not stopped,
+        "record_out_of_scope": writable and out_of_scope > 0,
         "status": "failure" if findings else "success",
         # Never APPROVE or REQUEST_CHANGES (FR-010).
         "review_event": "COMMENT",
@@ -231,8 +240,13 @@ def plan_actions(data):
     else:
         plan["issue_line"] = "Reviewed: not ready (%d finding%s)." % (
             len(findings), "" if len(findings) == 1 else "s")
+    if writable and out_of_scope:
+        plan["issue_line"] += " %d out-of-scope finding%s recorded for the plan stage." % (
+            out_of_scope, "" if out_of_scope == 1 else "s")
+    # announce_ok, not post_announcement: a stop withholding the
+    # announcement is not a push failure, and the stop hand-off covers it.
     if (decisions or errors) and not plan["move_label"] \
-            and not plan["post_announcement"] and writable:
+            and not announce_ok and writable:
         # Blocked-only (or push-failed) outcomes must still reach the owner.
         plan["handoff"] = ("Owner decisions could not be written as markers; "
                            "a reply on the issue will not be folded. Answer by "

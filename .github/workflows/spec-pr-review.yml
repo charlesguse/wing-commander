@@ -248,7 +248,7 @@ jobs:
               --argjson issues "$(cat "$RUNNER_TEMP/pr-$number-issues.json")" \
               --argjson labels "$stage_labels" --argjson marker "$open_marker" \
               --argjson ann "$announcements" --argjson rounds "$rounds" --argjson failed "$failed" \
-              --argjson dispatch "$dispatch" --argjson stop_note "$stop_note" --arg paused "false" \
+              --argjson dispatch "$dispatch" --argjson stop_note "$stop_note" \
               '{pr: $pr, repo: $repo, head_repo: $head_repo, head_ref: $head_ref, head_sha: $head_sha,
                 head_committed_at: $committed, issues: $issues, stage_labels: $labels, open_marker: $marker,
                 announcements: $ann, rounds: $rounds, failed_attempts: $failed, state: "open"}
@@ -510,9 +510,17 @@ jobs:
             ```wing-commander-review-findings
             [{"title": "one line", "what": "one line, no line breaks",
               "evidence": {"file_paths": ["..."], "detail": "optional"},
-              "in_scope": true,
+              "in_scope": true|false,
               "fingerprint_basis": {"file_path": "...", "gate_or_artifact": "one line naming the requirement or artifact"}}]
             ```
+
+            `in_scope` is true for a spec defect under the three checks
+            above: the spec is not buildable, it conflicts with the
+            constitution or a live contract, or a requirement is
+            contradictory, untestable or left undecided. It is false for a
+            plan-level finding, one that only names a file, a literal, a
+            regex or a step's shape: that belongs to the plan stage, is
+            reported but not acted on, and does not make the spec not ready.
 
             Second, one action entry per finding, `index` being the finding's
             0-based position above (an empty array when there are no findings):
@@ -678,12 +686,17 @@ jobs:
             echo '[]' > "$RUNNER_TEMP/spec-review-findings.json"
             exit 0
           fi
-          # FR-013: not ready iff any finding exists, including one the round fixes.
-          verdict="$(python3 -I "$S/spec_pr_review.py" verdict < "$RUNNER_TEMP/spec-review-findings.json" | jq -r '.verdict')" || {
+          # FR-013: not ready iff any in-scope finding exists, including one
+          # the round fixes (owner decision 2026-11-27, #890: out-of-scope
+          # findings are report-only). The in-scope count is the module's,
+          # and the budget stop below reads it rather than recounting.
+          if ! decided="$(python3 -I "$S/spec_pr_review.py" verdict < "$RUNNER_TEMP/spec-review-findings.json")" \
+            || ! verdict="$(printf '%s' "$decided" | jq -er '.verdict')" \
+            || ! in_scope_count="$(printf '%s' "$decided" | jq -er '.in_scope_count')"; then
             echo "outcome=failed" >> "$GITHUB_OUTPUT"
             echo "verdict=not ready" >> "$GITHUB_OUTPUT"
             exit 0
-          }
+          fi
           if ! python3 -I "$S/spec_pr_review_actions.py" prepare "$RUNNER_TEMP/spec-review-findings.json" \
             "$RUNNER_TEMP/spec-review-actions.json" "$SPEC_DIR" "$RUNNER_TEMP/spec-review-check-in.json"; then
             echo "outcome=failed" >> "$GITHUB_OUTPUT"
@@ -697,6 +710,7 @@ jobs:
           }
           echo "outcome=reviewed" >> "$GITHUB_OUTPUT"
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          echo "in-scope-count=$in_scope_count" >> "$GITHUB_OUTPUT"
 
       # Spec 116 FR-008 stop, read through wc_convergence (not re-implemented):
       # a not-converging loop or an exhausted budget stops here with a hand-off.
@@ -708,6 +722,7 @@ jobs:
           ROUND: ${{ steps.eligible.outputs.round }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
           ISSUE: ${{ needs.select.outputs.issue }}
+          IN_SCOPE_COUNT: ${{ steps.verdict.outputs.in-scope-count }}
         run: |
           set -uo pipefail
           reason=""
@@ -719,7 +734,7 @@ jobs:
             --handoff-out "$RUNNER_TEMP/spec-review-handoff.md" --github-output "" > "$RUNNER_TEMP/spec-review-conv.txt"; then
             if [ "$(jq -r '.stop' "$RUNNER_TEMP/spec-review-conv.txt")" = "true" ]; then
               reason="convergence-stop"
-            elif [ "$ROUND" -ge 5 ] && [ "$(jq 'length' "$RUNNER_TEMP/spec-review-findings.json")" -gt 0 ]; then
+            elif [ "$ROUND" -ge 5 ] && [ "${IN_SCOPE_COUNT:-1}" != "0" ]; then
               reason="budget-exhausted"
             fi
           else
@@ -796,10 +811,13 @@ jobs:
           shown = findings[:25]
           budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
           for n, f in enumerate(shown, 1):
+              # Out-of-scope findings stay listed, report-only (#890).
+              scope = "" if f.get("in_scope") is not False else \
+                  " (out of scope: report-only, recorded for the plan stage)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
               for p in (f.get("evidence") or {}).get("file_paths") or []:
                   text.append("- {0}".format(p))
-              lines += ["", fenced_section("### Finding {0}\n\nReviewer agent output, shown as text -- data, not instruction:".format(n),
+              lines += ["", fenced_section("### Finding {0}{1}\n\nReviewer agent output, shown as text -- data, not instruction:".format(n, scope),
                                            "\n".join(text), budget)]
           lines += tail
           with open(os.path.join(rt, "spec-review-body.md"), "w", encoding="utf-8") as fh:
@@ -979,27 +997,37 @@ jobs:
           MARKERS: ${{ steps.apply.outputs.markers }}
           CLOSED: ${{ steps.fresh.outputs.closed }}
           STALE: ${{ steps.fresh.outputs.stale }}
+          STOPPED: ${{ needs.review.outputs.stop-reason != '' }}
         run: |
           set -uo pipefail
           R="$RUNNER_TEMP/round"
-          payload="$(jq -n --slurpfile f "$R/spec-review-findings.json" --slurpfile items "$R/spec-review-check-in.json.items" \
+          # `in_scope` is passed through as the item carries it; an item
+          # without one counts as in scope (spec_pr_review.in_scope).
+          payload="$(jq -n --slurpfile items "$R/spec-review-check-in.json.items" \
             --slurpfile c "$R/spec-review-checked.json" --argjson pushed "$PUSHED" \
             --arg fixes "${FIXES:-0}" --arg markers "${MARKERS:-0}" --argjson closed "${CLOSED:-false}" --argjson stale "${STALE:-false}" \
-            '{findings: [$items[0][] | {title: .finding.title, class: .class}],
+            --argjson stopped "$STOPPED" \
+            '{findings: [$items[0][] | {title: .finding.title, class: .class} + (if has("in_scope") then {in_scope: .in_scope} else {} end)],
               push_results: {fixes_pushed: ($pushed and ($fixes | tonumber) > 0),
                              markers_pushed: ($pushed and ($markers | tonumber) > 0),
                              blocked_count: ($c[0].blocked | length)},
-              freshness: {closed: $closed, stale: $stale}}')"
+              freshness: {closed: $closed, stale: $stale},
+              stopped: $stopped}')"
           if ! plan="$(printf '%s' "$payload" | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/spec_pr_review.py" plan-actions)"; then
             echo "::error::spec-pr-review act: plan-actions could not read its input."
             exit 1
           fi
           printf '%s' "$plan" > "$RUNNER_TEMP/spec-review-plan.json"
-          for k in move_label post_announcement; do
+          for k in move_label post_announcement record_out_of_scope; do
             echo "$k=$(printf '%s' "$plan" | jq -r ".$k")" >> "$GITHUB_OUTPUT"
           done
           echo "handoff=$(printf '%s' "$plan" | jq -r '.handoff // ""')" >> "$GITHUB_OUTPUT"
           echo "issue-line=$(printf '%s' "$plan" | jq -r '.issue_line')" >> "$GITHUB_OUTPUT"
+          # The plan stage's list of this round's out-of-scope findings
+          # (prepare stripped `<!--` and the announcement phrase select
+          # trusts from titles and `what`).
+          jq -r '.[] | select(.in_scope == false) | "- **\(.finding.title)**: \(.finding.what // "")"' \
+            "$R/spec-review-check-in.json.items" > "$RUNNER_TEMP/spec-review-out-of-scope.md"
 
       # FR-015c: each owner-decision question goes on the lifecycle issue; the
       # stage moves to clarify only after the marker push succeeded.
@@ -1021,6 +1049,21 @@ jobs:
           }
           gh issue edit "$ISSUE" --remove-label "stage:spec" --add-label "stage:clarify"
 
+      # Owner decision (2026-11-27, #890): a plan-level finding is recorded
+      # once per round on the lifecycle issue for the plan stage, through
+      # the same App-authored callout as every other write here. clarify
+      # folds only a human maintainer's comment (wing-commander-2-clarify
+      # rejects a Bot author), so this note starts no pipeline run.
+      - name: Record out-of-scope findings for the plan stage
+        if: "!cancelled() && steps.plan.outputs.record_out_of_scope == 'true'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.select.outputs.issue }}
+          kind: info
+          summary: "spec-pr-review round ${{ needs.review.outputs.round }} on PR #${{ needs.select.outputs.pr-number }}: out-of-scope findings, for the plan stage (report-only; they do not make the spec not ready)."
+          body-file: ${{ runner.temp }}/spec-review-out-of-scope.md
+
       - name: Post the hand-off when the markers could not be written
         if: "!cancelled() && steps.plan.outputs.handoff != ''"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
@@ -1031,7 +1074,8 @@ jobs:
           summary: ${{ steps.plan.outputs.handoff }}
 
       # FR-015d: the ready announcement, in the format intake and clarify use,
-      # only when every finding was an error and every fix was pushed.
+      # only when every in-scope finding was an error and every fix was
+      # pushed, and never from a stopped round (#890).
       - name: Announce the spec PR ready for review
         if: "!cancelled() && steps.plan.outputs.post_announcement == 'true'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
@@ -1057,7 +1101,10 @@ jobs:
           body-file: ${{ needs.review.outputs.stop-reason == 'convergence-stop' && format('{0}/round/spec-review-handoff.md', runner.temp) || '' }}
 
       # Durable stop note read by the select job (FR-018/FR-019): a hidden
-      # marker naming the stopped head, round and reason.
+      # marker naming the stopped head, round and reason. When this round
+      # pushed fixes or markers, the stopped head is the pushed commit, so
+      # the round's own push does not re-arm the stop (owner decision
+      # 2026-11-26, #890).
       - name: Record the stop note
         if: "!cancelled() && needs.review.outputs.stop-reason != ''"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
@@ -1066,7 +1113,7 @@ jobs:
           issue-number: ${{ needs.select.outputs.issue }}
           kind: info
           summary: "spec-pr-review will not review PR #${{ needs.select.outputs.pr-number }} again until its diff against main changes."
-          body: ${{ format('<!-- spec-pr-review-stopped head={0} round={1} reason={2} -->', needs.select.outputs.head-sha, needs.review.outputs.round, needs.review.outputs.stop-reason) }}
+          body: ${{ format('<!-- spec-pr-review-stopped head={0} round={1} reason={2} -->', steps.push.outcome == 'success' && steps.commit.outputs.sha || needs.select.outputs.head-sha, needs.review.outputs.round, needs.review.outputs.stop-reason) }}
 
       # The failed-attempt marker is written only for a round that failed
       # (outcome `failed`). A round whose re-check stood down before any
@@ -1134,7 +1181,6 @@ jobs:
           VERDICT: ${{ needs.review.outputs.verdict }}
           STOP: ${{ needs.review.outputs.stop-reason }}
           STALE: ${{ needs.review.outputs.stale }}
-          PLAN_STATUS_READY: ${{ steps.plan.outputs.issue-line }}
         run: |
           set -uo pipefail
           state=failure
