@@ -6810,7 +6810,7 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ (steps.own.outcome == 'failure' || steps.gate.outcome == 'failure') && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
+          run-label: ${{ (steps.own.outcome == 'failure' || steps.ctx.outcome == 'failure' || steps.gate.outcome == 'failure') && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
           spec-identity-is-own: 'false'
 

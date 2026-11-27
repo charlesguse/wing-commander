@@ -522,20 +522,32 @@ def run_prove_gate_mints_after_ownership():
         failures += 1
         print("::error::verify-board-prove-recovery: " + p)
     step = find_step(REPO_BOARD_LOOP, OWN_STEP_NAME)
-    cases = (("an owned PR", {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": REPO}}}, "true"),
-             ("a PR with no board:owned label", {"labels": [], "head": {"repo": {"full_name": REPO}}}, "false"),
+
+    def closed(pr):
+        return ("pull_request", {"pull_request": dict(pr, number=9)}, "9")
+
+    # Code review of #1345: a directed prove dispatch has no .pull_request
+    # in its payload, so the step must pass it through on the event name
+    # alone -- read through BOARD_PR_OWNED_JQ it would be owned=false, and
+    # every directed prove would skip the mint and the decision, green.
+    cases = (("an owned PR", closed({"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": REPO}}}), "true"),
+             ("a PR with no board:owned label", closed({"labels": [], "head": {"repo": {"full_name": REPO}}}), "false"),
              ("a labelled PR from another repository",
-              {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": "someone-else/fork"}}}, "false"))
-    for label, pr, want in cases:
+              closed({"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": "someone-else/fork"}}}), "false"),
+             ("a labelled PR whose head repository was deleted",
+              closed({"labels": [{"name": "board:owned"}], "head": {"repo": None}}), "false"),
+             ("a directed prove dispatch",
+              ("workflow_dispatch", {"inputs": {"directed-stage": "prove", "directed-pr": "9"}}, ""), "true"))
+    for label, (event_name, payload, pr_number), want in cases:
         with tempfile.TemporaryDirectory() as work:
             event = os.path.join(work, "event.json")
             with open(event, "w", encoding="utf-8") as fh:
-                json.dump({"pull_request": dict(pr, number=9)}, fh)
+                json.dump(payload, fh)
             runner_temp = os.path.join(work, "runner_temp")
             os.makedirs(runner_temp, exist_ok=True)
             rc, out, outputs, summary = run_step(
                 BASH, step["run"], work,
-                {"EVENT_NAME": "pull_request", "PR_NUMBER": "9", "GITHUB_REPOSITORY": REPO,
+                {"EVENT_NAME": event_name, "PR_NUMBER": pr_number, "GITHUB_REPOSITORY": REPO,
                  "GITHUB_EVENT_PATH": event, "BOARD_PR_OWNED_JQ": BOARD_PR_OWNED_JQ},
                 runner_temp)
         if rc != 0 or outputs.get("owned") != want:
@@ -587,13 +599,66 @@ def run_prove_gate_mints_after_ownership():
     return failures
 
 
+METRICS_STEP_NAME = "Agent run metrics summary (prove-gate)"
+
+
+def run_prove_gate_run_label():
+    """The metrics record's run-label, evaluated as GitHub would on each way
+    prove-gate can end. Code review of #1345: a failed App-token mint skips
+    the decision step, so a label read only off the ownership and decision
+    steps recorded that red run as 'prove not entered'."""
+    import wc_gha_expr as gx
+    failures = 0
+    step = next((s for s in _prove_gate_steps() if (s or {}).get("name") == METRICS_STEP_NAME), None)
+    label_expr = ((step or {}).get("with") or {}).get("run-label")
+    if not label_expr:
+        print("::error::verify-board-prove-recovery: prove-gate has no {0!r} step with a run-label".format(
+            METRICS_STEP_NAME))
+        return 1
+    skipped = {"outcome": "skipped"}
+    cases = (("the ownership check failed", {"own": {"outcome": "failure"}, "ctx": skipped, "gate": skipped},
+              "prove-gate failed"),
+             ("a PR this loop does not own", {"own": {"outcome": "success", "owned": "false"}, "ctx": skipped,
+                                              "gate": skipped}, "prove not entered"),
+             ("the App token mint failed", {"own": {"outcome": "success", "owned": "true"},
+                                            "ctx": {"outcome": "failure"}, "gate": skipped}, "prove-gate failed"),
+             ("the decision failed", {"own": {"outcome": "success", "owned": "true"}, "ctx": {"outcome": "success"},
+                                      "gate": {"outcome": "failure"}}, "prove-gate failed"),
+             ("an eligible PR", {"own": {"outcome": "success", "owned": "true"}, "ctx": {"outcome": "success"},
+                                 "gate": {"outcome": "success", "eligible": "true"}}, "eligible for prove"),
+             ("an owned PR not entered", {"own": {"outcome": "success", "owned": "true"},
+                                          "ctx": {"outcome": "success"},
+                                          "gate": {"outcome": "success", "eligible": "false"}}, "prove not entered"))
+    for label, state, want in cases:
+        ctx = {}
+        for sid, st in state.items():
+            ctx["steps.{0}.outcome".format(sid)] = st["outcome"]
+            for k, v in st.items():
+                if k != "outcome":
+                    ctx["steps.{0}.outputs.{1}".format(sid, k)] = v
+        try:
+            got = gx.evaluate_value(label_expr, ctx, known=("steps.",))
+        except ValueError as exc:
+            failures += 1
+            print("::error::verify-board-prove-recovery: prove-gate's run-label cannot be evaluated: {0}".format(exc))
+            break
+        if got != want:
+            failures += 1
+            print("::error::verify-board-prove-recovery: prove-gate's run-label reads {0!r} when {1}, "
+                  "expected {2!r}".format(got, label, want))
+        else:
+            print("[ok] prove-gate's run-label reads {0!r} when {1}".format(want, label))
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
                 + run_displacement_writer_passes_outcome_reason()
                 + run_directed_dispatch_reaches_prove_gate()
                 + run_board_pr_owned_jq_single_home()
-                + run_prove_gate_mints_after_ownership())
+                + run_prove_gate_mints_after_ownership()
+                + run_prove_gate_run_label())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 
