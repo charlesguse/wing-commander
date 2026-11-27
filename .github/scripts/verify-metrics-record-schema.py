@@ -142,6 +142,14 @@ REQUIRED_BRANCH_ADVANCE = {
     "commits": (int, type(None)),
     "commits_available": bool,
 }
+# Optional at the top level for the same reason as branch_advance: a
+# record written before the group existed has no such key, and a reader
+# treats that as `available: false` (contracts/metrics-record-schema.md).
+REQUIRED_PERMISSION_DENIALS = {
+    "available": bool,
+    "total": (int, type(None)),
+    "by_tool": (dict, type(None)),
+}
 
 
 def _check_fields(obj, spec, where, failures):
@@ -197,6 +205,36 @@ def _check_optional_fields(obj, spec, where, failures):
                     where, field, types, type(value).__name__))
 
 
+def _check_permission_denials(group, failures):
+    """The group's types, and that its parts agree: available means a
+    total with per-class counts summing to it; unavailable means no
+    numbers at all, so a missing measurement can never read as zero."""
+    where = "record.permission_denials"
+    before = len(failures)
+    _check_fields(group, REQUIRED_PERMISSION_DENIALS, where, failures)
+    if len(failures) != before:
+        return
+    total, by_tool = group["total"], group["by_tool"]
+    if group["available"] is False:
+        if total is not None or by_tool is not None:
+            failures.append("{0}: available is false but total/by_tool "
+                            "are not null".format(where))
+        return
+    if total is None or by_tool is None:
+        failures.append("{0}: available is true but total or by_tool is "
+                        "null".format(where))
+        return
+    counts = list(by_tool.values())
+    if not all(isinstance(c, int) and not isinstance(c, bool) and c > 0
+               for c in counts):
+        failures.append("{0}.by_tool: every count must be a positive "
+                        "integer".format(where))
+        return
+    if sum(counts) != total:
+        failures.append("{0}: sum(by_tool)={1} != total={2}".format(
+            where, sum(counts), total))
+
+
 def validate_record(record):
     """-> list of failure strings; empty means valid schema-version-1 shape."""
     failures = []
@@ -219,6 +257,8 @@ def validate_record(record):
     if "branch_advance" in record:
         _check_fields(record["branch_advance"], REQUIRED_BRANCH_ADVANCE,
                       "record.branch_advance", failures)
+    if "permission_denials" in record:
+        _check_permission_denials(record["permission_denials"], failures)
 
     per_model = record.get("per_model")
     if isinstance(per_model, list):
@@ -297,6 +337,8 @@ def check_fields_match_contract():
         ("record.turns", REQUIRED_TURNS, shape.get("turns", {})),
         ("record.tokens", REQUIRED_TOKENS, shape.get("tokens", {})),
         ("record.branch_advance", REQUIRED_BRANCH_ADVANCE, shape.get("branch_advance", {})),
+        ("record.permission_denials", REQUIRED_PERMISSION_DENIALS,
+         shape.get("permission_denials", {})),
     ]
     per_model_shape = shape.get("per_model") or [{}]
     levels.append(("record.per_model[]", PER_MODEL_FIELD_TYPES, per_model_shape[0]))
@@ -320,6 +362,7 @@ def check_fields_match_contract():
         # but absence from REQUIRED_TOP is not itself drift.
         if where == "record":
             missing_from_gate.discard("branch_advance")
+            missing_from_gate.discard("permission_denials")
         if missing_from_gate:
             failures.append(
                 "{0}: {1}'s '## Shape' example has field(s) this gate "
@@ -343,8 +386,8 @@ def _fixture_files():
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
     # Pinned count: a bare glob makes a deleted fixture read as a smaller
     # clean pass (PR #267 re-review). Update deliberately with the set.
-    if len(found) != 30:
-        sys.exit("::error::metrics-record-schema: expected exactly 30 "
+    if len(found) != 34:
+        sys.exit("::error::metrics-record-schema: expected exactly 34 "
                  "fixtures under {0}, found {1} - a fixture was added or "
                  "removed without updating this pin.".format(
                      FIXTURES_DIR, len(found)))

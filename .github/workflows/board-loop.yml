@@ -3348,6 +3348,12 @@ jobs:
           intended-turns: 60
           run-label: fixer
 
+      # The writer agents' own records are uploaded, like every stage's,
+      # so the metrics sweep persists them: this job uploads no transcript,
+      # and the record's permission_denials count is the only measure of
+      # the calls this agent was refused. Its own record-path and a
+      # step-index distinct from this job's outcome record (0) keep the two
+      # record_keys apart, which persist deduplicates on.
       - name: Agent run metrics summary (fixer)
         if: always() && steps.fixer.outcome != 'skipped'
         continue-on-error: true
@@ -3361,6 +3367,18 @@ jobs:
           verdict-reason: ${{ steps.fix-verdict.outputs.reason }}
           stage: board-loop
           spec-identity-is-own: 'false'
+          step-index: '1'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fixer.json
+
+      - name: Upload metrics record (fixer)
+        if: always() && steps.fixer.outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fixer
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fixer.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the bundle step below, and gate-suite-fix
@@ -5051,6 +5069,17 @@ jobs:
         with:
           intended-turns: 40
 
+      # The reviewer's transcript is still at the default path, and an
+      # agent step that ends before its first transcript write is
+      # 'failure', not 'skipped': review-fixup's verdict and its uploaded
+      # metrics record would read the reviewer's run as review-fixup's.
+      # Deleting it first leaves the file review-fixup's or absent, and
+      # every consumer degrades cleanly when it is absent -- see
+      # implement.yml.
+      - name: Clear the reviewer's transcript (review-fixup)
+        if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
+        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
+
       # T042: reuses the fixer's own tool/prompt shape (research.md D23:
       # write granted, push withheld -- the gate suite below must be green
       # before the follow-up commit is pushed, same as the first fix).
@@ -5120,6 +5149,8 @@ jobs:
           intended-turns: 40
           run-label: review-fixup
 
+      # See the fixer's own record upload above. The reviewer's record keeps
+      # step-index 0's default; review-fixup takes 2.
       - name: Agent run metrics summary (review-fixup)
         if: always() && steps.review-fixup.outcome != 'skipped'
         continue-on-error: true
@@ -5133,6 +5164,18 @@ jobs:
           verdict-reason: ${{ steps.review-fixup-verdict.outputs.reason }}
           stage: board-loop
           spec-identity-is-own: 'false'
+          step-index: '2'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-review-fixup.json
+
+      - name: Upload metrics record (review-fixup)
+        if: always() && steps.review-fixup.outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-review-fixup
+          path: ${{ runner.temp }}/wing-commander-metrics-record-review-fixup.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
       # 4), not a hard exit -- the bundle step below, and
