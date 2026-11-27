@@ -87,7 +87,10 @@ fi
 #    free text, where a synonym of an issue-exempt class would be filed as
 #    a defect. A third run finds only an unrelated label (the registry a
 #    fresh repo has after its first `Register new finding class`): the
-#    enum must still offer exactly the eligibility step's exempt classes.
+#    enum must still offer every built-in class beside it, not only the
+#    exempt ones, or a `turn-budget-trend` synonym proposed through
+#    `__new__` misses the closed-issue suppression (#889, found by the
+#    code review of #1336).
 python3 - "$work" <<'PY'
 import json
 import os
@@ -131,7 +134,7 @@ failures = []
 for case, gh_body, want in (("query-fails", "exit 1", named),
                             ("no-labels", "echo '[]'", named),
                             ("partial-registry", "echo '[\"unrelated-class\"]'",
-                             exempt | {"unrelated-class"})):
+                             named | {"unrelated-class"})):
     d = os.path.join(work, "vocab-" + case)
     bindir = os.path.join(d, "bin")
     os.makedirs(bindir)
@@ -164,7 +167,7 @@ if failures:
     sys.exit(1)
 PY
 if [ "$?" -ne 0 ]; then
-  reason "the shipped 'Resolve finding-class vocabulary' step does not fail closed to an enum of exactly the classes the eligibility and evidence-validity steps name, or drops an issue-exempt class from a partial registry — see ::error:: above"
+  reason "the shipped 'Resolve finding-class vocabulary' step does not fail closed to an enum of exactly the classes the eligibility and evidence-validity steps name, or drops a built-in class from a partial registry — see ::error:: above"
 fi
 
 # ── Confirm the live wiring: Ensure pipeline-defect issue gates on
