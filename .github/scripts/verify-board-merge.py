@@ -627,8 +627,10 @@ HANDOVER_CLAIMS = (
     "handed it to a human",
     "the board loop never checks this because it never merges",
     "scans board-loop.yml for merge calls that must not exist",
+    "deferring merge to a human",
 )
 HANDOVER_CLAIM_DOCS = (
+    BOARD_LOOP,
     ".github/scripts/verify-constitution-merge-class-parity.py",
     "specs/057-autonomous-board-loop/contracts/readiness-report.md",
     "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
@@ -665,6 +667,7 @@ def check_handover_claims_self_test():
                  "   board loop never checks this because it never merges, so no existing\n")
     docstring = ("verify-board-readiness.py's `check_no_merge_invariant`, which scans\n"
                  "board-loop.yml for merge calls that must not exist. Here the merge call is\n")
+    header = ("# closed resume path, prove) -- deferring merge to a human (FR-003).\n")
     scoped = ("    state: the readiness job stopped at ready, and the `merge` job\n"
               "   board loop's readiness job never checks this because it never merges\n"
               "board-loop.yml outside its `merge` job (spec 115) for merge calls that must\n")
@@ -683,6 +686,8 @@ def check_handover_claims_self_test():
         fail("self-test: readiness-and-merge.md's 'board loop never checks this' is not caught")
     elif handover_claims(docstring) != [HANDOVER_CLAIMS[3]]:
         fail("self-test: the parity gate's whole-file no-merge description is not caught")
+    elif handover_claims(header) != [HANDOVER_CLAIMS[4]]:
+        fail("self-test: board-loop.yml's header 'deferring merge to a human' is not caught")
     elif handover_claims(scoped):
         fail("self-test: a claim scoped to the readiness job or outside `merge` is flagged")
     elif lists_merge_job(stale_jobs):
