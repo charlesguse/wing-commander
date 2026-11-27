@@ -512,13 +512,24 @@ LOCAL_STAGE_USES_RE = re.compile(r"^\./\.github/workflows/([^/@\s]+)$")
 
 
 def _grants_id_token(permissions):
-    """None (inherited from the caller) cannot be decided statically and is
-    given the benefit of the doubt; an explicit block must grant it."""
+    """`permissions` is the job's EFFECTIVE block (_effective_permissions).
+    None (no block in the job or the workflow, so inherited from the caller)
+    cannot be decided statically and is given the benefit of the doubt; an
+    explicit block must grant it."""
     if permissions is None:
         return True
     if isinstance(permissions, str):
         return permissions == "write-all"
     return isinstance(permissions, dict) and permissions.get("id-token") == "write"
+
+
+def _effective_permissions(parsed, job):
+    """A job with no `permissions:` key runs with the workflow-level block
+    (watchdog.yml's and auto-update-spec-kit.yml's resolver jobs grant
+    id-token that way); only when neither level has one is it inherited."""
+    if "permissions" in job:
+        return job["permissions"]
+    return parsed.get("permissions")
 
 
 def credential_free_resolvers(loaded, stages):
@@ -535,7 +546,8 @@ def credential_free_resolvers(loaded, stages):
                 if not isinstance(step, dict) or step.get("id") != PIPELINE_REF_STEP_ID:
                     continue
                 has_oidc = OIDC_FALLBACK_MARKER in str(step.get("run") or "")
-                if not (has_oidc and _grants_id_token(job.get("permissions"))):
+                if not (has_oidc and _grants_id_token(
+                        _effective_permissions(parsed, job))):
                     out.setdefault(os.path.basename(path), []).append(job_name)
     return out
 
@@ -923,6 +935,20 @@ OIDC_NO_GRANT_STAGE = OIDC_RESOLVER_STAGE.replace(
     "      id-token: write\n", "      contents: read\n")
 
 
+# The resolver job has no `permissions:` of its own, so the workflow-level
+# block applies: `{}` grants no id-token, and the OIDC fallback can never
+# run. Reading only the job's key took the missing block for "inherited from
+# the caller" and let this through.
+OIDC_WORKFLOW_NO_GRANT_STAGE = OIDC_RESOLVER_STAGE.replace(
+    "jobs:\n", "permissions: {}\njobs:\n").replace(
+    "    permissions:\n      id-token: write\n", "")
+
+# ... and a workflow-level block that does grant id-token is OIDC-backed.
+OIDC_WORKFLOW_GRANT_STAGE = OIDC_RESOLVER_STAGE.replace(
+    "jobs:\n", "permissions:\n  id-token: write\njobs:\n").replace(
+    "    permissions:\n      id-token: write\n", "")
+
+
 def _local_caller(stage, with_ref):
     return ("name: local caller\n"
             "on:\n  workflow_dispatch:\n"
@@ -1016,6 +1042,15 @@ FIXTURES = [
      {"oidc.yml": OIDC_NO_GRANT_STAGE,
       "wing-commander-1.yml": _local_caller("oidc.yml", False)}, None,
      ("calls oidc.yml by local path without passing pipeline-ref", 1)),
+    ("an OIDC fallback under a workflow-level block granting no id-token "
+     "is credential-free",
+     {"oidc.yml": OIDC_WORKFLOW_NO_GRANT_STAGE,
+      "wing-commander-1.yml": _local_caller("oidc.yml", False)}, None,
+     ("calls oidc.yml by local path without passing pipeline-ref", 1)),
+    ("an OIDC fallback under a workflow-level id-token grant needs no "
+     "pipeline-ref",
+     {"oidc.yml": OIDC_WORKFLOW_GRANT_STAGE,
+      "wing-commander-1.yml": _local_caller("oidc.yml", False)}, None, None),
     # the empty-subject guard
     ("a checkout with no stage at all is a failure, not a clean pass",
      {"wing-commander-1.yml": WRAPPER}, None,
