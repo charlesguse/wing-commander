@@ -297,9 +297,11 @@ def title_for(text, prefix="Fix: "):
 
 
 # The one home of the closing-keyword pattern: the board loop's keyword
-# hold and verify-pr-closing-keywords.py (Gate 182) both read it, and
-# verify-board-backlog-lines.py fails if the latter carries its own copy.
-# The named groups say which issue a hit names; they change no match.
+# hold reads it, and verify-pr-closing-keywords.py (Gate 182) and
+# wc_proof_list.closing_targets() read it through closing_keyword_refs().
+# verify-board-backlog-lines.py fails if Gate 182's script carries its own
+# copy or another script reads CLOSING_RE itself. The named groups say
+# which issue a hit names; they change no match.
 CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
     r"(?:https?://github\.com/(?P<url_repo>[\w.-]+/[\w.-]+)/issues/(?P<url_n>\d+)"

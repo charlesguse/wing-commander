@@ -711,6 +711,34 @@ def closing_keyword_single_home(path=os.path.join(HERE, "verify-pr-closing-keywo
     return errors
 
 
+def closing_re_single_reader(paths=None, sources=None):
+    """CLAUDE.md "Shared logic has exactly one home", the decoding half:
+    which issue a CLOSING_RE hit names is read by
+    board_backlog_lines.closing_keyword_refs() alone. Another script that
+    reads CLOSING_RE itself (wc_proof_list.closing_targets() once split
+    the match by hand) is a second decoder that can drift (found by the
+    code review of #1314). `sources` maps a name to its text, for the
+    self-test."""
+    import ast
+    if sources is None:
+        sources = {}
+        for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                sources[os.path.basename(path)] = fh.read()
+    errors = []
+    for name, text in sorted(sources.items()):
+        for node in ast.walk(ast.parse(text)):
+            if ((isinstance(node, ast.Name) and node.id == "CLOSING_RE")
+                    or (isinstance(node, ast.Attribute) and node.attr == "CLOSING_RE")
+                    or (isinstance(node, ast.alias) and node.name == "CLOSING_RE")):
+                errors.append("{0} reads board_backlog_lines.CLOSING_RE itself -- "
+                              "use closing_keyword_refs()".format(name))
+                break
+    return errors
+
+
 def run(fixtures=None, verbose=True):
     failures = 0
     paths = sorted(glob.glob(FIXTURES)) if fixtures is None else fixtures
@@ -721,7 +749,7 @@ def run(fixtures=None, verbose=True):
         for error in board_loop_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: board-loop.yml: {0}".format(error))
-        for error in run_link_single_home() + closing_keyword_single_home():
+        for error in run_link_single_home() + closing_keyword_single_home() + closing_re_single_reader():
             failures += 1
             print("::error::verify-board-backlog-lines: {0}".format(error))
         for error in issue_context_wiring():
@@ -759,6 +787,15 @@ def self_test():
     if closing_keyword_single_home(text=source) or not closing_keyword_single_home(text=source + seed):
         print("::error::verify-board-backlog-lines --self-test: the closing-keyword single-home check "
               "misreads verify-pr-closing-keywords.py")
+        return 1
+    # #1314: a script decoding CLOSING_RE matches by hand must fail; one
+    # going through closing_keyword_refs() must pass.
+    by_hand = "from board_backlog_lines import CLOSING_RE\nhits = CLOSING_RE.finditer(text)\n"
+    via_refs = "from board_backlog_lines import closing_keyword_refs\nhits = closing_keyword_refs(text, repo)\n"
+    if (not closing_re_single_reader(sources={"seed.py": by_hand})
+            or closing_re_single_reader(sources={"seed.py": via_refs})):
+        print("::error::verify-board-backlog-lines --self-test: the CLOSING_RE single-reader check "
+              "misreads a script")
         return 1
     original = bbl.FENCE_RE
     try:
