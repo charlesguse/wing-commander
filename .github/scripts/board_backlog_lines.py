@@ -296,9 +296,14 @@ def title_for(text, prefix="Fix: "):
     return prefix + text
 
 
+# The one home of the closing-keyword pattern: the board loop's keyword
+# hold and verify-pr-closing-keywords.py (Gate 182) both read it, and
+# verify-board-backlog-lines.py fails if the latter carries its own copy.
+# The named groups say which issue a hit names; they change no match.
 CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
-    r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|[\w.-]+/[\w.-]+#\d+|#\d+|GH-\d+)",
+    r"(?:https?://github\.com/(?P<url_repo>[\w.-]+/[\w.-]+)/issues/(?P<url_n>\d+)"
+    r"|(?P<slug_repo>[\w.-]+/[\w.-]+)#(?P<slug_n>\d+)|#(?P<n>\d+)|GH-(?P<gh_n>\d+))",
     re.I)
 
 
@@ -310,6 +315,22 @@ def closing_keyword_hits(title, body, commit_messages):
         for match in CLOSING_RE.finditer(text or ""):
             hits.append((where, match.group(0)))
     return hits
+
+
+def closing_keyword_refs(text, repository):
+    """(N, match) for each CLOSING_RE hit in `text` that names issue N of
+    `repository` (`#N`, `GH-N`, `repository#N` or its issue URL, the
+    repository compared case-insensitively); a hit naming another
+    repository is left out."""
+    out = []
+    for match in CLOSING_RE.finditer(text or ""):
+        other = match.group("url_repo") or match.group("slug_repo")
+        if other and other.lower() != (repository or "").lower():
+            continue
+        number = (match.group("url_n") or match.group("slug_n")
+                  or match.group("n") or match.group("gh_n"))
+        out.append((int(number), match.group(0)))
+    return out
 
 
 def render_line_text_for_body(text):

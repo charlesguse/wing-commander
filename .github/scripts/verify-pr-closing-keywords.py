@@ -28,8 +28,11 @@ issues listing, not GraphQL), never from a constant here: the label is the
 one home, so a new tracking issue is guarded the day it is labelled.
 
 A keyword is close/closes/closed, fix/fixes/fixed, resolve/resolves/
-resolved, any case, an optional colon, then a reference: `#N`,
-`owner/repo#N` for this repository, or this repository's issue URL. Write
+resolved, any case, then a colon or whitespace, then a reference: `#N`,
+`GH-N`, `owner/repo#N` for this repository, or this repository's issue URL.
+The pattern is board_backlog_lines.CLOSING_RE, the board loop's keyword
+hold's own (its one home; verify-board-backlog-lines.py fails if a copy
+reappears here), read through closing_keyword_refs(). Write
 "addresses #889" or "(#889)" instead.
 
 Usage:
@@ -43,43 +46,20 @@ never into the script text).
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board_backlog_lines import closing_keyword_refs  # noqa: E402
+
 LABEL = "disposition:tracking"
-
-KEYWORD = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
-
-
-def _ref_pattern(repo):
-    """A closing-keyword reference to an issue of `repo`; group 'n' is N."""
-    r = re.escape(repo)
-    ref = (
-        r"(?:"
-        r"#(?P<n1>\d+)"
-        rf"|{r}#(?P<n2>\d+)"
-        rf"|https?://github\.com/{r}/issues/(?P<n3>\d+)"
-        r")"
-    )
-    return re.compile(
-        rf"(?<![A-Za-z0-9_]){KEYWORD}:?\s*{ref}(?![0-9])", re.IGNORECASE)
-
-
-def closing_refs(text, repo):
-    """Every issue number `text` closes through a keyword, in order."""
-    out = []
-    for m in _ref_pattern(repo).finditer(text or ""):
-        n = m.group("n1") or m.group("n2") or m.group("n3")
-        out.append((int(n), m.group(0)))
-    return out
 
 
 def find_violations(sources, repo, tracking):
     """sources: [(where, text)]; tracking: set of open tracking issue numbers."""
     bad = []
     for where, text in sources:
-        for n, hit in closing_refs(text, repo):
+        for n, hit in closing_keyword_refs(text, repo):
             if n in tracking:
                 bad.append((where, n, hit))
     return bad
@@ -156,6 +136,7 @@ def self_test():
         "Closes https://github.com/owner/repo/issues/889",
         "(fix #889)",
         "Fixes #1, fixes #889",
+        "Fixes GH-889",
     ]
     pass_cases = [
         "Maintenance (#889): one line",
