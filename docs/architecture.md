@@ -664,9 +664,9 @@ closed PR:
 - `teardown-done` — final PR (`spec/NNN-slug → main`) **merged**: delete the
   spec-draft, spec, plan, tasks, and any impl `*-iterN` branches for that spec
   (each identified by its configurable-with-default prefix — defaults
-  `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`); close the lifecycle
-  issue (atomically, with a
-  Haiku-written completion summary); flip its label to `stage:done`.
+  `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`); add `stage:done` to
+  the lifecycle issue, then close it (atomically, with a Haiku-written
+  completion summary) and remove its other `stage:*` labels.
 - `teardown-rejected` — draft PR (`spec-draft/NNN-slug → main`) **closed
   unmerged**: delete `spec-draft/NNN-slug`; remove the `stage:*`/`spec:*`
   labels; comment that the spec was rejected; leave the issue **open** so
@@ -751,8 +751,11 @@ result with the recorded `git merge-tree` tree (only conflicting paths may
 differ, no marker left, first parent the old tip, second parent the default
 branch tip). A failure aborts the merge and escalates through the same
 `rebase:blocked` label and SHA marker. Switching back to `rebase` does not
-repair history a merge sync already recorded: the sync commits stay and the
-next rebase flattens them with everything else.
+repair history a merge sync already recorded: the sync commits stay until the
+next rebase. A clean rebase flattens them with everything else; where a sync
+commit carried a conflict resolution, the rebase may re-conflict or fail its
+scope check, and the branch is then escalated through `rebase:blocked` rather
+than published (spec 118 FR-012).
 
 History readers cope with both: `wc_convergence.py` attributes commits that
 arrived through a sync commit's second parent to the default branch and counts
@@ -791,8 +794,12 @@ or a second merge method).
 
 **Round budget**: `env.LIFECYCLE_REVIEW_ROUND_BUDGET` (a PR-reviewed
 constant, currently `5`). On exhaustion the run states the reason and the
-still-open findings on the lifecycle issue and does not select that pull
-request again until a human intervenes.
+still-open findings on the lifecycle issue, and `select` does not pick that
+pull request again until its diff against main changes: a rebase or a merge
+of main that leaves its own changes as they were does not re-select it (the
+same rule a `not-converging` stop follows, below). Once the round budget is
+raised past the exhausted round the PR is no longer stopped, and a moved head
+alone re-selects it.
 
 **Convergence and the `not-converging` stop**
 (`specs/116-review-convergence-analyze/`): a round is no longer read as

@@ -627,8 +627,10 @@ HANDOVER_CLAIMS = (
     "handed it to a human",
     "the board loop never checks this because it never merges",
     "scans board-loop.yml for merge calls that must not exist",
+    "deferring merge to a human",
 )
 HANDOVER_CLAIM_DOCS = (
+    BOARD_LOOP,
     ".github/scripts/verify-constitution-merge-class-parity.py",
     "specs/057-autonomous-board-loop/contracts/readiness-report.md",
     "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
@@ -665,6 +667,7 @@ def check_handover_claims_self_test():
                  "   board loop never checks this because it never merges, so no existing\n")
     docstring = ("verify-board-readiness.py's `check_no_merge_invariant`, which scans\n"
                  "board-loop.yml for merge calls that must not exist. Here the merge call is\n")
+    header = ("# closed resume path, prove) -- deferring merge to a human (FR-003).\n")
     scoped = ("    state: the readiness job stopped at ready, and the `merge` job\n"
               "   board loop's readiness job never checks this because it never merges\n"
               "board-loop.yml outside its `merge` job (spec 115) for merge calls that must\n")
@@ -683,6 +686,8 @@ def check_handover_claims_self_test():
         fail("self-test: readiness-and-merge.md's 'board loop never checks this' is not caught")
     elif handover_claims(docstring) != [HANDOVER_CLAIMS[3]]:
         fail("self-test: the parity gate's whole-file no-merge description is not caught")
+    elif handover_claims(header) != [HANDOVER_CLAIMS[4]]:
+        fail("self-test: board-loop.yml's header 'deferring merge to a human' is not caught")
     elif handover_claims(scoped):
         fail("self-test: a claim scoped to the readiness job or outside `merge` is flagged")
     elif lists_merge_job(stale_jobs):
@@ -1196,6 +1201,66 @@ def check_merge_contract_names_stage_ref():
         ok("{0} names the stage call's ref requirement".format(MERGE_CONTRACT))
 
 
+MARKER_DROPPED_FIELDS = ("spec_request", "outcome_reason", "recovery_attempted", "nr_*")
+# The board_item_marker.py flags that would carry one of those fields (or a
+# backlog line id) onto a merged or handed-over marker.
+MARKER_DROPPED_FLAGS = ("--outcome-reason", "--recovery-attempted", "--nr-count",
+                        "--nr-head-sha", "--nr-class", "--nr-reason", "--spec-request", "--line")
+
+
+def merge_contract_marker_fields_problems(text):
+    """#889 (found by the code review of #1059), settled by the session
+    decision on #1321: merged and handed-over markers keep dropping the
+    newest marker's other fields, and step 8 says so."""
+    step8 = re.search(r"(?m)^8\. .*$", text)
+    if not step8:
+        return ["the contract has no step 8"]
+    line = step8.group(0)
+    problems = []
+    if "carry only the round, the branch and the base" not in line:
+        problems.append("step 8 does not say merged and handed-over markers carry only the round, the branch and the base")
+    missing = [f for f in MARKER_DROPPED_FIELDS if "`{0}`".format(f) not in line]
+    if missing:
+        problems.append("step 8 does not name the fields it drops: {0}".format(", ".join(missing)))
+    return problems
+
+
+def merge_marker_flag_problems(merge_code):
+    """The merge job's merged/handed-over render passes no dropped field."""
+    render = re.search(r"marker_args=\((.*?)\)", merge_code, re.S)
+    if not render:
+        return ["the merge job no longer builds its marker from marker_args=(...)"]
+    calls = [l for l in merge_code.splitlines()
+             if "board_item_marker.py" in l and re.search(r"--step\s+(merged|handed-over)\b", l)]
+    if len(calls) != 2:
+        return ["expected one merged and one handed-over board_item_marker.py render, found {0}".format(len(calls))]
+    text = render.group(1) + "\n" + "\n".join(calls)
+    return ["the merged/handed-over marker passes {0}, a field step 8 says it drops".format(flag)
+            for flag in MARKER_DROPPED_FLAGS if re.search(re.escape(flag) + r"\b", text)]
+
+
+def check_merge_contract_marker_fields():
+    with open(MERGE_CONTRACT, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = merge_contract_marker_fields_problems(text)
+    for problem in problems:
+        fail("{0}: {1}".format(MERGE_CONTRACT, problem))
+    stale = re.sub(r"(?m)^(8\. Fix class: write the issue marker `merged` or `handed-over`\. ).*?\(#889\)[^.]*\. ",
+                   r"\1", text)
+    if stale == text or len(merge_contract_marker_fields_problems(stale)) != 2:
+        fail("the step-8 marker-fields check does not refuse a contract without the sentence")
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_code = _run_blocks_text(job_block(fh.read().splitlines(), "merge") or [])
+    flag_problems = merge_marker_flag_problems(merge_code)
+    for problem in flag_problems:
+        fail(problem)
+    carried = merge_code.replace('--base-sha "$BASE_SHA"', '--base-sha "$BASE_SHA" --outcome-reason "$r"', 1)
+    if carried == merge_code or not merge_marker_flag_problems(carried):
+        fail("the marker-flag check does not refuse a merged marker that carries --outcome-reason")
+    if not problems and not flag_problems:
+        ok("merged and handed-over markers carry only the round, branch and base, as step 8 says")
+
+
 def check_auto_update():
     if not os.path.isfile(AUTO_UPDATE):
         fail("{0} does not exist".format(AUTO_UPDATE))
@@ -1351,6 +1416,7 @@ def main():
     check_stalled_tracking_issue()
     check_889_findings()
     check_merged_proof_disposition()
+    check_merge_contract_marker_fields()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0

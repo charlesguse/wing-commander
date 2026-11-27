@@ -484,6 +484,25 @@ class LifecycleSelect(LoopRepo):
         self.assertEqual(self.select(head, outcome="findings"), "7")
         self.assertEqual(self.select(self.stopped, outcome="findings"), "")
 
+
+class RoundBudgetDocs(unittest.TestCase):
+    """docs/architecture.md's "Round budget" paragraph states the rule
+    LifecycleSelect pins (#889, code review of #1297): a budget-exhausted PR
+    is selected again once its diff against main changes, never on a rebase
+    alone, and a raised budget lets a moved head re-select it."""
+
+    def test_the_round_budget_paragraph_matches_select(self):
+        with open(os.path.join(ROOT, "docs", "architecture.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        at = text.find("**Round budget**")
+        self.assertGreaterEqual(at, 0, "no Round budget paragraph")
+        para = " ".join(text[at:text.find("\n\n", at)].split())
+        self.assertNotIn("until a human intervenes", para)
+        self.assertIn("until its diff against main changes", para)
+        self.assertIn("does not re-select it", para)
+        self.assertIn("raised past the exhausted round", para)
+
+
 class BoardRound(LoopRepo):
     DECIDE = "Decide the round outcome"
 

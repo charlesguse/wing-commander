@@ -7,6 +7,18 @@ suite by name rather than the next agent run discovering a `.claude/`-shaped
 task the hard way again. Gate number is confirmed at implementation time
 (research.md D7); this contract does not depend on the exact number.
 
+## Status: no routed issue is expected from implement (since spec 123)
+
+Routed-issue filing is retired for implement (#1122, option a, 2026-11-22;
+see write-boundary-mechanism.md's Status section): an out-of-boundary task
+is a maintainer step, and the Route step never fires on implement. This gate
+still runs the shipped classifier, read-back and Route-step guards, but it
+feeds them the checkbox count's `unchecked-items`, not the
+`impl-unchecked-items` that implement passes. Its routed scenarios below
+therefore check that the dormant mechanism still works. None of them
+asserts that an implement run files a routed issue, and no gate may
+assert that.
+
 ## Registration
 
 Two steps in `.github/workflows/lint-workflows.yml`, alongside the other
