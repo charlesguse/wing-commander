@@ -78,7 +78,8 @@ _RUN_LINK_RE = re.compile(any_run_url_pattern())
 # A final PR's lifecycle issue: finalize.yml's own closing line first, else a
 # GitHub closing keyword. A mention ("refs #N", "for #N") never links one.
 _LIFECYCLE_LINE_RE = re.compile(r"(?m)^Lifecycle issue: #(\d+)[ \t\r]*$")
-_LINKED_ISSUE_RE = re.compile(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b")
+# The keyword fallback reads board_backlog_lines.closing_keyword_refs(), the
+# closing-keyword pattern's one home (Gate 166 fails a copy here).
 _FIX_ISSUE_RE = re.compile(r"fix/(\d+)-")
 
 
@@ -118,15 +119,21 @@ def assign_kind(snap, bot_login, final_prefix="spec/", spec_prefix="spec-draft/"
                               cross_repository=snap.get("cross_repository"))
 
 
-def linked_issue(kind, snap):
-    """The issue whose comments carry the kind's evidence, or None."""
+def linked_issue(kind, snap, repo=None):
+    """The issue whose comments carry the kind's evidence, or None. `repo`
+    (default GITHUB_REPOSITORY) says which repository a `owner/repo#N` or
+    issue-URL closing reference must name."""
     if kind == "board-fix":
         match = _FIX_ISSUE_RE.match(snap.get("headRefName") or "")
         return int(match.group(1)) if match else None
     if kind == "final":
         body = snap.get("body") or ""
-        match = _LIFECYCLE_LINE_RE.search(body) or _LINKED_ISSUE_RE.search(body)
-        return int(match.group(1)) if match else None
+        match = _LIFECYCLE_LINE_RE.search(body)
+        if match:
+            return int(match.group(1))
+        from board_backlog_lines import closing_keyword_refs
+        refs = closing_keyword_refs(body, repo or os.environ.get("GITHUB_REPOSITORY") or "")
+        return refs[0][0] if refs else None
     return None
 
 
@@ -713,7 +720,7 @@ def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None, fin
     snap["reviews"] = pull.get("reviews") or []
     snap["cross_repository"] = bool(pull.get("isCrossRepository"))
     kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
-    issue = linked_issue(kind, snap)
+    issue = linked_issue(kind, snap, repo)
     snap["issue_comments"] = None
     snap["labels"] = None
     if issue is not None:
@@ -872,7 +879,7 @@ def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/",
         if record is not None:
             snap["verificationRun"] = board_merge.fetch_verification_run(repo, record, actions_token)
     kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
-    issue = linked_issue(kind, snap)
+    issue = linked_issue(kind, snap, repo)
     snap["issue_comments"] = snap["labels"] = snap["label_events"] = None
     if issue is not None:
         try:

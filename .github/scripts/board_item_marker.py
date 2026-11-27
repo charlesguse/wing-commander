@@ -271,6 +271,20 @@ def directed_carry(issue_comments, bot_login):
     return {"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0}
 
 
+def carried_round(issue_comments, bot_login):
+    """The review round a merged or handed-over marker carries
+    (`--carry-round-from`, spec 115): the round of the newest well-formed
+    loop marker, skipping a newer one that is unparsable or names no int
+    round (#889, found by the code review of #1059). read_marker() trusts
+    the single newest marker and returns None for an unparsable one, so
+    the round fell back to 0 and a re-admitted item got its review round
+    budget back. 0 only when no well-formed marker carries a round."""
+    pair = find_latest_marker_matching(
+        issue_comments, bot_login,
+        lambda marker: isinstance(marker.get("round"), int) and not isinstance(marker.get("round"), bool))
+    return pair[1]["round"] if pair else 0
+
+
 def read_marker(issue_comments, bot_login):
     """As read_marker_with_timestamp(), returning only the marker dict (or
     None)."""
@@ -378,7 +392,19 @@ def render_bump_verification(head_sha, tier, result, run_id):
 # head an earlier round converged on is never read as "reviewed clean".
 _REVIEW_VERDICT_RE = re.compile(r"Review round[^\n]*?PR #(\d+)")
 
-_REVIEW_CONVERGED_RE = re.compile(r"Review round \d+ converged -- .*?PR #(\d+) \(head ([0-9a-f]{7,40})\)")
+# The whole comment the review job's "Post the converged/stalled outcome
+# and marker" step posts on a converged round, and nothing else (#889,
+# found by the code review of #1059): the verdict sentence opens the body,
+# then the optional `**Run:**` line and write_marker()'s own board item
+# marker end it. A converged-shaped sentence anywhere else in a loop
+# comment (quoted agent text, a finding title) is not a converged verdict,
+# as board_merge.bump_records() counts a bump record only as its whole
+# rendered comment.
+_REVIEW_CONVERGED_RE = re.compile(
+    r"Review round \d+ converged -- zero open in-scope findings on PR #(\d+) "
+    r"\(head ([0-9a-f]{7,40})\)\. Proceeding to readiness\.\n\n"
+    r"(?:\*\*Run:\*\* \S+\n\n)?"
+    r"<!-- wing-commander-board-item: \{[^\n]*\} -->\n?")
 
 
 def _converged_review_head(body, pr_number):
@@ -397,7 +423,7 @@ def _converged_review_head(body, pr_number):
     SC-004). Both of those inconclusive verdicts fall through to
     head_moved_since_last_review()'s own "no converged head resolvable"
     default of True, exactly like finding no resolved comment at all."""
-    match = _REVIEW_CONVERGED_RE.search(body or "")
+    match = _REVIEW_CONVERGED_RE.fullmatch(body or "")
     if match and match.group(1) == str(pr_number):
         return match.group(2)
     return None
@@ -661,8 +687,7 @@ def main():
         if not args.bot_login:
             parser.error("--carry-round-from needs --bot-login")
         with open(args.carry_round_from, encoding="utf-8") as fh:
-            carried = read_marker(json.load(fh), args.bot_login) or {}
-        args.round = carried.get("round") or 0
+            args.round = carried_round(json.load(fh), args.bot_login)
     if args.bump_verification:
         print(render_bump_verification(*args.bump_verification))
         return

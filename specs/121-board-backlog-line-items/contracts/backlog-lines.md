@@ -16,7 +16,7 @@ Topmost unchecked line with no annotation. `claimed_ids` is informational; an an
 FR-002. Ambiguity or an unmaintained author returns `(None, reason)`.
 
 ### `selection_gate(env) -> (ok, reason)`
-`env` carries `backlog_lines_switch`, `loop_paused`, `constitution_text`. Refuses with a one-line reason when the switch is not exactly `true`, the loop is paused, or Principle X (`### X.` section) lacks `Maintenance backlog line`; `constitution_text = None` refuses (FR-025).
+`env` carries `backlog_lines_switch`, `loop_paused`, `constitution_text`. Refuses with a one-line reason when the switch is not `true` (compared case-insensitively, never trimmed: the one switch rule, `wc_board_status._switch_on`), the loop is paused (the same rule), or Principle X (`### X.` section) lacks `Maintenance backlog line`; `constitution_text = None` refuses (FR-025).
 
 ### `mint_id(body) -> str`
 `bl-` + 8 hex; never an id already in `body`.
