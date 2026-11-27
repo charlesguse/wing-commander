@@ -2447,8 +2447,11 @@ def _mutations(text):
     sub("prove-gate without the BOARD_PR_OWNED_JQ check (pre-#557)",
         'if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-prove-pr.json")" != "true" ]; then',
         'if false; then')
+    # The decision step's own copy (#1345): the ownership step above it reads
+    # the same object first, and Gate 136 runs that one.
     sub("prove-gate ownership read off the wrong object",
-        "jq '.pull_request' \"$GITHUB_EVENT_PATH\"", "jq '.' \"$GITHUB_EVENT_PATH\"")
+        "jq '.pull_request' \"$GITHUB_EVENT_PATH\" > \"$RUNNER_TEMP/board-prove-pr.json\"",
+        "jq '.' \"$GITHUB_EVENT_PATH\" > \"$RUNNER_TEMP/board-prove-pr.json\"")
     # #564: each live lookup restored to its pre-#564 swallow, and each
     # "not found" test widened or broken.
     sub("select PR-state lookup swallowed with || continue (pre-#564)",
