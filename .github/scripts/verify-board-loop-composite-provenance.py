@@ -428,15 +428,40 @@ def pr_reachable_jobs(doc):
     return set(jobs) - skipped
 
 
+def _is_checkout(step):
+    """True for an actions/checkout step in any letter case: GitHub resolves
+    an action's owner and name case-insensitively, so `Actions/Checkout@v5`
+    is the same action (found by #1307's validator, F1)."""
+    return str((step or {}).get("uses", "")).lower().startswith("actions/checkout@")
+
+
+def _with_folded(step):
+    """The step's with: keys folded to lower case, as the runner reads an
+    action's inputs, and the keys that collide once folded."""
+    folded, clashes = {}, []
+    for key, value in ((step or {}).get("with") or {}).items():
+        low = str(key).lower()
+        if low in folded:
+            clashes.append(low)
+        folded[low] = value
+    return folded, clashes
+
+
 def rule_h_problems(job_id, job):
     """(h) every checkout in a job that can run on a pull_request event
     names this repository and the default branch."""
     problems = []
     for i, step in enumerate((job or {}).get("steps") or []):
         step = step or {}
-        if not str(step.get("uses", "")).startswith("actions/checkout@"):
+        if not _is_checkout(step):
             continue
-        w = step.get("with") or {}
+        w, clashes = _with_folded(step)
+        if clashes:
+            problems.append(
+                "{0}: can run on a pull_request event, but step {1} ({2!r}) gives with: key(s) "
+                "{3} more than once in different letter cases; the runner reads inputs "
+                "case-insensitively, so which one applies is not fixed -- rule (h)".format(
+                    job_id, i, step.get("name"), sorted(set(clashes))))
         repo = w.get("repository")
         # No other repository: a literal owner/name can spell this one
         # (actions/checkout then takes github.sha), and the default
@@ -483,7 +508,7 @@ def _dependent_indices(steps):
 def _checkout_indices(steps):
     return [i for i, s in enumerate(steps)
             if (s or {}).get("name") == CHECKOUT_NAME
-            and str((s or {}).get("uses", "")).startswith("actions/checkout@")]
+            and _is_checkout(s)]
 
 
 def _write_protect_indices(steps):
@@ -602,7 +627,7 @@ def _untrusted_root_checkout(step):
     """The checkout's description when it writes something other than the
     run's own commit into the workspace root; None otherwise."""
     step = step or {}
-    if not str(step.get("uses", "")).startswith("actions/checkout@"):
+    if not _is_checkout(step):
         return None
     w = step.get("with") or {}
     path = str(w.get("path") or "").strip()
@@ -748,7 +773,7 @@ def mut_gate_job_raw_reference(doc):
 
 def _checkout_named(steps, name):
     for s in steps:
-        if (s or {}).get("name") == name and str(s.get("uses", "")).startswith("actions/checkout@"):
+        if (s or {}).get("name") == name and _is_checkout(s):
             return s
     sys.exit("::error::Gate 104 self-test: no {0!r} checkout found; update the self-test "
              "alongside the workflow.".format(name))
@@ -765,6 +790,22 @@ def mut_prove_root_ref_dropped(doc):
     """prove's workspace checkout loses its ref, so the .github/scripts it
     imports would be the PR's merge commit again."""
     del _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]["ref"]
+    return doc
+
+
+def mut_prove_gate_root_checkout_capitalised(doc):
+    """prove-gate's workspace checkout is spelled with capitals and loses its
+    ref: GitHub runs the same action, at github.sha (#1307 validator F1)."""
+    step = _checkout_named(_job_steps(doc, "prove-gate"), "Checkout")
+    step["uses"] = step["uses"].replace("actions/checkout@", "Actions/Checkout@")
+    del step["with"]["ref"]
+    return doc
+
+
+def mut_prove_root_ref_twice_in_cases(doc):
+    """prove's workspace checkout keeps its ref and adds REF: github.sha; the
+    runner folds input names, so the default-branch ref may not apply."""
+    _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]["REF"] = EXPECTED_REF
     return doc
 
 
@@ -920,7 +961,7 @@ def mut_untrusted_root_ref(docs):
     """shared-pr-reviewer.yml's find job checks the PR head out at the root
     instead of the default-branch commit its composites come from."""
     step = _other_step(docs, "shared-pr-reviewer.yml", "find",
-                       lambda s: str(s.get("uses", "")).startswith("actions/checkout@"))
+                       lambda s: _is_checkout(s))
     step["with"]["ref"] = "${{ needs.prepare.outputs.head-sha }}"
     return docs
 
@@ -982,6 +1023,10 @@ MUTATIONS = [
      "doc", mut_prove_gate_side_other_repo, "rule (h)"),
     ("a workflow_call trigger is added with every other job still at github.sha",
      "doc", mut_workflow_call_trigger_added, "rule (h)"),
+    ("prove-gate's workspace checkout is spelled Actions/Checkout and loses its ref",
+     "doc", mut_prove_gate_root_checkout_capitalised, "rule (h)"),
+    ("prove's workspace checkout adds REF: github.sha beside its default-branch ref",
+     "doc", mut_prove_root_ref_twice_in_cases, "rule (h)"),
 ]
 
 
