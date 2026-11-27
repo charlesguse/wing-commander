@@ -2691,20 +2691,33 @@ jobs:
           # single-quoted --json-schema argument that claude-code-action
           # tokenizes with shell-quote, so an apostrophe in a label name
           # would split the token and corrupt the schema.
+          # The classes this workflow names itself: exactly the arms of
+          # `Determine issue-filing eligibility` and of `Evidence validity
+          # gate`'s key list (verify-narrative-drift-routing.sh fails if
+          # the two drift apart). The vocabulary when the label query fails
+          # or no label exists yet: it fails closed to a fixed enum, never
+          # to free text, because a free-text class can miss the eligibility
+          # step's exact match and file a signal class (denied-tool,
+          # narrative-drift) as a defect.
+          builtin_classes='["cost-line-malformed","cost-line-missing","denied-tool","lost-progress","missing-spec-artifact","missing-spec-metadata","narrative-drift","spec-number-collision","stage-mismatch","token-budget-warning","trusted-file-tampered","turn-budget-trend"]'
+          # Exactly the eligibility step's issue-exempt arm, offered on
+          # every run: a registry holding only other labels (a fresh repo
+          # after its first `Register new finding class`) would otherwise
+          # leave these to "__new__", whose proposed synonym is filed.
+          exempt_classes='["denied-tool","narrative-drift","trusted-file-tampered"]'
           classes="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name \
             --jq '[.[].name | select(startswith($ENV.LABEL_PREFIX)) | sub("^" + $ENV.LABEL_PREFIX; "")
                    | ascii_downcase | gsub("[^a-z0-9-]"; "")] | map(select(length > 0)) | unique' \
             2>/dev/null)" || classes='[]'
           if [ -z "$classes" ] || [ "$classes" = "[]" ]; then
-            # No registry yet (fresh consumer repo, or the label query failed).
-            # Fall back to a free-text class so diagnosis still works; dedup is
-            # degraded for this run, which is strictly better than no verdict.
-            echo "::warning::no '${LABEL_PREFIX}<type>' labels found — falling back to a free-text finding class, so dedup may not match across runs for this run's findings."
-            class_schema='{"type":"string"}'
-            classes='[]'
-          else
-            class_schema="$(printf '%s' "$classes" | jq -c '. + ["__new__"] | {type:"string", enum:.}')"
+            # No registry yet (fresh consumer repo), or the label query failed.
+            # "__new__" still lets the agent propose a class the built-in list
+            # lacks, and `Register new finding class` labels it for next run.
+            echo "::warning::no '${LABEL_PREFIX}<type>' labels found — falling back to the built-in finding classes for this run."
+            classes="$builtin_classes"
           fi
+          classes="$(printf '%s' "$classes" | jq -c --argjson x "$exempt_classes" '. + $x | unique')"
+          class_schema="$(printf '%s' "$classes" | jq -c '. + ["__new__"] | {type:"string", enum:.}')"
           # signalId is enum-constrained to the ids actually present in THIS
           # run's signals, so citing evidence is selection from a fixed list
           # rather than free-text authorship — that constraint is what makes
