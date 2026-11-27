@@ -45,9 +45,10 @@ reaches no model, so check 2 does not apply to it.
 `--self-test` mutates the real files: it removes each override, sets one to
 the App token, gives one a GH_TOKEN of the App token, drops the
 github_token of one read-only step, points a step at a non-tool-args step,
-gives a step a literal list without the denies, removes each deny from the
-composite and its append line, and renames an exempt step. Each must
-fail; the real files must pass.
+gives a step a literal list without the denies, drops each deny from each
+LITERAL_DENY_STEPS step, removes each deny from the composite and its
+append line, and holds a synthetic exemption that is stale or names a
+renamed step. Each must fail; the real files must pass.
 
 Usage:
     python3 .github/scripts/verify-agent-credential-scrub.py
@@ -84,19 +85,19 @@ COMPOSE_STEP = "Compose tool args"
 Exemption = collections.namedtuple(
     "Exemption", "reason issue decided_by", defaults=((),))
 
-_UPDATER_REASON = (
-    "its tool lists are literals in a file left alone while the owner's "
-    "updater work was open; the /proc denies are added there next")
 # (workflow basename, step name) -> why the step lists its denies by hand
-# without them (Gate 124 reads `issue=`).
-EXEMPT_PROC_DENY = {
-    ("auto-update-spec-kit.yml", "Decide upgrade path"): Exemption(
-        reason=_UPDATER_REASON, issue=(889,), decided_by=(1310,)),
-    ("auto-update-spec-kit.yml", "Run e2e agent-driven stage"): Exemption(
-        reason=_UPDATER_REASON, issue=(889,), decided_by=(1310,)),
-    ("auto-update-spec-kit.yml", "Interpret the maintainer's reply"): Exemption(
-        reason=_UPDATER_REASON, issue=(889,), decided_by=(1310,)),
-}
+# without them (Gate 124 reads `issue=`). Empty: auto-update-spec-kit.yml's
+# three agent steps now list both denies literally (#889).
+EXEMPT_PROC_DENY = {}
+
+# Agent steps that list their tools by hand (no tool-args composite), so
+# the self-test drops each /proc deny from each and expects a failure.
+LITERAL_DENY_STEPS = (
+    ("auto-update-spec-kit.yml", "evaluate-path", "Decide upgrade path"),
+    ("auto-update-spec-kit.yml", "e2e-stage", "Run e2e agent-driven stage"),
+    ("auto-update-spec-kit.yml", "comment-reply",
+     "Interpret the maintainer's reply"),
+)
 
 # The read-only agent steps this gate was written for: the self-test
 # removes each one's override and expects a failure naming it.
@@ -375,14 +376,32 @@ def self_test(docs, action_text, bash):
     expect("a step listing its denies by hand without /proc", check_docs(d),
            "lacks Read(//proc/**), Bash(*proc/*)")
 
-    d = copy.deepcopy(docs)
-    (ex_base, ex_name) = sorted(EXEMPT_PROC_DENY)[0]
-    for job in d[ex_base]["jobs"].values():
-        for s in (job or {}).get("steps") or []:
-            if isinstance(s, dict) and s.get("name") == ex_name:
-                s["name"] = ex_name + " (renamed)"
-    expect("an exemption whose step was renamed", check_docs(d),
-           f"names step {ex_name!r}, which is no")
+    for base, job, name in LITERAL_DENY_STEPS:
+        for deny in PROC_DENIES:
+            d = copy.deepcopy(docs)
+            step = _find(d, base, job, name)
+            args = step["with"]["claude_args"]
+            if "," + deny not in args:
+                failures.append(f"{base} {name!r} lists no {deny} to drop; "
+                                f"the self-test's mutation point has drifted.")
+                continue
+            step["with"]["claude_args"] = args.replace("," + deny, "", 1)
+            expect(f"{base} {name!r} without {deny}", check_docs(d),
+                   f"step {name!r} passes a model credential but its")
+
+    global EXEMPT_PROC_DENY
+    saved = EXEMPT_PROC_DENY
+    base, job, name = LITERAL_DENY_STEPS[0]
+    try:
+        EXEMPT_PROC_DENY = {(base, name): Exemption(reason="t", issue=(889,))}
+        expect("an exemption for a step that lists both denies",
+               check_docs(docs), "already lists both /proc denies")
+        EXEMPT_PROC_DENY = {(base, name + " (renamed)"):
+                            Exemption(reason="t", issue=(889,))}
+        expect("an exemption whose step was renamed", check_docs(docs),
+               f"names step {name + ' (renamed)'!r}, which is no")
+    finally:
+        EXEMPT_PROC_DENY = saved
 
     for deny in PROC_DENIES:
         mutated = action_text.replace(deny, "", 1)
