@@ -956,10 +956,8 @@ def _tree_snapshot(root, dest):
     script), which a composite directory's walk picked up between two scans.
     A file that vanishes while it is copied is left out of the copy."""
     import shutil
-    import subprocess
-    listed = subprocess.run(["git", "ls-files", "-z", "-co", "--exclude-standard", "--"]
-                            + list(pl.TREE_PATHSPECS), capture_output=True, cwd=root, check=True)
-    for rel in sorted(set(n for n in listed.stdout.decode("utf-8").split("\0") if n)):
+    from wc_repo_files import repo_files
+    for rel in sorted(set(repo_files(root, untracked=True, pathspecs=pl.TREE_PATHSPECS))):
         target = os.path.join(dest, rel)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         try:
@@ -1006,6 +1004,14 @@ def check_tree_snapshot():
             problems.append("tree snapshot: copied {0}, expected {1}".format(got, want))
         elif open(os.path.join(dest, ".github/workflows/a.yml"), encoding="utf-8").read() != "on: pull_request\n":
             problems.append("tree snapshot: the copy does not hold the working tree as it stood when copied")
+        # The copy is no git working tree: a pathspec listing there has no
+        # walk to fall back on, so it raises instead of listing everything.
+        from wc_repo_files import repo_files
+        try:
+            repo_files(dest, untracked=True, pathspecs=pl.TREE_PATHSPECS)
+            problems.append("tree snapshot: a pathspec listing outside a git tree walked the disk")
+        except RuntimeError:
+            pass
     return problems
 
 
