@@ -44,12 +44,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # The branch input is pushed to below, so anything but a spec branch
+      # (main, a fix branch, a ref with `..` or a leading `-`) stops the run
+      # here, before any read or write.
       - name: Derive slug
         id: slug
         shell: bash
         env:
           BRANCH: ${{ inputs.branch }}
-        run: echo "slug=${BRANCH#spec/}" >> "$GITHUB_OUTPUT"
+        run: |
+          set -uo pipefail
+          if ! [[ "$BRANCH" =~ ^spec/[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || [[ "$BRANCH" == *..* ]]; then
+            echo "::error::branch '$BRANCH' is not a spec/* branch; nothing migrated"
+            exit 1
+          fi
+          echo "slug=${BRANCH#spec/}" >> "$GITHUB_OUTPUT"
       # The spec-meta.json read has one home, the wing-commander-spec-meta
       # composite (#340, Gate 61).
       - name: Read spec-meta.json from the spec branch
@@ -65,11 +74,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STAGE: ${{ steps.meta.outputs.stage }}
+          META_IDENTITY_OK: ${{ steps.meta.outputs.identity-ok }}
           ISSUE: ${{ inputs.issue }}
           BRANCH: ${{ inputs.branch }}
           SPEC_DIR: ${{ inputs.spec-dir }}
         run: |
           set -uo pipefail
+          # A spec-meta.json whose spec_dir does not name the directory it was
+          # read from is not this lifecycle's record (#340), so its stage
+          # decides nothing.
+          if [ "${META_IDENTITY_OK:-}" != "true" ]; then
+            echo "::error::$SPEC_DIR/spec-meta.json on $BRANCH failed the self-identity check (or was not read); nothing migrated"
+            exit 1
+          fi
           git fetch origin "$BRANCH"
           out="$(bash .github/actions/_shared/count-tasks-checkboxes.sh "origin/$BRANCH" "$SPEC_DIR/tasks.md")" || exit 1
           count="$(printf '%s\n' "$out" | sed -n 's/^buildable-unchecked-count=//p')"
