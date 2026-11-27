@@ -2,8 +2,9 @@
 - [ ] T002 Drill: record format for the scratch issue
 - [ ] T003 After merge, verify-sync helper for the board
 - [ ] T004 Post-merge confirm dialog for the release page
-- [ ] T005 Post-merge proof helper for the release notes
-- [ ] T006 Drill: dispatch table for the router
-- [ ] T007 After merge, re-drive one run
-- [ ] T008 Post-merge: prove the fix on a live run
-- [ ] T009 Drill: dispatch the cap hand-off on a scratch issue
+- [ ] T005 Drill: dispatch table for the router
+- [ ] T006 After merge, re-drive one run
+- [ ] T007 Post-merge: prove the fix on a live run
+- [ ] T008 Drill: dispatch the cap hand-off on a scratch issue
+- [ ] T009 Post-merge proof (FR-024/SC-008): re-drive one board-loop run and record the evidence on the PR
+- [ ] T010 Post-merge proof reminder: after the implementation PR merges, use the `prove-after-merge` skill to re-drive one board-loop run
