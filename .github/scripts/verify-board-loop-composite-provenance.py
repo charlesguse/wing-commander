@@ -136,11 +136,19 @@ PR_EVENT = "pull_request"
 #
 # A three-valued reading of a job's `if:` as it would evaluate on a
 # pull_request event. A value is ("known", v) for one the expression
-# certainly has there (a string or a bool), or UNKNOWN. Only a condition
-# that is certainly false keeps a job out of rule (h).
+# certainly has there (a string, a bool, or None for null), TRUTHY or FALSY
+# for one whose truth is certain but whose value is not, or UNKNOWN. Only a
+# condition that is certainly false keeps a job out of rule (h). Every rule
+# below follows GitHub's documented expression semantics: `!` binds tighter
+# than `==`, `||` and `&&` return an operand rather than a bool, function
+# names ignore case, `needs` holds only a job's direct needs, and a
+# comparison of unlike types coerces both sides to numbers (null and '' to
+# 0). Where a reading is not certain it is UNKNOWN, never a guess.
 
 UNKNOWN = ("unknown", None)
-STATUS_FN_RE = re.compile(r"\b(?:success|always|cancelled|failure)\s*\(")
+TRUTHY = ("truthy", None)
+FALSY = ("falsy", None)
+STATUS_FN_RE = re.compile(r"\b(?:success|always|cancelled|failure)\s*\(", re.I)
 _TOKEN_RE = re.compile(
     r"\s*(?:(\|\||&&|==|!=|<=|>=|<|>|!|\(|\)|,)"
     r"|'((?:[^']|'')*)'"
@@ -177,10 +185,31 @@ def _known(x):
 
 def _truth(v):
     """True, False, or None (unknown) for an abstract value."""
-    if v is UNKNOWN:
-        return None
+    if v[0] != "known":
+        return {"truthy": True, "falsy": False}.get(v[0])
     x = v[1]
     return x != "" if isinstance(x, str) else bool(x)
+
+
+def _loose_eq(a, b):
+    """GitHub's `==` on two known values: True, False, or None (unknown)."""
+    if isinstance(a, str) and isinstance(b, str):
+        return a.lower() == b.lower()
+    if isinstance(a, bool) and isinstance(b, bool):
+        return a == b
+    if a is None and b is None:
+        return True
+    if b is None:
+        a, b = b, a
+    if a is None and isinstance(b, bool):
+        return b is False
+    if a is None and isinstance(b, str):
+        # null coerces to 0; a string to the number it spells, else NaN.
+        if b == "":
+            return True
+        if b.strip() and not re.search(r"\d", b):
+            return False
+    return None
 
 
 class _PrEval(object):
@@ -210,55 +239,52 @@ class _PrEval(object):
         return v
 
     def or_(self):
+        # `a || b` is a when a is truthy, else b.
         v = self.and_()
         while self.peek() == ("op", "||"):
             self.take()
-            a, b = _truth(v), _truth(self.and_())
-            if a or b:
-                v = _known(True)
-            elif a is False and b is False:
-                v = _known(False)
-            else:
-                v = UNKNOWN
+            b = self.and_()
+            a = _truth(v)
+            if a is False:
+                v = b
+            elif a is None:
+                v = TRUTHY if _truth(b) is True else UNKNOWN
         return v
 
     def and_(self):
-        v = self.unary()
+        # `a && b` is a when a is falsy, else b.
+        v = self.cmp()
         while self.peek() == ("op", "&&"):
             self.take()
-            a, b = _truth(v), _truth(self.unary())
-            if a is False or b is False:
-                v = _known(False)
-            elif a and b:
-                v = _known(True)
-            else:
-                v = UNKNOWN
+            b = self.cmp()
+            a = _truth(v)
+            if a is True:
+                v = b
+            elif a is None:
+                v = FALSY if _truth(b) is False else UNKNOWN
         return v
 
-    def unary(self):
-        if self.peek() == ("op", "!"):
-            self.take()
-            t = _truth(self.unary())
-            return UNKNOWN if t is None else _known(not t)
-        return self.cmp()
-
     def cmp(self):
-        left = self.primary()
+        left = self.unary()
         tok = self.peek()
         if tok[0] != "op" or tok[1] not in ("==", "!=", "<", ">", "<=", ">="):
             return left
         self.take()
-        right = self.primary()
-        if tok[1] not in ("==", "!=") or left is UNKNOWN or right is UNKNOWN:
+        right = self.unary()
+        if tok[1] not in ("==", "!=") or left[0] != "known" or right[0] != "known":
             return UNKNOWN
-        a, b = left[1], right[1]
-        if isinstance(a, str) and isinstance(b, str):
-            same = a.lower() == b.lower()
-        elif isinstance(a, str) or isinstance(b, str):
+        same = _loose_eq(left[1], right[1])
+        if same is None:
             return UNKNOWN
-        else:
-            same = a == b
         return _known(same if tok[1] == "==" else not same)
+
+    def unary(self):
+        # `!` binds tighter than `==`: `!a == b` is `(!a) == b`.
+        if self.peek() == ("op", "!"):
+            self.take()
+            t = _truth(self.unary())
+            return UNKNOWN if t is None else _known(not t)
+        return self.primary()
 
     def primary(self):
         kind, val = self.take()
@@ -293,19 +319,21 @@ class _PrEval(object):
         if low in ("true", "false"):
             return _known(low == "true")
         if low == "null":
-            return _known("")
+            return _known(None)
         if low == "github.event_name":
             return _known(PR_EVENT)
         if low.startswith("inputs."):
-            # A pull_request event has no inputs; a missing one is null,
-            # which compares equal to ''.
-            return _known("")
+            # A pull_request event has no inputs; a missing one is null.
+            return _known(None)
         parts = name.split(".")
-        if len(parts) >= 3 and parts[0] == "needs" and parts[1] in self.skipped:
-            if parts[2] == "result":
+        # Only a direct need that is certainly skipped has a known result
+        # and empty outputs; `needs` holds nothing else.
+        if parts[0] == "needs" and len(parts) >= 3 and parts[1] in self.needs \
+                and parts[1] in self.skipped:
+            if parts[2] == "result" and len(parts) == 3:
                 return _known("skipped")
-            if parts[2] == "outputs":
-                return _known("")
+            if parts[2] == "outputs" and len(parts) == 4:
+                return _known(None)
         return UNKNOWN
 
 
@@ -713,6 +741,22 @@ PR_CONDITION_CASES = [
     ("contains(github.event.pull_request.labels.*.name, 'x')", set(), [], False),
     ("${{ github.event_name == 'schedule' }}", set(), [], True),
     ("github.event_name == 'pull_request' &&& x", set(), [], False),
+    # A missing input, a skipped need's output and null are null, not '':
+    # null == '0' coerces both sides to 0.
+    ("inputs.n == '0'", set(), [], False),
+    ("!cancelled() && needs.a.outputs.n == '0'", {"a"}, ["a"], False),
+    ("null == ' '", set(), [], False),
+    # `!` binds tighter than `!=`: (!'pull_request') != 'schedule' is true.
+    ("!github.event_name != 'schedule'", set(), [], False),
+    # needs.c names no direct need, so it is null, not a skipped result.
+    ("needs.c.result != 'skipped'", {"c"}, [], False),
+    # Function names ignore case: Always() is a status function, so no
+    # implicit success() applies.
+    ("Always()", {"a"}, ["a"], False),
+    # `||` returns an operand: (null || 'a') == true is 'a' == true, false.
+    ("!((inputs.x || 'a') == true)", set(), [], False),
+    # needs.a.outputs is an object, never equal to ''.
+    ("always() && needs.a.outputs != ''", {"a"}, ["a"], False),
 ]
 
 
