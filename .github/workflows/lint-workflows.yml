@@ -5076,7 +5076,7 @@ jobs:
       - name: Gate 181 — read-only agent steps do not inherit the App token, and every agent step is denied /proc
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-credential-scrub.py
-      - name: Gate 181 self-test — a removed or App-valued override, a missing github_token, a non-tool-args deny source, a hand list without /proc, a stale exemption and each composite deny removed each fail
+      - name: Gate 181 self-test — a removed or App-valued override, the App token under another env name, a missing github_token, a non-tool-args deny source, a hand list without /proc, a stale exemption and each composite deny removed each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-credential-scrub.py --self-test
 

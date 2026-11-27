@@ -25,7 +25,8 @@ Every `anthropics/claude-code-action` step under `.github/workflows/`:
   1. Token scrub. In a job that runs `wing-commander-context`, a step whose
      `github_token` is not the App token (it is `github.token`, another
      read-only token, or unset) sets `WC_BOT_TOKEN` to the empty string in
-     its own `env:`. The App token is `env.WC_BOT_TOKEN` or a
+     its own `env:`. In any job, such a step names the App token in no
+     other `env:` value. The App token is `env.WC_BOT_TOKEN` or a
      `steps.<id>.outputs.token`.
   2. /proc deny. A step that passes a model credential (an OAuth token, an
      API key, or a Bedrock, Vertex or Foundry switch) takes its
@@ -42,10 +43,11 @@ A step with no model credential (agent-startup-check.yml's setup-only run)
 reaches no model, so check 2 does not apply to it.
 
 `--self-test` mutates the real files: it removes each override, sets one to
-the App token, drops the github_token of one read-only step, points a step
-at a non-tool-args step, gives a step a literal list without the denies,
-removes each deny from the composite and its append line, and renames an
-exempt step. Each must fail; the real files must pass.
+the App token, gives one a GH_TOKEN of the App token, drops the
+github_token of one read-only step, points a step at a non-tool-args step,
+gives a step a literal list without the denies, removes each deny from the
+composite and its append line, and renames an exempt step. Each must
+fail; the real files must pass.
 
 Usage:
     python3 .github/scripts/verify-agent-credential-scrub.py
@@ -143,7 +145,19 @@ def check_doc(base, doc):
 
             # 1. Token scrub.
             token = str(with_block.get("github_token") or "")
-            if has_context and not APP_TOKEN_RE.search(token):
+            read_only = not APP_TOKEN_RE.search(token)
+            if read_only and isinstance(env, dict):
+                # The step's own env: must not hand the App token back
+                # under another name (the `GH_TOKEN: ${{ env.WC_BOT_TOKEN }}`
+                # every App-token agent step carries).
+                for k in sorted(env, key=str):
+                    if k != "WC_BOT_TOKEN" and APP_TOKEN_RE.search(str(env[k])):
+                        problems.append(
+                            f"{where} runs with a read-only github_token "
+                            f"({token or 'none'}) but its env: {k} is "
+                            f"{env[k]!r}, which hands it the App token "
+                            f"(#1310).")
+            if has_context and read_only:
                 value = env.get("WC_BOT_TOKEN", None) if isinstance(env, dict) else None
                 if value != "":
                     shown = "unset" if value is None else repr(value)
@@ -333,6 +347,11 @@ def self_test(docs, action_text, bash):
     _find(d, *READ_ONLY_STEPS[0])["env"]["WC_BOT_TOKEN"] = "${{ env.WC_BOT_TOKEN }}"
     expect("an override set back to the App token", check_docs(d),
            "inherits the job's App token")
+
+    d = copy.deepcopy(docs)
+    _find(d, *READ_ONLY_STEPS[1])["env"]["GH_TOKEN"] = "${{ env.WC_BOT_TOKEN }}"
+    expect("an App token under another env: name", check_docs(d),
+           "env: GH_TOKEN is '${{ env.WC_BOT_TOKEN }}', which hands it")
 
     d = copy.deepcopy(docs)
     step = _find(d, *READ_ONLY_STEPS[1])
