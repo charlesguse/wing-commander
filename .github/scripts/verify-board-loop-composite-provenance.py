@@ -834,7 +834,7 @@ PR_CONDITION_CASES = [
     ("always() && needs.a.outputs != ''", {"a"}, ["a"], False),
     # A non-ASCII string compares as unknown: GitHub's ordinal ignore-case
     # does not fold U+212A (KELVIN SIGN) to 'k', as Python's lower() does.
-    ("always() && needs.a.result != 'sKipped'", {"a"}, ["a"], False),
+    ("always() && needs.a.result != 's\u212aipped'", {"a"}, ["a"], False),
 ]
 
 
