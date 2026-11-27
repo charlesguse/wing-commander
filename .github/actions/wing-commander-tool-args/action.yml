@@ -140,6 +140,11 @@ runs:
         # Whole, not narrowed to GET: a method or field flag anywhere in
         # the call makes it a write (spec 051, #338).
         PROJECT_API_DENY: "Bash(gh api:*)"
+      run: |
+        set -uo pipefail
+
+        SENTINEL="__unset__"
+
         # #1310: every agent is denied reading /proc (appended just before
         # step 6's emit). The process environment holds the model
         # credential and whatever GH_TOKEN the step runs with, and
@@ -148,12 +153,9 @@ runs:
         # given a /proc path, absolute or relative. It matches the
         # command's text, not the path the shell resolves, so it backs up
         # the read-only agent steps' own `WC_BOT_TOKEN: ''` override and
-        # does not replace it. A constant tool list, not a command.
-        AGENT_PROC_DENIES: "Read(//proc/**),Bash(*proc/*)"
-      run: |
-        set -uo pipefail
-
-        SENTINEL="__unset__"
+        # does not replace it. A constant tool list, set in the script
+        # rather than in env: so every harness that runs this block has it.
+        AGENT_PROC_DENIES="Read(//proc/**),Bash(*proc/*)"
 
         fail() {
           echo "::error::wing-commander-tool-args ($STEP_LABEL): $1"
