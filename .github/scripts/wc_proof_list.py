@@ -549,21 +549,13 @@ def closing_targets(text, repository):
     """[N] for this repository's issues that a GitHub closing keyword in
     `text` names (`Fixes #N`, `closes owner/repo#N`, `resolved: GH-N`, an
     issue URL), in order. Another repository's issue is dropped, as R4 drops
-    its closingIssuesReferences."""
-    from board_backlog_lines import CLOSING_RE
-    own, out = repository.lower(), []
-    for match in CLOSING_RE.finditer(text or ""):
-        target = re.split(r"[:\s]+", match.group(0), maxsplit=1)[1]
-        if target.lower().startswith("http"):
-            parts = target.split("/")  # https: '' github.com owner repo issues N
-            repo, number = "/".join(parts[3:5]), parts[6]
-        elif target.upper().startswith("GH-"):
-            repo, number = own, target[3:]
-        else:
-            repo, _hash, number = target.rpartition("#")
-            repo = repo or own
-        if repo.lower() == own and int(number) not in out:
-            out.append(int(number))
+    its closingIssuesReferences. The decoding is
+    board_backlog_lines.closing_keyword_refs(), CLOSING_RE's one reader."""
+    from board_backlog_lines import closing_keyword_refs
+    out = []
+    for number, _hit in closing_keyword_refs(text, repository):
+        if number not in out:
+            out.append(number)
     return out
 
 
@@ -705,8 +697,8 @@ class Collector:
         message (the PR title, `Fix #N: ...`) closes issue N from the default
         branch while `closingIssuesReferences` stays empty. Candidates are
         this repository's issues named after a closing keyword in the merge
-        commit's message (board_backlog_lines.CLOSING_RE, the one home of
-        GitHub's keyword grammar); each is kept only when its
+        commit's message (board_backlog_lines.closing_keyword_refs(), the one
+        reader of GitHub's keyword grammar); each is kept only when its
         `issues/{N}/events` has a `closed` event whose `commit_id` is this
         merge. One read per candidate not already named. A number that is
         no issue (404) is no candidate."""

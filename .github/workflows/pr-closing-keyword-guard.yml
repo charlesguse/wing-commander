@@ -1,0 +1,55 @@
+name: "pr-closing-keyword-guard"
+
+# Fails a pull request whose title, body or commit messages use a GitHub
+# closing keyword (close/fix/resolve and their forms) on an open
+# `disposition:tracking` issue. Seven "Fix #889 batch: ..." PRs closed the
+# Maintenance backlog that way, and each close turned main red at Gate 124
+# (which never runs on a pull request) until someone reopened it. The logic
+# and its self-test live in verify-pr-closing-keywords.py; lint-workflows.yml
+# runs the self-test, this workflow runs the live check.
+#
+# Its own workflow, not a lint-workflows.yml step: that workflow's
+# pull_request trigger has a paths: filter, so a PR that changes only a
+# spec or a .claude/ file never runs it, and it does not listen for
+# `edited`, so a title or body changed after the last push would go
+# unchecked. This one has no paths: filter and listens for `edited`.
+#
+# Step gating: no if:, no continue-on-error. A failed checkout stops the
+# check, and the check fails the job (exit 1 on a keyword, 2 when the PR
+# or the label cannot be read); there is no teardown below it to strand.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+# A newer event on the same PR (another push, another edit) supersedes the
+# run still going for the older one; only the newest title, body and head
+# matter.
+concurrency:
+  group: pr-closing-keyword-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # The title and body reach the script through env: only, never
+      # interpolated into the run: text (template injection).
+      - name: No closing keyword on an open tracking issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 .github/scripts/verify-pr-closing-keywords.py
