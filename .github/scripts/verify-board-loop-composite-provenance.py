@@ -73,7 +73,11 @@ event: no inputs, `github.event_name` known, every job that cannot run
 there skipped with empty outputs, and everything else unknown, with the
 implicit `success()` a job gets when its `if:` names no status function.
 A job is held to rule (h) unless its condition is certainly false, and an
-`if:` the evaluator cannot parse counts as one that can run (fail closed).
+`if:` the evaluator cannot parse counts as one that can run (fail closed),
+as does one GitHub reads as a template rather than one expression: a `${{`
+anywhere but as a single wrap of the whole `if:`, whitespace other than
+space, tab, CR or LF at either end, or a wrap holding only a string
+literal, whose text GitHub then reads as the condition.
 Today that is prove-gate and prove.
 
 Rule (g) carries the same uses:-block concern to every OTHER workflow in
@@ -361,9 +365,27 @@ class _PrEval(object):
 def pr_condition(job_if, skipped, needs):
     """True when the job certainly does not run on a pull_request event;
     False when it can, or its condition could not be read."""
-    text = "" if job_if is None else str(job_if).strip()
-    if text.startswith("${{") and text.endswith("}}"):
+    text = "" if job_if is None else str(job_if).strip(" \t\r\n")
+    if text != text.strip():
+        # Other whitespace at an edge: GitHub trims some (U+00A0) but not
+        # all that Python does (U+001F), and an untrimmed character beside
+        # a `${{ }}` makes the `if:` a template, a non-empty string.
+        return False
+    wrapped = text.startswith("${{") and text.endswith("}}")
+    if wrapped:
         text = text[3:-2].strip()
+    # GitHub reads an `if:` with `${{` anywhere else (inside a string
+    # literal, say) as a template: the whole value becomes a string, truthy
+    # when not empty. And a wrap holding only a string literal is read as
+    # that string's text, so `${{ '' }}` is an empty `if:`, the default
+    # success(). Neither is one expression: both can run (fail closed).
+    if "${{" in text:
+        return False
+    try:
+        if wrapped and [k for k, _ in _tokens(text)] == ["str"]:
+            return False
+    except _Unparsable:
+        return False
     if not text:
         text = "success()"
     elif not STATUS_FN_RE.search(text):
@@ -847,6 +869,15 @@ PR_CONDITION_CASES = [
     ("always() && needs.a.outputs.*", {"a"}, ["a"], False),
     ("always() && needs.a.outputs.* != ''", {"a"}, ["a"], False),
     ("inputs.*", set(), [], False),
+    # A `${{` inside a string literal makes the whole `if:` a template
+    # (a non-empty string), and a wrap holding only a string literal is
+    # read as that text: `${{ '' }}` is the default success().
+    ("inputs.x == '${{ inputs.x }}'", set(), [], False),
+    ("github.event_name != 'pull_request' && '${{ false }}'", set(), [], False),
+    ("${{ '' }}", set(), [], False),
+    # GitHub does not trim U+001F, so it stays beside the wrap: a template.
+    ("\x1f${{ false }}", set(), [], False),
+    ("${{ false }}\n", set(), [], True),
 ]
 
 
