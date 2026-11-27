@@ -23,6 +23,7 @@ sys.path.insert(0, HERE)
 import wc_merge_evidence as me  # noqa: E402
 from board_item_marker import render_bump_verification  # noqa: E402
 from wc_lifecycle_review_marker import write_marker  # noqa: E402
+import wc_shared_review  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 FIXTURES = os.path.join(HERE, "fixtures", "merge-evidence")
@@ -34,7 +35,11 @@ NOW = "2026-11-20T05:41:00Z"
 REUSED_RULE_NAMES = ("_checks_green", "_gate_suite_green", "checks_green", "gate_suite_green",
                      "_no_unresolved_human_review", "no_unresolved_human_review", "snapshot_complete",
                      "verification_run_confirms", "latest_record_at_head", "bump_records",
-                     "eligible_fix_class", "last_converged_review_head", "verification_passed_at_head")
+                     "eligible_fix_class", "last_converged_review_head", "verification_passed_at_head",
+                     # wc_shared_review's: the round record's parse, its run's
+                     # read and its confirmation have one home there.
+                     "parse_records", "confirm_record", "latest_round_for_commit", "fetch_run_facts",
+                     "confirmed_from_github")
 # Terminal-state literals the "checks green" rules own.
 # '"lifecycle-review-gate"' is lifecycle_readiness.OWN_STATUS_CONTEXT's
 # (#1173 round 5, finding 3).
@@ -74,8 +79,15 @@ def build_snapshot(base_doc, case):
     verdict_head = patch.pop("verdict_head", None)
     bump_comment = patch.pop("bump_comment", None)
     gate_marker = patch.pop("gate_marker", None)
+    shared_review = patch.pop("shared_review", None)
+    shared_runs = patch.pop("shared_review_runs", None)
     snap.update(patch)
     bot = {"login": base_doc["bot_login"], "type": "Bot"}
+    if shared_review is not None:
+        snap["comments"], runs = shared_review_comments(shared_review, shared_runs, bot)
+        snap["counts"]["comments"] = len(snap["comments"])
+        if shared_runs is not None:
+            snap["shared_review_runs"] = runs
     if verdict_head:
         snap["issue_comments"] = [{"id": 1, "created_at": "2026-11-10T09:00:00Z", "user": bot,
                                    # The whole comment the review job posts: board_item_marker
@@ -97,6 +109,51 @@ def build_snapshot(base_doc, case):
     return snap
 
 
+SHARED_REVIEWER_COMMIT = "c" * 40
+
+
+def shared_review_run(run_id, record_head, override):
+    """The facts of a shared-reviewer run that confirms its record, with the
+    case's `override` keys replaced."""
+    run = {"id": int(run_id), "path": wc_shared_review.WRAPPER_PATH, "head_branch": "main", "repository": "o/r",
+           "status": "completed", "conclusion": "success", "head_sha": SHARED_REVIEWER_COMMIT,
+           "referenced_workflows": ["o/r/{0}@refs/heads/main".format(wc_shared_review.WORKFLOW_PATH)],
+           "artifacts": [wc_shared_review.ARTIFACT_PREFIX + record_head]}
+    run.update(override or {})
+    return run
+
+
+def shared_review_comments(rounds, runs, bot):
+    """A case's `shared_review` rounds as the comments the reviewer posts, and
+    its `shared_review_runs` ({run id: override, or null for a run that does
+    not exist}) as run facts. A run id the case leaves out was not read."""
+    comments, facts = [], {}
+    for i, rnd in enumerate(rounds):
+        record = {"round": rnd["round"], "head_sha": rnd["head_sha"], "verdict": rnd["verdict"],
+                  "run_id": rnd["run_id"], "reviewer_commit": SHARED_REVIEWER_COMMIT, "findings": [],
+                  "open_set": []}
+        user = bot if rnd.get("author") != "owner" else {"login": "owner", "type": "User"}
+        comments.append({"id": 100 + i, "created_at": "2026-11-10T09:{0:02d}:00Z".format(i), "user": user,
+                         "body": wc_shared_review.build_record(record)})
+        if runs is not None and rnd["run_id"] in runs:
+            override = runs[rnd["run_id"]]
+            facts[rnd["run_id"]] = None if override is None else shared_review_run(rnd["run_id"], rnd["head_sha"],
+                                                                                   override)
+    return comments, facts
+
+
+def _without_maintainer_comments(snap, bot_login):
+    """The same snapshot with every comment not by the App taken out."""
+    out = copy.deepcopy(snap)
+    for field in ("comments", "issue_comments"):
+        if out.get(field) is not None:
+            out[field] = [c for c in out[field] if (c.get("user") or {}).get("login") == bot_login
+                          and (c.get("user") or {}).get("type") == "Bot"]
+    if isinstance(out.get("counts"), dict) and out.get("comments") is not None:
+        out["counts"] = dict(out["counts"], comments=len(out["comments"]))
+    return out
+
+
 def case_dirs(prefix):
     return sorted(d for d in os.listdir(FIXTURES) if d.startswith(prefix)
                   and os.path.isdir(os.path.join(FIXTURES, d)))
@@ -108,7 +165,12 @@ def check_verdicts(base_doc, evaluate=None):
     for name in case_dirs("verdict-"):
         case = load(name, "case.json")
         exp = case["expect"]
-        rec = evaluate(build_snapshot(base_doc, case), base_doc["bot_login"], NOW)
+        snap = build_snapshot(base_doc, case)
+        rec = evaluate(snap, base_doc["bot_login"], NOW)
+        try:
+            me.validate_record(rec)
+        except me.RecordError as exc:
+            problems.append("{0}: the verdict breaks the VerdictRecord type: {1}".format(name, exc))
         got = {"kind": rec["kind"], "first_unmet": rec["first_unmet"], "complete": rec["complete"],
                "rule_applied": rec["rule_applied"]}
         for key in ("kind", "first_unmet", "complete", "rule_applied"):
@@ -124,9 +186,16 @@ def check_verdicts(base_doc, evaluate=None):
                 problems.append("{0}: reason {1!r} lacks {2!r}".format(name, first.get("reason"), exp["reason_contains"]))
         if "reported_kinds" in exp and [r["kind"] for r in rec["reported"]] != exp["reported_kinds"]:
             problems.append("{0}: reported {1}".format(name, [r["kind"] for r in rec["reported"]]))
-        # FR-009: a reported record never makes a condition met.
-        if rec["reported"] and rec["kind"] in ("maintainer", "spec") and rec["first_unmet"] is None:
-            problems.append("{0}: a maintainer-account record counted as evidence".format(name))
+        # FR-009: a reported record never makes a condition met. Without
+        # every maintainer-account comment, each condition reads the same.
+        if rec["reported"]:
+            bare = evaluate(_without_maintainer_comments(snap, base_doc["bot_login"]), base_doc["bot_login"], NOW)
+            if [c["result"] for c in bare["conditions"]] != [c["result"] for c in rec["conditions"]]:
+                problems.append("{0}: a maintainer-account record counted as evidence".format(name))
+        reported_by_name = {c["name"]: c for c in rec.get("reported_conditions") or []}
+        for cname, result in (exp.get("reported_result_of") or {}).items():
+            if reported_by_name.get(cname, {}).get("result") != result:
+                problems.append("{0}: reported condition {1} is not {2}".format(name, cname, result))
         # FR-005: a verdict from an incomplete snapshot reports nothing met past the checks.
         if not rec["complete"] and any(c["result"] == "met" for c in rec["conditions"][1:]):
             problems.append("{0}: incomplete snapshot reports a condition met".format(name))
@@ -1217,6 +1286,85 @@ def check_final_review_links():
         problems.append("reported: the record does not keep the comment id")
     return problems
 
+def _clean_shared_review_record(base_doc):
+    case = load("verdict-maintainer-shared-clean", "case.json")
+    return me.evaluate(build_snapshot(base_doc, case), base_doc["bot_login"], NOW)
+
+
+def _mutate(record, change):
+    out = copy.deepcopy(record)
+    change(out)
+    return out
+
+
+def _set_cond(record, field, index, **kw):
+    record[field][index].update(kw)
+
+
+RECORD_MUTATIONS = (
+    ("a missing conditions list", lambda r: r.pop("conditions")),
+    ("a boolean pr", lambda r: r.update(pr=True)),
+    ("an empty head", lambda r: r.update(head="")),
+    ("an unknown kind", lambda r: r.update(kind="other")),
+    ("an unknown rule", lambda r: r.update(rule_applied="some-statuses")),
+    ("a computed_at that is no UTC time", lambda r: r.update(computed_at="2026-11-20 05:41")),
+    ("conditions that do not open with the checks", lambda r: r["conditions"].reverse()),
+    ("an unknown condition result", lambda r: _set_cond(r, "conditions", 0, result="maybe")),
+    ("a met condition with a reason", lambda r: _set_cond(r, "conditions", 0, reason="why")),
+    ("an unmet condition with no reason", lambda r: _set_cond(r, "conditions", 1, result="unmet", reason="")),
+    ("a condition with an extra key", lambda r: _set_cond(r, "conditions", 1, extra=1)),
+    ("a first_unmet that is not the first unmet", lambda r: r.update(first_unmet="review_round_record")),
+    ("complete with something not read", lambda r: r.update(not_read=["x"])),
+    ("incomplete with a condition past the checks met", lambda r: r.update(complete=False, not_read=["x"])),
+    ("a reported record of no known kind", lambda r: r["reported"].append({"kind": "note"})),
+    ("a repeated reported condition", lambda r: r["reported_conditions"].append(dict(r["reported_conditions"][0]))),
+    ("a malformed reported condition", lambda r: _set_cond(r, "reported_conditions", 0, result="unmet", reason="")),
+)
+
+
+def check_record_type(base_doc, validate=None):
+    """The gate decision is a type: the clean fixture's record passes, and
+    each mutation of it is refused."""
+    validate = validate or me.validate_record
+    problems = []
+    good = _clean_shared_review_record(base_doc)
+    try:
+        validate(good)
+    except me.RecordError as exc:
+        return ["record type: a well-formed verdict record is refused: {0}".format(exc)]
+    for label, change in RECORD_MUTATIONS:
+        try:
+            validate(_mutate(good, change))
+        except me.RecordError:
+            continue
+        problems.append("record type: {0} is accepted".format(label))
+    return problems
+
+
+def check_shared_review_noticed(base_doc):
+    """The shared-reviewer fixtures are shown to need the code they test."""
+    problems = []
+    old = lambda snap, bot, base_branch=None: [me._cond("review_round_record", "unmet", me.NO_ROUND_RECORD_REASON)]
+    with _Patched(_review_round_conditions=old):
+        if not check_verdicts(base_doc):
+            problems.append("self-check: a maintainer verdict that never reads the shared reviewer was not noticed")
+    saved = wc_shared_review.confirm_record
+    wc_shared_review.confirm_record = lambda *a, **k: True
+    try:
+        if not check_verdicts(base_doc):
+            problems.append("self-check: a shared-reviewer record counted without its run's confirmation "
+                            "was not noticed")
+    finally:
+        wc_shared_review.confirm_record = saved
+    with _Patched(_ci_definition_condition=lambda snap: me._cond(me.CI_DEFINITION_CONDITION, "met")):
+        if not check_verdicts(base_doc):
+            problems.append("self-check: a pull request changing .github/ reported as CI from the default "
+                            "branch was not noticed")
+    if not check_record_type(base_doc, validate=lambda record: record):
+        problems.append("self-check: a record type that accepts anything was not noticed")
+    return problems
+
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -1231,6 +1379,7 @@ def main():
     problems += check_round5_login_seen(base_doc)
     problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)
+    problems += check_record_type(base_doc) + check_shared_review_noticed(base_doc)
     if not check_sc003(directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing SC-003 corpus and expected file were not noticed")
     wf = os.path.join(REPO, WORKFLOW)

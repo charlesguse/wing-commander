@@ -1124,20 +1124,31 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs
         run_id = str(record.get("run_id") or "")
         if not run_id.isdigit():
             continue
-        try:
-            run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
-        except GhNotFound:
-            continue  # a real 404: the run does not exist, so unconfirmed
-        arts = gh_runs(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
-        if not isinstance(run, dict) or arts is None:
-            raise GhReadError("run or artifacts read failed for run " + run_id)
-        run = dict(run)
-        run["repository"] = (run.get("repository") or {}).get("full_name") or repository
-        run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
-        run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
-        if confirm_record(record, run, default_branch, repository):
+        run = fetch_run_facts(repository, run_id, gh_runs)
+        if run is not None and confirm_record(record, run, default_branch, repository):
             confirmed.append(record)
     return confirmed
+
+
+def fetch_run_facts(repository, run_id, gh_runs):
+    """The Actions API's facts for run `run_id`, shaped as confirm_record()
+    reads them; None when the run does not exist (a real 404, so the record
+    it backs is unconfirmed). Raises GhReadError when the run or its
+    artifacts cannot be read, so no caller counts a failed read as a
+    missing run. The one home of this read: wc_merge_evidence.py calls it
+    too."""
+    try:
+        run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+    except GhNotFound:
+        return None
+    arts = gh_runs(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
+    if not isinstance(run, dict) or arts is None:
+        raise GhReadError("run or artifacts read failed for run " + run_id)
+    run = dict(run)
+    run["repository"] = (run.get("repository") or {}).get("full_name") or repository
+    run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
+    run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
+    return run
 
 
 class GhReadError(RuntimeError):

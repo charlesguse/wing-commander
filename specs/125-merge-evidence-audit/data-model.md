@@ -26,13 +26,14 @@
 | `conditions` | ordered list of Condition |
 | `first_unmet` | name of the first condition not `met`, or null |
 | `reported` | list of Reported records (maintainer-account comments) |
+| `reported_conditions` | list of Condition reported beside the verdict, never counted: `ci_definition_from_default_branch` |
 | `computed_at` | UTC time |
 
 ## Condition
 
 `{name, result: met|unmet|not-read, reason}` — `reason` is one line, required unless `met`.
 
-Order: `checks_green_with_gate_suite` (every kind, FR-006), then the kind's own: bump → `verification_confirmed`; board-fix → `review_verdict_at_head`, `zero_open_findings`; final → `gate_round_at_head`, `round_clean`, `zero_open_in_scope`, `no_unresolved_changes_requested`, `no_hold_label`; spec/maintainer → `review_round_record`.
+Order: `checks_green_with_gate_suite` (every kind, FR-006), then the kind's own: bump → `verification_confirmed`; board-fix → `review_verdict_at_head`, `zero_open_findings`; final → `gate_round_at_head`, `round_clean`, `zero_open_in_scope`, `no_unresolved_changes_requested`, `no_hold_label`; spec/maintainer → `review_round_record` (for maintainer, the shared reviewer's newest confirmed round at the head; spec PRs count none).
 
 ## Reported record
 

@@ -1,0 +1,21 @@
+{
+ "base": "maintainer",
+ "patch": {
+  "shared_review": [
+   {
+    "round": 1,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": "clean",
+    "run_id": "101"
+   }
+  ],
+  "shared_review_runs": {
+   "101": null
+  }
+ },
+ "expect": {
+  "kind": "maintainer",
+  "first_unmet": "review_round_record",
+  "reason_contains": "confirmed by the run it names"
+ }
+}
