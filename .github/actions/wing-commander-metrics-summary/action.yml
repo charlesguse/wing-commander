@@ -273,6 +273,10 @@ runs:
         [ -n "$SPEC_DIR" ] && [ -n "$SPEC_ISSUE" ] && spec_identity_available=true
         model_available=false
         [ -n "$MODEL_IN" ] && model_available=true
+        # The permission_denials group's unavailable shape: a missing or
+        # unparseable transcript, or a result record with no
+        # permission_denials list, never reads as zero refusals.
+        PERMISSION_DENIALS_UNAVAILABLE='{"available":false,"total":null,"by_tool":null}'
 
         is_number() {
           printf '%s' "$1" | grep -Eq '^-?[0-9]+([.][0-9]+)?$'
@@ -319,7 +323,7 @@ runs:
             --argjson per_model "${per_model_json:-[]}" \
             --argjson per_model_available "${per_model_available:-false}" \
             --arg emitted_at "$EMITTED_AT" \
-            --argjson refusal "${refusal:-false}" \
+            --argjson refusal "${refusal:-false}"             --argjson permission_denials "${permission_denials_json:-$PERMISSION_DENIALS_UNAVAILABLE}" \
             --argjson branch_advance_available "$branch_advance_available" \
             --arg branch "$BRANCH" \
             --arg before_sha "$BEFORE_SHA" \
@@ -375,6 +379,7 @@ runs:
               per_model_available: $per_model_available,
               emitted_at: $emitted_at,
               refusal: $refusal,
+              permission_denials: $permission_denials,
               branch_advance: {
                 available: $branch_advance_available,
                 branch: (if $branch_advance_available then strOrNull($branch) else null end),
@@ -478,6 +483,7 @@ runs:
           duration_available=false
           per_model_json="[]"
           per_model_available=false
+          permission_denials_json="$PERMISSION_DENIALS_UNAVAILABLE"
           emit_record false unavailable
           {
             printf '%s\n\n' "$heading"
@@ -503,6 +509,32 @@ runs:
         # stop_reason "refusal"; any other value or absence is false.
         refusal=false
         [ "$(jqget '.stop_reason')" = "refusal" ] && refusal=true
+        # Tool calls the permission system refused: one entry of the terminal
+        # result record's permission_denials list is one refusal, the same
+        # list watchdog.yml's "Collect: execution-output artifacts" step
+        # reads for its denied-tool signal. Only the count and a fixed tool
+        # class reach the record, never the denied command, its input or
+        # any other text the agent wrote: records are persisted to the
+        # metrics branch. A tool outside the fixed list counts as "other"
+        # (an "mcp__" tool as "mcp"). No list -> unavailable, never zero.
+        permission_denials_json="$(printf '%s' "$result_json" | jq -c '
+          def tool_class:
+            (if type == "object" then (.tool_name // .tool) else null end) as $n
+            | if ($n | type) != "string" then "other"
+              elif any(["Bash", "Edit", "MultiEdit", "Write", "Read", "Glob",
+                        "Grep", "LS", "NotebookEdit", "NotebookRead",
+                        "WebFetch", "WebSearch", "Task", "Agent",
+                        "TodoWrite", "Skill"][]; . == $n) then $n
+              elif ($n | startswith("mcp__")) then "mcp"
+              else "other" end;
+          if (.permission_denials | type) == "array" then
+            {available: true,
+             total: (.permission_denials | length),
+             by_tool: (reduce (.permission_denials[] | tool_class) as $t
+                         ({}; .[$t] += 1))}
+          else {available: false, total: null, by_tool: null} end
+        ' 2>/dev/null)" || permission_denials_json=""
+        [ -n "$permission_denials_json" ] || permission_denials_json="$PERMISSION_DENIALS_UNAVAILABLE"
         cost_available=false
         is_number "$cost_usd" && cost_available=true
         duration_available=false

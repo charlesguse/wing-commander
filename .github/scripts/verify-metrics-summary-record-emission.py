@@ -862,6 +862,164 @@ def case_refusal_flag_follows_terminal_stop_reason():
          "stop_reason of refusal")
 
 
+# --- permission_denials (contracts/metrics-record-schema.md) -------------
+# Text that must never reach a record: it stands in for a denied command
+# and a denied tool's input, which the transcript carries and the
+# persisted record must not.
+DENIAL_MARKER_CMD = "wc-denial-marker-command-text"
+DENIAL_MARKER_PATH = "wc-denial-marker-input-path"
+
+
+def _denials_record(case, denials, drop_key=False):
+    """Run the shipped step on a healthy transcript whose result record
+    carries `denials` as its permission_denials list (or no list at all
+    when drop_key). -> the written record, or None after a fail()."""
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+    try:
+        transcript = healthy_transcript(main=3)
+        if drop_key:
+            transcript[-1].pop("permission_denials", None)
+        else:
+            transcript[-1]["permission_denials"] = denials
+        rc, outputs, _summary, record, output = run_case(tmp, records=transcript)
+        if rc != 0 or record is None:
+            fail(case, f"exited {rc}: {output.strip()[:300]}")
+            return None
+        validate_schema(case, record)
+        if outputs.get("record-json") and \
+                json.loads(outputs["record-json"]) != record:
+            fail(case, "record-json output differs from the written record")
+        return record
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def case_permission_denials_counted_by_tool_class():
+    """One entry of the result record's permission_denials list is one
+    refusal; the record keeps the total and per-class counts, and none of
+    the transcript's command or input text."""
+    case = "permission_denials counted by tool class"
+    denials = [
+        {"tool_name": "Bash", "tool_use_id": "t1",
+         "tool_input": {"command": DENIAL_MARKER_CMD, "description": "x"}},
+        {"tool_name": "Bash", "tool_use_id": "t2",
+         "tool_input": {"command": DENIAL_MARKER_CMD + "-2"}},
+        {"tool_name": "Edit", "tool_use_id": "t3",
+         "tool_input": {"file_path": DENIAL_MARKER_PATH}},
+        {"tool_name": "mcp__github_comment__update", "tool_use_id": "t4"},
+        {"tool_name": DENIAL_MARKER_CMD, "tool_use_id": "t5"},
+        "not-an-object",
+    ]
+    record = _denials_record(case, denials)
+    if record is None:
+        return
+    want = {"available": True, "total": 6,
+            "by_tool": {"Bash": 2, "Edit": 1, "mcp": 1, "other": 2}}
+    if record.get("permission_denials") != want:
+        fail(case, f"permission_denials = {record.get('permission_denials')!r}, "
+                   f"want {want!r}")
+    text = json.dumps(record)
+    for marker in (DENIAL_MARKER_CMD, DENIAL_MARKER_PATH):
+        if marker in text:
+            fail(case, f"transcript text {marker!r} reached the record; it "
+                       f"may hold only counts and fixed tool classes")
+    note("permission_denials keeps counts per fixed tool class and no "
+         "transcript text")
+
+
+def case_permission_denials_empty_list_is_zero():
+    case = "permission_denials: an empty list is zero, available"
+    record = _denials_record(case, [])
+    if record is None:
+        return
+    want = {"available": True, "total": 0, "by_tool": {}}
+    if record.get("permission_denials") != want:
+        fail(case, f"permission_denials = {record.get('permission_denials')!r}, "
+                   f"want {want!r}")
+
+
+def case_permission_denials_missing_list_is_unavailable():
+    """No list, or no readable transcript, must never read as zero."""
+    case = "permission_denials: no list is unavailable, never zero"
+    want = {"available": False, "total": None, "by_tool": None}
+    for label, denials, drop_key in (
+            ("result record without the list", None, True),
+            ("list of the wrong type", {"Bash": 1}, False)):
+        record = _denials_record(case, denials, drop_key=drop_key)
+        if record is None:
+            return
+        if record.get("permission_denials") != want:
+            fail(case, f"{label}: permission_denials = "
+                       f"{record.get('permission_denials')!r}, want {want!r}")
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-record-")
+    try:
+        rc, _o, _s, record, output = run_case(tmp, missing=True)
+        if rc != 0 or record is None:
+            fail(case, f"missing transcript: exited {rc}: {output.strip()[:300]}")
+            return
+        if record.get("permission_denials") != want:
+            fail(case, f"missing transcript: permission_denials = "
+                       f"{record.get('permission_denials')!r}, want {want!r}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# The board loop's writer agents leave no transcript artifact, so their
+# per-agent record is the only measure of their refused calls: each must
+# be written to its own path and uploaded under a metrics-record name the
+# sweep collects, with a step-index no other record in its job uses
+# (persist deduplicates on record_key).
+BOARD_LOOP = ".github/workflows/board-loop.yml"
+BOARD_WRITER_RECORDS = (("fix-agent", "fixer"), ("review", "review-fixup"))
+
+
+def case_board_loop_writer_records_are_uploaded():
+    case = "board-loop writer agents' records are uploaded"
+    doc = _workflow_docs(case).get(BOARD_LOOP)
+    if not doc:
+        fail(case, f"{BOARD_LOOP} is missing or unparseable")
+        return
+    for job_key, label in BOARD_WRITER_RECORDS:
+        steps = ((doc.get("jobs") or {}).get(job_key) or {}).get("steps") or []
+        calls = [(i, st) for i, st in enumerate(steps)
+                 if "wing-commander-metrics-summary" in str(st.get("uses", ""))]
+        mine = [(i, st) for i, st in calls
+                if (st.get("with") or {}).get("run-label") == label]
+        if len(mine) != 1:
+            fail(case, f"{job_key}: expected one metrics-summary call with "
+                       f"run-label {label!r}, found {len(mine)}")
+            continue
+        idx, step = mine[0]
+        w = step.get("with") or {}
+        path = str(w.get("record-path", "")).strip()
+        if not path or path.endswith("/wing-commander-metrics-record.json"):
+            fail(case, f"{job_key}/{label}: record-path must be the call's "
+                       f"own file, got {path!r}")
+            continue
+        own_index = str(w.get("step-index", "0"))
+        others = [str((st.get("with") or {}).get("step-index", "0"))
+                  for i, st in calls if i != idx]
+        if own_index in others:
+            fail(case, f"{job_key}/{label}: step-index {own_index} is also "
+                       f"used by another record in the job, so the two "
+                       f"record_keys collide")
+        uploads = [st for st in steps[idx + 1:]
+                   if str(st.get("uses", "")).startswith("actions/upload-artifact")
+                   and str((st.get("with") or {}).get("path", "")).strip() == path]
+        if not uploads:
+            fail(case, f"{job_key}/{label}: no upload-artifact step after the "
+                       f"call uploads {path}")
+            continue
+        name = str((uploads[0].get("with") or {}).get("name", ""))
+        if not name.startswith("metrics-record"):
+            fail(case, f"{job_key}/{label}: the upload is named {name!r}; the "
+                       f"metrics sweep collects only metrics-record* names")
+        if "always()" not in str(uploads[0].get("if", "")):
+            fail(case, f"{job_key}/{label}: the upload must run after a "
+                       f"failed agent step too (always())")
+    note("the board loop uploads its fixer and review-fixup records")
+
+
 def case_cost_line_formatter_has_exactly_one_home():
     """The 12-site paste this gate's docstring describes must not creep
     back: a workflow or composite action needing the cost line consumes
@@ -1378,6 +1536,10 @@ CASES = [
     case_spec_identity_is_own_recorded_verbatim,
     case_multi_model_record_tokens_sum_across_per_model,
     case_refusal_flag_follows_terminal_stop_reason,
+    case_permission_denials_counted_by_tool_class,
+    case_permission_denials_empty_list_is_zero,
+    case_permission_denials_missing_list_is_unavailable,
+    case_board_loop_writer_records_are_uploaded,
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
