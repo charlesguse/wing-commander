@@ -52,6 +52,15 @@ COMMENT_PAGES = 10
 NOT_RUNNING_FLOOR_HOURS = 6
 MARKER_BEGIN = "<!-- wing-commander-feature-health -->"
 MARKER_END = "<!-- /wing-commander-feature-health -->"
+# The section's own built line: render_section writes it, section_built_at
+# reads the build time back from it (#889).
+BUILT_LINE = "**Feature health** — built "
+BUILT_LINE_RE = re.compile(r"^" + re.escape(BUILT_LINE) + r"(\d{4}-\d\d-\d\d \d\d:\d\d)Z", re.M)
+# The line wc_board_status.render opens the Board status issue with: the
+# board-status job's own write time, which a hand edit of the issue does not
+# move (#889). verify-feature-health.py reads it back from that renderer.
+BOARD_STATUS_UPDATED_RE = re.compile(
+    r"^Updated (\d{4}-\d\d-\d\d \d\d:\d\d) UTC by the daily `board-status` job", re.M)
 SWITCH_PREFIX = "WING_COMMANDER_"
 SIGNAL_KINDS = ("merged_pr", "release", "issue_or_comment", "triage_close",
                 "branch_commit", "issue_updated", "issue_section")
@@ -269,7 +278,7 @@ def render_section(rows, now, registry_size=None):
     features = [r for r in rows if not r["stage"]]
     unreadable = sum(1 for r in features if r["state"] == "unreadable")
     out = [MARKER_BEGIN,
-           "**Feature health** — built {0} · {1} features · {2} unreadable".format(
+           BUILT_LINE + "{0} · {1} features · {2} unreadable".format(
                now.strftime("%Y-%m-%d %H:%MZ"), registry_size or len(features), unreadable),
            "", "**Needs a look:**"]
     called = sorted((r for r in features if r["state"] in CALLED_OUT),
@@ -473,27 +482,50 @@ def _triage_close_times(gh, repo, base, since, until=None):
     raise RuntimeError("triage close search not resolved in {0} pages".format(SEARCH_PAGES))
 
 
-def section_built(body, marker):
-    """True when `marker` opens a section carrying built content, not a
-    paused/failed/never/stale notice (those carry the marker too, so the marker
-    alone would let a broken section read as seen)."""
+def section_built_at(body, marker):
+    """The build time (ISO) of the section `marker` opens when it carries
+    built content, else None: a paused/failed/never/stale notice carries the
+    marker too, so the marker alone would let a broken section read as seen.
+    The time is the section's own (its opener's `built="..."`, or the feature
+    health built line), never the issue's `updated_at`, which any edit moves
+    (#889)."""
     # Anchor on the opener comment: a bare mention of the marker text earlier
     # in the body is not the section.
     lead = "" if marker.startswith("<!--") else r"<!--\s*"
     opener_match = re.search(lead + re.escape(marker), body)
     if not opener_match:
-        return False
+        return None
     idx = opener_match.start()
     line_end = body.find("-->", idx)
     opener = body[idx:line_end if line_end >= 0 else len(body)]
     if 'status="' in opener:
-        return 'status="built"' in opener
+        built = re.search(r'\bbuilt="([^"]*)"', opener)
+        if 'status="built"' not in opener or not built:
+            return None
+        try:
+            return fmt_time(parse_time(built.group(1)))
+        except ValueError:
+            return None
     nxt = body.find("<!-- /", idx)
     block = body[idx:nxt if nxt >= 0 else len(body)]
     if "_Stale:" in block:
-        return False
-    return ("<details>" in block or "_Table shortened" in block
-            or "**Feature health** — built" in block)
+        return None
+    # A section with no status attribute is built only when it carries its
+    # own built line; a stray <details> block after the marker is not one.
+    line = BUILT_LINE_RE.search(block)
+    return line.group(1).replace(" ", "T") + ":00Z" if line else None
+
+
+def section_built(body, marker):
+    """True when `marker` opens a section carrying built content."""
+    return section_built_at(body, marker) is not None
+
+
+def board_status_updated_at(body):
+    """The board-status job's own write time (ISO) from the issue body, or
+    None when the body does not carry the job's Updated line."""
+    line = BOARD_STATUS_UPDATED_RE.search(body)
+    return line.group(1).replace(" ", "T") + ":00Z" if line else None
 
 
 def read_signal(signal, repo, since, gh, environ, until=None):
@@ -511,7 +543,12 @@ def read_signal(signal, repo, since, gh, environ, until=None):
         raise RuntimeError("{0} reads only the issue's current state; no read as of {1}".format(kind, u))
     times = []
     if kind == "merged_pr":
-        for page in (1, 2, 3):
+        # Closed PRs newest update first, paged until a page ends before the
+        # window: a PR merged in the window was updated in it, so nothing
+        # older can hold one (#889). No page count cuts the read short.
+        page = 0
+        while True:
+            page += 1
             got = gh("{0}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={1}".format(base, page))
             for p in got:
                 if p.get("merged_at") and p["merged_at"] >= s and any(
@@ -519,13 +556,16 @@ def read_signal(signal, repo, since, gh, environ, until=None):
                     times.append(p["merged_at"])
             if len(got) < 100 or got[-1].get("updated_at", "") < s:
                 break
-        else:
-            raise RuntimeError("merged PR read truncated at 300 PRs")
     elif kind == "release":
-        got = gh("{0}/releases?per_page=30".format(base))
-        if len(got) >= 30 and all((r.get("published_at") or "") >= s for r in got):
-            raise RuntimeError("release read truncated at 30 releases")
-        times = [r["published_at"] for r in got if r.get("published_at")]
+        # Releases are listed newest first: page until one published before
+        # the window (#889). A draft has no published_at and does not stop it.
+        page = 0
+        while True:
+            page += 1
+            got = gh("{0}/releases?per_page=100&page={1}".format(base, page))
+            times.extend(r["published_at"] for r in got if r.get("published_at"))
+            if len(got) < 100 or any((r.get("created_at") or r.get("published_at") or s) < s for r in got):
+                break
     elif kind == "issue_or_comment":
         # Labeled issues and comments on them both count (the registry text).
         issues = _pages(gh, "{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
@@ -548,12 +588,17 @@ def read_signal(signal, repo, since, gh, environ, until=None):
         else:
             times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
     elif kind in ("issue_updated", "issue_section"):
+        # The issue's updated_at moves on any edit, so the time is read from
+        # the body: the section's own build time, or the board-status job's
+        # Updated line (#889).
         for i in gh("{0}/issues?state=open&labels=disposition:tracking&per_page=100".format(base)):
             if not i["title"].startswith(signal["title"]):
                 continue
-            if kind == "issue_section" and not section_built(i.get("body") or "", signal["marker"]):
-                continue
-            times.append(i["updated_at"])
+            body = i.get("body") or ""
+            at = (section_built_at(body, signal["marker"]) if kind == "issue_section"
+                  else board_status_updated_at(body))
+            if at:
+                times.append(at)
     else:
         raise RuntimeError("unknown signal kind {0}".format(kind))
     times = [t for t in times if t >= s and (u is None or t <= u)]
