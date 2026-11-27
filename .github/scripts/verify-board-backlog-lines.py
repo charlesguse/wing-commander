@@ -712,18 +712,6 @@ def closing_keyword_single_home(path=os.path.join(HERE, "verify-pr-closing-keywo
     return errors
 
 
-def _script_sources(paths=None):
-    """Name -> text of every script the closing-keyword single-home checks
-    read: each `.github/scripts/*.py` but the pattern's home and this gate."""
-    sources = {}
-    for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
-        if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
-            continue
-        with open(path, encoding="utf-8") as fh:
-            sources[os.path.basename(path)] = fh.read()
-    return sources
-
-
 def closing_re_single_reader(paths=None, sources=None):
     """CLAUDE.md "Shared logic has exactly one home", the decoding half:
     which issue a CLOSING_RE hit names is read by
@@ -734,7 +722,12 @@ def closing_re_single_reader(paths=None, sources=None):
     self-test."""
     import ast
     if sources is None:
-        sources = _script_sources(paths)
+        sources = {}
+        for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                sources[os.path.basename(path)] = fh.read()
     errors = []
     for name, text in sorted(sources.items()):
         for node in ast.walk(ast.parse(text)):
@@ -799,7 +792,12 @@ def closing_pattern_single_home(paths=None, sources=None, exempt=None):
     its text, for the self-test."""
     exempt = CLOSING_COPY_EXEMPT if exempt is None else exempt
     if sources is None:
-        sources = _script_sources(paths)
+        sources = {}
+        for path in paths or sorted(glob.glob(os.path.join(HERE, "*.py"))):
+            if os.path.basename(path) in ("board_backlog_lines.py", "verify-board-backlog-lines.py"):
+                continue
+            with open(path, encoding="utf-8") as fh:
+                sources[os.path.basename(path)] = fh.read()
     errors = []
     for name, text in sorted(sources.items()):
         lines = closing_pattern_copies(text)
