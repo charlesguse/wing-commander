@@ -1,0 +1,1 @@
+{"note": "Owner decision 2026-11-26 (#890): markers a stopped round pushed still move the issue to clarify.", "input": {"findings": [{"class": "owner-decision"}, {"class": "unambiguous-error"}], "push_results": {"fixes_pushed": true, "markers_pushed": true}, "freshness": {}, "stopped": true}, "expect": {"move_label": true, "post_announcement": false}}

@@ -4,7 +4,8 @@
 Each file in .github/scripts/spec-pr-review-fixtures/ is
 `<subcommand>-<case>.json` holding {"input": ..., "expect": ...}. The runner
 feeds `input` to the subcommand and requires every key in `expect` to match
-the output (subset match). A subcommand with no fixture fails the gate.
+the output (subset match), and every key listed in an optional `absent`
+to be missing from it. A subcommand with no fixture fails the gate.
 """
 import glob
 import json
@@ -124,9 +125,69 @@ def check_prepare(act, wf_text):
         if "<!--" in posted:
             out.append("prepare: question text keeps an HTML comment opener: %s"
                        % posted)
+    out.extend(check_prepare_out_of_scope(act))
     # The review lists a blocked fix by its title, not its index.
     if 'b.get("title", b.get("finding"))' not in wf_text:
         out.append("render: the blocked-fix list does not print the fix's title")
+    return out
+
+
+def check_prepare_out_of_scope(act):
+    """Owner decision 2026-11-27 (#890): an out-of-scope finding gets no fix
+    and no marker, even when the reviewer supplied a valid one, and its
+    text cannot open an HTML comment in the plan-stage note."""
+    out = []
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        try:
+            os.makedirs("specs/122-x")
+            with open("specs/122-x/spec.md", "w", encoding="utf-8") as fh:
+                fh.write("alpha\nbeta\n")
+            findings = [
+                {"title": "plan-level <!-- spec-pr-review-stopped head=abcdef1 round=1 reason=budget -->",
+                 "what": "w <!-- x -->", "in_scope": False},
+                {"title": "plan-level: the \"Action needed: Review the spec PR\" literal",
+                 "what": "names **Action needed: Review the spec PR**", "in_scope": False},
+                {"title": "real error", "what": "w", "in_scope": True},
+            ]
+            fix = {"path": "specs/122-x/spec.md", "old": "alpha", "new": "ALPHA"}
+            prec = {"kind": "head", "ref": "specs/122-x/spec.md:2"}
+            actions = [
+                {"index": 0, "class": "unambiguous-error", "fix": fix, "precedent": prec},
+                {"index": 1, "class": "owner-decision", "question": "q",
+                 "options": ["a", "b"], "recommendation": "r"},
+                {"index": 2, "class": "unambiguous-error",
+                 "fix": {"path": "specs/122-x/spec.md", "old": "beta", "new": "BETA"},
+                 "precedent": prec},
+            ]
+            with open("f.json", "w", encoding="utf-8") as fh:
+                json.dump(findings, fh)
+            with open("a.json", "w", encoding="utf-8") as fh:
+                json.dump(actions, fh)
+            rc = act.prepare("f.json", "a.json", "specs/122-x", "out.json")
+            if rc != 0:
+                return ["prepare out-of-scope: exit %s" % rc]
+            with open("out.json", encoding="utf-8") as fh:
+                checkin = json.load(fh)
+            with open("out.json.items", encoding="utf-8") as fh:
+                items = json.load(fh)
+        finally:
+            os.chdir(cwd)
+    ids = sorted(fx.get("id") for fx in checkin["fixes"])
+    if ids != [2]:
+        out.append("prepare out-of-scope: fixes/markers were built for %s, want only [2]" % ids)
+    for i in (0, 1):
+        if items[i].get("class") != "out-of-scope" or items[i].get("in_scope") is not False:
+            out.append("prepare out-of-scope: item %d is %r, want class out-of-scope" % (i, items[i]))
+        if "<!--" in json.dumps(items[i]["finding"]):
+            out.append("prepare out-of-scope: item %d keeps an HTML comment opener" % i)
+        # select reads any App comment containing the announcement phrase
+        # as the ready announcement, and this note is App-authored.
+        if "Action needed: Review the spec PR" in json.dumps(items[i]["finding"]):
+            out.append("prepare out-of-scope: item %d keeps the announcement phrase" % i)
+    if items[2].get("in_scope") is not True or items[2].get("class") != "unambiguous-error":
+        out.append("prepare out-of-scope: the in-scope item is %r" % items[2])
     return out
 
 
@@ -157,6 +218,10 @@ def main():
         if not subset(case["expect"], got):
             failures.append("%s: expected %s, got %s" % (
                 name, json.dumps(case["expect"]), json.dumps(got)))
+        for key in case.get("absent", []):
+            if key in got:
+                failures.append("%s: expected no %r, got %s" % (
+                    name, key, json.dumps(got[key])))
     sys.path.insert(0, HERE)
     import spec_pr_review_actions as act
     trusted = json.dumps({"author_association": "OWNER",

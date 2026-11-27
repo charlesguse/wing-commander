@@ -31,6 +31,14 @@ Static structure only (yaml.safe_load plus text scans). Asserts:
   FR-023  the cost line comes from the metrics-summary composite; the
           formatter is not inlined.
   model/effort come from the two variables, with the stated defaults.
+  #890    owner decisions 2026-11-26/27: the reviewer's prompt defines
+          `in_scope` (true|false); the budget stop reads the decision
+          module's in-scope count (one home, no recount in jq); out-of-scope
+          findings get no question and are recorded for the plan stage by an
+          App-authored callout gated on the plan's record_out_of_scope; the
+          plan is told whether the round stopped (no announcement); and the
+          stop note names the commit the round pushed, so that push does not
+          re-arm it.
 
 Usage: python3 .github/scripts/verify-spec-pr-review-wiring.py [--self-test]
 """
@@ -157,10 +165,45 @@ def check(text):
         if len(failed_body) == 1 and (not failed_body[0].get("id") or
                                       "steps.%s.outcome == 'success'" % failed_body[0]["id"] not in str(cap[0].get("if", ""))):
             problems.append("FR-028: the failed-cap check does not wait for this round's failed marker to be recorded")
+    problems.extend(check_scope_and_stop(jobs))
     if "claude-opus-5-5" not in text or "WING_COMMANDER_SPEC_REVIEW_MODEL" not in text:
         problems.append("FR-008: reviewer model is not the variable with its default")
     if "WING_COMMANDER_SPEC_REVIEW_EFFORT" not in text or ":-high" not in text:
         problems.append("FR-008: reviewer effort is not the variable with its default")
+    return problems
+
+
+def check_scope_and_stop(jobs):
+    problems = []
+    review_steps = jobs.get("review", {}).get("steps", [])
+    act_steps = jobs.get("act", {}).get("steps", [])
+    by_id = {s.get("id"): s for s in review_steps + act_steps if s.get("id")}
+    prompt = str((by_id.get("reviewer", {}).get("with") or {}).get("prompt", ""))
+    if '"in_scope": true|false' not in prompt or "plan-level" not in prompt:
+        problems.append("#890: the reviewer's prompt does not define in_scope as true|false")
+    verdict_run = by_id.get("verdict", {}).get("run") or ""
+    if "in-scope-count=" not in verdict_run or "in_scope_count" not in verdict_run:
+        problems.append("#890: the verdict step does not output the module's in-scope count")
+    stop = by_id.get("stop", {})
+    if "steps.verdict.outputs.in-scope-count" not in str(stop.get("env", {})) \
+            or re.search(r"jq\s+'length'", stop.get("run") or ""):
+        problems.append("#890: the budget stop recounts findings instead of reading the in-scope count")
+    plan = by_id.get("plan", {})
+    if "needs.review.outputs.stop-reason" not in str(plan.get("env", {}).get("STOPPED", "")) \
+            or "stopped: $stopped" not in (plan.get("run") or ""):
+        problems.append("#890: plan-actions is not told whether the round stopped")
+    if "in_scope: .in_scope" not in (plan.get("run") or ""):
+        problems.append("#890: plan-actions is not given each finding's in_scope")
+    record = [s for s in act_steps if "record_out_of_scope == 'true'" in str(s.get("if", ""))]
+    if len(record) != 1 or "wing-commander-callout" not in str(record[0].get("uses", "")) \
+            or "spec-review-out-of-scope.md" not in str(record[0].get("with", {}).get("body-file", "")):
+        problems.append("#890: out-of-scope findings are not recorded by one App callout gated on record_out_of_scope")
+    questions = [s for s in act_steps if "stage:clarify" in (s.get("run") or "")]
+    if questions and 'select(.class == "owner-decision")' not in questions[0]["run"]:
+        problems.append("#890: the questions step does not keep to owner-decision items")
+    note = [s for s in act_steps if "spec-pr-review-stopped" in str(s.get("with", {}).get("body", ""))]
+    if note and "steps.push.outcome == 'success' && steps.commit.outputs.sha" not in str(note[0]["with"]["body"]):
+        problems.append("#890: the stop note does not name the commit the round pushed")
     return problems
 
 
@@ -193,6 +236,17 @@ def self_test(text):
             " && steps.failcap.outputs.reached == 'true'", "", 1),
         "a cap check that ignores the failed marker's write": text.replace(
             " && steps.outcome-line.outcome == 'success'", "", 1),
+        "a prompt without in_scope true|false": text.replace('"in_scope": true|false,', '"in_scope": true,', 1),
+        "a budget stop that recounts findings": text.replace(
+            '[ "${IN_SCOPE_COUNT:-1}" != "0" ]',
+            '[ "$(jq ' + "'length'" + ' "$RUNNER_TEMP/spec-review-findings.json")" -gt 0 ]', 1),
+        "a plan blind to the stop": text.replace("stopped: $stopped}", "stopped: false}", 1),
+        "a plan blind to in_scope": text.replace("{in_scope: .in_scope}", "{}", 1),
+        "no out-of-scope record": text.replace("steps.plan.outputs.record_out_of_scope == 'true'", "false", 1),
+        "questions posted for every item": text.replace('select(.class == "owner-decision") |', '', 1),
+        "a stop note on the reviewed head": text.replace(
+            "steps.push.outcome == 'success' && steps.commit.outputs.sha || needs.select.outputs.head-sha",
+            "needs.select.outputs.head-sha", 1),
         "no act step recording the stop note": text.replace("<!-- spec-pr-review-stopped head={0}",
                                                             "<!-- spec-pr-review-x head={0}", 1),
     }
