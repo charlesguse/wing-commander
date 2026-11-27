@@ -4,7 +4,8 @@ The deterministic step this feature adds to `intake.yml`, placed after the
 existing "Report run started on issue" step and before "Compose tool args
 (intake)" — the same relative position `clarify.yml` uses for its own
 "Stage the answer as a data file" step, run with the bot token
-(`steps.ctx.outputs.token`) that step already establishes, gated on
+(`env.WC_BOT_TOKEN`, the relay of the token the "Wing Commander context"
+step mints) that step already uses, gated on
 `steps.lifecycle-gate.outputs.is-open == 'true'` like every other step in
 the job.
 
@@ -14,8 +15,10 @@ the job.
 |---|---|
 | `gh api repos/${GITHUB_REPOSITORY}/issues/${{ inputs.issue-number }}/comments --paginate` | `.user.login`, `.user.type`, `.author_association`, `.created_at`, `.body` per comment |
 
-The call uses `steps.ctx.outputs.token` (the App-installation token every
-other read/write in this stage already uses) via `GH_TOKEN`.
+The step calls the `wing-commander-issue-context` composite with
+`token: ${{ env.WC_BOT_TOKEN }}` (the App-installation token every other
+read/write in this stage already uses), and the composite makes the call
+with it via `GH_TOKEN`.
 
 ## Qualification rule (FR-002, FR-003 — data-model.md's `qualifies()`)
 

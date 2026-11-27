@@ -1134,11 +1134,14 @@ jobs:
           # .github/scripts/git_read.py, not a raw `Bash(git ...)` grant --
           # see implement.yml's "Compose tool args
           # (implement.post-progress-comment)".
+          # The last two denies (/proc) are the ones every agent step gets
+          # -- see wing-commander-tool-args's `Compose tool args`; this
+          # step lists its tools by hand, so it carries them literally.
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
-            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)"
+            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*),Read(//proc/**),Bash(*proc/*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
       # spec 052 FR-005/SC-005 (second maintainer review of PR #407): steps
@@ -2133,11 +2136,12 @@ jobs:
           # rule is an assumption about Claude Code's path normalisation that
           # this stage cannot cheaply retest — a wrong guess costs a whole
           # dispatch. Both spellings are allowed so neither can deadlock it.
+          # The /proc denies: see the "Decide upgrade path" step's note.
           claude_args: |
             --model ${{ inputs.e2e-stage-model }}
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ steps.ctx.outputs.workspace }}/e2e-scratch/**),Edit(${{ steps.ctx.outputs.workspace }}/e2e-scratch/**)"
-            --disallowedTools "WebSearch,WebFetch,Bash(git push:*)"
+            --disallowedTools "WebSearch,WebFetch,Bash(git push:*),Read(//proc/**),Bash(*proc/*)"
 
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
@@ -3779,11 +3783,12 @@ jobs:
             label only when the reply clearly corresponds to one posted
             option. If it does not, set recognized=false. Never invent an
             option that was not posted.
+          # The /proc denies: see the "Decide upgrade path" step's note.
           claude_args: |
             --model claude-haiku-5-5
             --max-turns ${{ steps.interpret-ceiling.outputs.ceiling }}
             --allowedTools "Read"
-            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash"
+            --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash,Read(//proc/**),Bash(*proc/*)"
             --json-schema '{"type":"object","properties":{"recognized":{"type":"boolean"},"chosen_option":{"type":["string","null"]}},"required":["recognized"]}'
 
       - name: Compute agent run verdict
