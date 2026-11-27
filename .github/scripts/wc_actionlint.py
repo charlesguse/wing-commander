@@ -132,7 +132,11 @@ COUNTED = (KNOWN, CRED_SCALAR, CRED_USERPASS)
 
 
 def _cache_root():
-    return os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    # WC_OS_TMPDIR: the OS temp dir from before run-local-gates.py
+    # pointed TMPDIR at a per-run directory it removes, so the pinned
+    # binaries outlive one local run -- see its TEMP FILES.
+    return (os.environ.get("RUNNER_TEMP") or os.environ.get("WC_OS_TMPDIR")
+            or tempfile.gettempdir())
 
 
 def host():

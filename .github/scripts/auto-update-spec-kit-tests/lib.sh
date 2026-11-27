@@ -48,6 +48,9 @@ if [ -z "${WC_TEST_WORK:-}" ]; then
   export WC_TEST_WORK
   trap 'rm -rf "$WC_TEST_WORK"' EXIT
 fi
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$WC_TEST_WORK/wc-tmp"; mkdir -p "$TMPDIR"
 export STEPS="$WC_TEST_WORK/steps"
 if [ ! -d "$STEPS" ]; then
   "$PY" "$SP/extract.py" "$REPO" "$STEPS" >/dev/null || exit 2
