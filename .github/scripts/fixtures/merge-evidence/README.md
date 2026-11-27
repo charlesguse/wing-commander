@@ -4,7 +4,8 @@ Synthetic cases for `verify-merge-evidence.py` (specs/125-merge-evidence-audit).
 `_base.json` holds one snapshot per kind; each `verdict-*/case.json` and
 `audit-*/case.json` names a `base`, a shallow `patch` over it, and what it
 `expect`s. A `maintainer` case may add `shared_review`, a list of rounds
-(`round`, `head_sha`, `verdict`, `run_id`, optional `author: "owner"`)
+(`round`, `head_sha`, `verdict`, `run_id`, optional `author: "owner"` and
+`created_at`)
 posted as the shared reviewer posts them. It may also add
 `shared_review_runs`, mapping each run id to overrides of a run that
 confirms its record, or to null for a run that does not exist. A run id the

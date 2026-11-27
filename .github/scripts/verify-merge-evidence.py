@@ -133,7 +133,8 @@ def shared_review_comments(rounds, runs, bot):
                   "run_id": rnd["run_id"], "reviewer_commit": SHARED_REVIEWER_COMMIT, "findings": [],
                   "open_set": []}
         user = bot if rnd.get("author") != "owner" else {"login": "owner", "type": "User"}
-        comments.append({"id": 100 + i, "created_at": "2026-11-10T09:{0:02d}:00Z".format(i), "user": user,
+        comments.append({"id": 100 + i, "created_at": rnd.get("created_at") or "2026-11-10T09:{0:02d}:00Z".format(i),
+                         "user": user,
                          "body": wc_shared_review.build_record(record)})
         if runs is not None and rnd["run_id"] in runs:
             override = runs[rnd["run_id"]]
@@ -218,6 +219,10 @@ def check_audits(base_doc):
             me.replace_record(ledger, rec)
         cut = me.cut_snapshot(snap, merge["merged_at"])
         verdict = me.evaluate(cut, base_doc["bot_login"], NOW)
+        try:
+            me.validate_record(verdict)
+        except me.RecordError as exc:
+            problems.append("{0}: the verdict breaks the VerdictRecord type: {1}".format(name, exc))
         entry = me.build_audit_entry(info, verdict, ledger)
         if entry["mark"] != exp["mark"]:
             problems.append("{0}: mark {1}, expected {2}".format(name, entry["mark"], exp["mark"]))
@@ -975,6 +980,10 @@ def sc003_replay(corpus, expected, window=SC003_WINDOW, merges=SC003_MERGES, eva
                     pr, field, row.get(field), have))
         verdict = evaluate(me.cut_snapshot(snap, merge["merged_at"]), corpus.get("bot_login"), now,
                            base_branch="main")
+        try:
+            me.validate_record(verdict)
+        except me.RecordError as exc:
+            problems.append("SC-003 #{0}: the verdict breaks the VerdictRecord type: {1}".format(pr, exc))
         first = verdict["first_unmet"]
         state = next((c["result"] for c in verdict["conditions"] if c["name"] == first), None) if first else None
         got = {"kind": verdict["kind"], "result": me.result_of(verdict), "first_unmet": first,
@@ -1365,6 +1374,74 @@ def check_shared_review_noticed(base_doc):
     return problems
 
 
+def check_runtime_shared_review_reads(base_doc):
+    """The runtime half reads the runs the records name (found, absent,
+    failed), and both snapshot paths call that read for a maintainer PR."""
+    problems = []
+    bot = {"login": base_doc["bot_login"], "type": "Bot"}
+    rounds = [{"round": 1, "head_sha": "a" * 40, "verdict": "clean", "run_id": "101"},
+              {"round": 2, "head_sha": "a" * 40, "verdict": "clean", "run_id": "102"}]
+    comments, _ = shared_review_comments(rounds, None, bot)
+    seen = []
+
+    def fake_gh(args, token=None):
+        seen.append(args[0])
+        run_id = args[0].split("/runs/")[1].split("/")[0]
+        if run_id == "102":
+            raise wc_shared_review.GhNotFound(args[0])
+        if args[0].endswith("/artifacts"):
+            return {"artifacts": [{"name": "shared-review-" + "a" * 40}]}
+        return {"id": int(run_id), "repository": {"full_name": "o/r"}}
+
+    saved = wc_shared_review._gh_api
+    try:
+        wc_shared_review._gh_api = fake_gh
+        snap, not_read = {"comments": comments}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
+        runs = snap.get("shared_review_runs") or {}
+        if set(runs) != {"101", "102"} or runs.get("102") is not None or (runs.get("101") or {}).get("repository") != "o/r":
+            problems.append("runtime: the shared reviewer's runs read as {0}".format(runs))
+        if not_read:
+            problems.append("runtime: a found run and a missing run were named as not read: {0}".format(not_read))
+        wc_shared_review._gh_api = lambda args, token=None: None
+        snap, not_read = {"comments": comments}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
+        if snap.get("shared_review_runs") is not None or not not_read:
+            problems.append("runtime: a failed run read was not named as not read")
+    finally:
+        wc_shared_review._gh_api = saved
+
+    calls = []
+    spy = lambda repo, snap, bot_login, token, not_read: calls.append(snap.get("number"))
+    maint = copy.deepcopy(base_doc["bases"]["maintainer"])
+    with _Patched(_read_shared_review_runs=spy,
+                  _gh_ok=lambda args: json.dumps({"reviews": [], "isCrossRepository": False}),
+                  _issue_comments=lambda repo, number: []):
+        me._extend_with_evidence("o/r", copy.deepcopy(maint), base_doc["bot_login"], [], "main")
+    if calls != [maint["number"]]:
+        problems.append("runtime: an open maintainer PR's snapshot never reads the shared reviewer's runs")
+    calls.clear()
+    pull = {"number": maint["number"], "head": {"sha": maint["headRefOid"], "ref": maint["headRefName"],
+                                                "repo": {"full_name": "o/r"}},
+            "base": {"ref": "main"}, "body": "", "user": {"login": "owner", "type": "User"},
+            "changed_files": 1, "commits": 1, "comments": 0}
+    with _Patched(_read_shared_review_runs=spy, _issue_comments=lambda repo, number: [],
+                  _rest_rollup=lambda repo, sha: [], board_merge__gh_items=lambda path, *a, **k: []):
+        me._merged_snapshot("o/r", pull, base_doc["bot_login"], None, base_branch="main")
+    if calls != [maint["number"]]:
+        problems.append("runtime: a merged maintainer PR's snapshot never reads the shared reviewer's runs")
+    return problems
+
+
+def check_runtime_shared_review_reads_noticed(base_doc):
+    """Shown to fail: when neither snapshot path reaches the read (the kind
+    never comes out maintainer), the runtime check says so."""
+    with _Patched(_assign_once=lambda snap, *a: "spec"):
+        if len(check_runtime_shared_review_reads(base_doc)) < 2:
+            return ["self-check: snapshot paths that skip the shared reviewer's run read were not noticed"]
+    return []
+
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -1380,6 +1457,7 @@ def main():
     problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)
     problems += check_record_type(base_doc) + check_shared_review_noticed(base_doc)
+    problems += check_runtime_shared_review_reads(base_doc) + check_runtime_shared_review_reads_noticed(base_doc)
     if not check_sc003(directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing SC-003 corpus and expected file were not noticed")
     wf = os.path.join(REPO, WORKFLOW)

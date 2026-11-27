@@ -303,35 +303,35 @@ def _final_conditions(snap, bot_login):
 
 def _review_round_conditions(snap, bot_login, base_branch=None):
     """A session fix PR (kind `maintainer`): the newest shared-reviewer round
-    record at the exact head, counted only when the run it names confirms
-    it. The record format, its parse and the confirmation are
-    wc_shared_review's (called, never re-typed). `shared_review_runs` maps
-    each run id a record names to the run's facts, or to None when the run
-    does not exist; a run id missing from it was not read."""
+    record at the exact head must be clean and confirmed by the run it
+    names. An older clean round never stands in for a newer one that is
+    unconfirmed (its run may still be going) or not clean. The record
+    format, its parse and the confirmation are wc_shared_review's (called,
+    never re-typed). `shared_review_runs` maps each run id a record names to
+    the run's facts, or to None when the run does not exist; a run id
+    missing from it was not read."""
     name = "review_round_record"
+    if snap.get("comments") is None:
+        return [_cond(name, "not-read", "the pull request's comments were not read")]
     records = wc_shared_review.parse_records(snap.get("comments"), bot_login)
     if not records:
         return [_cond(name, "unmet", "no shared-reviewer round record on the pull request")]
-    runs = snap.get("shared_review_runs")
-    if runs is None:
-        return [_cond(name, "not-read", "the runs the shared reviewer's records name were not read")]
-    branch = base_branch or board_merge.BASE_BRANCH
-    confirmed = []
-    for record in records:
-        run_id = str(record.get("run_id") or "")
-        if not run_id.isdigit():
-            continue  # names no run, so nothing can confirm it
-        if run_id not in runs:
-            return [_cond(name, "not-read", "run {0}, which a shared-reviewer record names, was not read".format(run_id))]
-        if runs[run_id] is not None and wc_shared_review.confirm_record(record, runs[run_id], branch):
-            confirmed.append(record)
     head = snap.get("headRefOid")
-    record = wc_shared_review.latest_round_for_commit(confirmed, head) if head else None
+    record = wc_shared_review.latest_round_for_commit(records, head) if head else None
     if record is None:
-        why = ("the newest confirmed shared-reviewer round names another commit ({0})".format(
-            str(confirmed[-1].get("head_sha"))[:12]) if confirmed
-            else "no shared-reviewer round record is confirmed by the run it names")
-        return [_cond(name, "unmet", why)]
+        return [_cond(name, "unmet", "the newest shared-reviewer round names another commit ({0})".format(
+            str(records[-1].get("head_sha"))[:12]))]
+    run_id = str(record.get("run_id") or "")
+    if not run_id.isdigit():
+        return [_cond(name, "unmet", "the newest shared-reviewer round at this head names no run")]
+    runs = snap.get("shared_review_runs")
+    if runs is None or run_id not in runs:
+        return [_cond(name, "not-read", "run {0}, which the newest shared-reviewer round at this head names, "
+                                        "was not read".format(run_id))]
+    branch = base_branch or board_merge.BASE_BRANCH
+    if runs[run_id] is None or not wc_shared_review.confirm_record(record, runs[run_id], branch):
+        return [_cond(name, "unmet", "the newest shared-reviewer round at this head (round {0}) is not "
+                                     "confirmed by the run it names".format(record.get("round")))]
     if record.get("verdict") != "clean":
         return [_cond(name, "unmet", "the shared reviewer's round {0} at this head reads {1}".format(
             record.get("round"), record.get("verdict")))]

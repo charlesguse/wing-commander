@@ -18,6 +18,6 @@
  "expect": {
   "kind": "maintainer",
   "first_unmet": "review_round_record",
-  "reason_contains": "confirmed by the run it names"
+  "reason_contains": "not confirmed by the run it names"
  }
 }
