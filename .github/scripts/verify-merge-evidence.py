@@ -1401,10 +1401,23 @@ def check_runtime_shared_review_reads(base_doc):
         snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
         me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
         runs = snap.get("shared_review_runs") or {}
-        if set(runs) != {"101", "102"} or runs.get("102") is not None or (runs.get("101") or {}).get("repository") != "o/r":
+        if set(runs) != {"102"} or runs.get("102") is not None:
             problems.append("runtime: the shared reviewer's runs read as {0}".format(runs))
         if not_read:
-            problems.append("runtime: a found run and a missing run were named as not read: {0}".format(not_read))
+            problems.append("runtime: a missing run was named as not read: {0}".format(not_read))
+        # Only the newest round at the head decides, so a failed read of an
+        # older round's run leaves the verdict whole, open or merged (#1346
+        # pass 3). Both rounds (09:00, 09:01) are before this merge time.
+        wc_shared_review._gh_api = lambda args, token=None: (None if "/runs/101" in args[0]
+                                                             else {"artifacts": []} if args[0].endswith("/artifacts")
+                                                             else {"id": 102, "repository": {"full_name": "o/r"}})
+        for as_of in (None, "2026-11-10T09:05:00Z"):
+            snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
+            me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read, as_of=as_of)
+            if not_read or set(snap.get("shared_review_runs") or {}) != {"102"}:
+                problems.append("runtime: a failed read of an older round's run made the verdict not-read "
+                                "(as of {0}): {1}".format(as_of, not_read or snap.get("shared_review_runs")))
+        wc_shared_review._gh_api = fake_gh
         wc_shared_review._gh_api = lambda args, token=None: None
         snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
         me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
