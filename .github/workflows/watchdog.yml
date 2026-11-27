@@ -4563,7 +4563,7 @@ jobs:
         id: write-suppression
         env:
           CAPPED: ${{ steps.self-dispatch-depth.outputs.capped }}
-          PAUSED: ${{ vars.WING_COMMANDER_WATCHDOG_PAUSED }}
+          PAUSED: ${{ vars.WING_COMMANDER_WATCHDOG_PAUSED == 'true' }}
         run: |
           if [ "$PAUSED" = "true" ]; then
             echo "suppressed=true" >> "$GITHUB_OUTPUT"
