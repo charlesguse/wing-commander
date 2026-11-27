@@ -10,6 +10,7 @@ come from classify-out-of-boundary-tasks.sh, never a second pattern list.
 """
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -145,27 +146,73 @@ def check_prompt(failures):
             failures.append(f"implement.yml: both prompts must carry {needle!r}")
 
 
+def decide_arm_failures(text, fixture="cycle-outcome-line"):
+    """#889 (found by the code review of #1119): runs implement.yml's own
+    inline decide command, in each read-back arm, against a cap-outcome
+    fixture, and checks the line it picks back. Counting literals in the
+    workflow passed any edit that kept them (a renamed shell variable, a
+    dropped env assignment); running the shipped text does not."""
+    d = os.path.join(FIXTURES, "cap-outcome")
+    fx = {}
+    for line in open(os.path.join(d, fixture + ".env")).read().splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            fx[k] = v
+    exp = dict(l.split("=", 1) for l in open(os.path.join(d, fixture + ".expected")).read().splitlines() if "=" in l)
+    lines = text.splitlines()
+    arms = []
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith('decision="$(') and 'bash "$DECIDE_SCRIPT"' in line:
+            for j in range(i, min(i + 40, len(lines))):
+                if lines[j].strip() == 'cycle_outcome="$(pick cycle-outcome)"':
+                    arms.append("\n".join(l.strip() for l in lines[i:j + 1]))
+                    break
+    failures = []
+    if len(arms) != 2:
+        return [f"implement.yml: expected 2 read-back arms whose inline decide command is followed by "
+                f"cycle_outcome=\"$(pick cycle-outcome)\", found {len(arms)}"]
+    shell_vars = {"ok": fx.get("OK", ""), "truncated": fx.get("TRUNCATED", ""),
+                  "turns_used": fx.get("TURNS_USED", ""), "converge_sha": fx.get("CONVERGE_SHA", "")}
+    env = {"PATH": os.environ.get("PATH", ""), "DECIDE_SCRIPT": DECIDE,
+           "INTENDED_TURNS": fx.get("TURN_BUDGET", "")}
+    for k, v in fx.items():
+        if k not in ("OK", "TRUNCATED", "TURNS_USED", "CONVERGE_SHA", "TURN_BUDGET"):
+            env[k] = v
+    for n, arm in enumerate(arms, 1):
+        prelude = "".join(f"{k}={shlex.quote(v)}\n" for k, v in shell_vars.items())
+        script = ("set -uo pipefail\n" + prelude + arm +
+                  '\nprintf "cycle-outcome=%s\\nprogressed=%s\\nhandoff=%s\\n" '
+                  '"$cycle_outcome" "$progressed" "$handoff"\n')
+        proc = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+        got = parse_outputs(proc.stdout)
+        for key in ("cycle-outcome", "progressed", "handoff"):
+            if key in exp and got.get(key) != exp[key]:
+                failures.append(f"implement.yml read-back arm {n}: the inline decide command gave "
+                                f"{key}={got.get(key)!r}, expected {exp[key]!r} (cap-outcome/{fixture}) "
+                                f"{proc.stderr.strip()[:200]}")
+    return failures
+
+
 def check_cycle_outcome_wiring(failures):
     """FR-003 / single home: implement.yml picks the cycle-outcome line from
     decide-implement-outcome.sh in both arms and never formats it itself."""
     text = open(os.path.join(ROOT, ".github", "workflows", "implement.yml")).read()
-    if text.count('cycle_outcome="$(pick cycle-outcome)"') < 2:
-        failures.append("implement.yml: both read-back arms must pick cycle-outcome")
+    failures.extend(decide_arm_failures(text))
+    # The run must catch what the old literal counts caught and what they
+    # missed: an env assignment glued to the next one, and a renamed shell
+    # variable.
+    for old, new, what in (
+        ('TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE=',
+         'TURN_BUDGET="${INTENDED_TURNS:-}"IMPL_CHECKED_BASE=', "a glued env assignment"),
+        ('TURNS_USED="$turns_used"', 'TURNS_USED="$turns"', "a renamed turns variable"),
+    ):
+        if old not in text or not decide_arm_failures(text.replace(old, new)):
+            failures.append(f"cycle-outcome wiring check does not catch {what}")
     if "CYCLE_OUTCOME" not in text:
         failures.append("implement.yml: the progress comment must carry CYCLE_OUTCOME")
     if re.search(r"buildable task\(s\)", text):
         failures.append("implement.yml: a copy of the cycle-outcome formatter "
                         "must live only in decide-implement-outcome.sh")
-    # Env assignments on the inline decide command must be separate words:
-    # a closing quote glued to the next NAME= makes one garbled assignment.
-    glued = re.findall(r'"(?:TURN_BUDGET|IMPL_CHECKED_BASE)=[^"]*"[A-Z_]+=', text)
-    glued += re.findall(r'TURN_BUDGET="[^"]*"IMPL_CHECKED_BASE=', text)
-    if glued:
-        failures.append("implement.yml: TURN_BUDGET and IMPL_CHECKED_BASE must be "
-                        "separate env assignments (missing space)")
-    if len(re.findall(r'TURN_BUDGET="\$\{INTENDED_TURNS:-\}" IMPL_CHECKED_BASE=', text)) < 2:
-        failures.append("implement.yml: both arms must pass TURN_BUDGET and "
-                        "IMPL_CHECKED_BASE as separate assignments")
     src = open(DECIDE).read()
     if "buildable task(s)" not in src:
         failures.append("decide-implement-outcome.sh lost the cycle-outcome formatter")

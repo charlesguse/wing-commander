@@ -1,0 +1,4 @@
+progressed=false
+converged=false
+handoff=true
+cycle-outcome=Cycle 5: ticked 0 buildable task(s), 2 buildable remaining, used ? of ? turns.
