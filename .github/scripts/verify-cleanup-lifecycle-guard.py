@@ -78,6 +78,7 @@ why `bash` on PATH is also probed rather than trusted.
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -470,6 +471,26 @@ CLOSE_MUTATIONS = [
 ]
 
 
+# docs/architecture.md describes the teardown-done order in prose; it read
+# "close the lifecycle issue ...; flip its label to stage:done" after the
+# step stopped doing that (#889, found by the code review of #1328).
+ARCH_DOC = "docs/architecture.md"
+ARCH_OLD_ORDER = ("close the lifecycle\n  issue (atomically, with a\n"
+                  "  Haiku-written completion summary); flip its label to `stage:done`.")
+
+
+def arch_order_failures(text):
+    m = re.search(r"(?ms)^- `teardown-done` .*?(?=^- `|^\S|\Z)", text)
+    if not m:
+        return [f"{ARCH_DOC}: no `teardown-done` bullet describes the close"]
+    bullet = " ".join(m.group(0).split())
+    done, close = bullet.find("`stage:done`"), bullet.find("close")
+    if done < 0 or close < 0 or done > close:
+        return [f"{ARCH_DOC}: the `teardown-done` bullet does not say stage:done goes on "
+                f"before the close, as cleanup.yml does (#889): {bullet!r}"]
+    return []
+
+
 RESOLVE_ANCHOR = "issue=$(jq -r '.issue // empty'"
 
 
@@ -832,6 +853,20 @@ def main():
                 else:
                     print(f"::error::MUTATION SURVIVED — {label} broke nothing.")
                     failures.append(f"mutation survived: {label}")
+
+        with open(ARCH_DOC, encoding="utf-8") as fh:
+            arch = fh.read()
+        got = arch_order_failures(arch)
+        failures += got
+        print(f"{ARCH_DOC} teardown-done order: {'as shipped' if not got else 'STALE'}.")
+        m = re.search(r"(?ms)^- `teardown-done` .*?(?=^- `)", arch)
+        stale = (arch[:m.start()] + "- `teardown-done` — delete branches; " + ARCH_OLD_ORDER
+                 + "\n" + arch[m.end():]) if m else arch
+        if not arch_order_failures(stale):
+            print("::error::MUTATION SURVIVED — the old close-then-label wording passed.")
+            failures.append("mutation survived: architecture.md close-then-label wording")
+        else:
+            print("Mutation OK — architecture.md close-then-label wording: caught.")
 
         for f in failures:
             print(f"::error::{f}")
