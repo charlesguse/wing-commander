@@ -4,6 +4,7 @@ Run: python3 -I -m unittest discover -s .github/scripts/tests -p 'test_*.py'
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import wc_convergence  # noqa: E402
@@ -152,6 +153,25 @@ class Request(unittest.TestCase):
         self.assertEqual(r(5, "backlog line abc-1"), {"type": "backlog", "ref": "abc-1"})
         self.assertEqual(r(5, "https://github.com/o/r/actions/runs/99"), {"type": "run", "ref": "99"})
         self.assertIsNone(r(5, "nothing, and #5 itself"))
+
+    def test_purpose_source_reads_the_shared_closing_pattern(self):
+        # The code review of #1314: a local copy of the closing-keyword
+        # pattern missed the past tenses and every form but a bare #N, so
+        # an issue mentioned first won. #981's body is the real case: it
+        # mentions #977, then "closed #979".
+        r = sr.resolve_purpose_source
+        repo = "o/r"
+        self.assertEqual(r(5, "since #977 ... closed #979", repo), {"type": "issue", "ref": "979"})
+        self.assertEqual(r(5, "see #3. Resolved: #8", repo), {"type": "issue", "ref": "8"})
+        self.assertEqual(r(5, "see #3. Fixes GH-8", repo), {"type": "issue", "ref": "8"})
+        self.assertEqual(r(5, "see #3. Fixes o/r#8", repo), {"type": "issue", "ref": "8"})
+        self.assertEqual(r(5, "see #3. Closes https://github.com/O/R/issues/8", repo),
+                         {"type": "issue", "ref": "8"})
+        # Another repository's issue is not this PR's purpose.
+        self.assertEqual(r(5, "see #3. Fixes x/y#8", repo), {"type": "issue", "ref": "3"})
+        # The repository defaults to $GITHUB_REPOSITORY, as in Actions.
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r"}):
+            self.assertEqual(r(5, "see #3. Fixes o/r#8"), {"type": "issue", "ref": "8"})
 
 
 class Memory(unittest.TestCase):
