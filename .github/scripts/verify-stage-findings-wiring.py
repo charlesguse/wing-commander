@@ -457,6 +457,50 @@ def evaluate_wrapper_filing_enabled(root="."):
     return added
 
 
+
+# #889 (the docs half of the #1331 line): docs/setup.md's row for these
+# variables says how each is read (the one switch rule, as the wrappers
+# above read it) and names every stage's default, taken from
+# WRAPPER_FILING_ENABLED so a default flipped in one place and not the
+# other fails here.
+SETUP_DOC = "docs/setup.md"
+SETUP_ROW_PREFIX = "| `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED` |"
+SETUP_RULE_PHRASES = ("the one switch rule", "`true` in any case", "nothing trimmed")
+
+
+def _join_stages(stages):
+    return stages[0] if len(stages) == 1 else ", ".join(stages[:-1]) + " and " + stages[-1]
+
+
+def expected_setup_defaults_phrase():
+    on, off = [], []
+    for var_name, default_literal in WRAPPER_FILING_ENABLED.values():
+        stage = var_name[len("WING_COMMANDER_"):-len("_FINDINGS_FILING_ENABLED")].lower()
+        (on if default_literal == "true" else off).append(stage)
+    return f"off for {_join_stages(off)} and on for {_join_stages(on)}"
+
+
+def check_setup_doc(root="."):
+    before = len(failures)
+    full = os.path.join(root, *SETUP_DOC.split("/"))
+    if not os.path.isfile(full):
+        fail(f"{SETUP_DOC} does not exist — cannot check its findings-filing row.")
+        return failures[before:]
+    with open(full, encoding="utf-8") as fh:
+        rows = [line for line in fh.read().splitlines() if line.startswith(SETUP_ROW_PREFIX)]
+    if len(rows) != 1:
+        fail(f"{SETUP_DOC} has {len(rows)} rows starting {SETUP_ROW_PREFIX!r}; expected exactly one.")
+        return failures[before:]
+    row = rows[0]
+    for phrase in SETUP_RULE_PHRASES + (expected_setup_defaults_phrase(),):
+        if phrase not in row:
+            fail(f"{SETUP_DOC}'s findings-filing row does not say {phrase!r} — it must "
+                f"say the variables are read by the one switch rule and name each "
+                f"stage's default as the wrappers set it.")
+    if len(failures) == before:
+        note(f"{SETUP_DOC}: the findings-filing row states the one switch rule and each stage's default.")
+    return failures[before:]
+
 # --------------------------------------------------------------------------
 # --self-test
 # --------------------------------------------------------------------------
@@ -863,6 +907,40 @@ def selftest_wrapper_real_six_pass():
         note(f"[{case}] passed")
 
 
+def _setup_doc_case(case, row, want_hit):
+    tmp = tempfile.mkdtemp(prefix="wc-stage-findings-wiring-")
+    try:
+        _write(tmp, SETUP_DOC, "| Variable | Default | Meaning |\n|---|---|---|\n" + row + "\n")
+        found = check_setup_doc(tmp)
+        if bool([f for f in found if SETUP_DOC in f]) is not want_hit:
+            selftest_fail(f"[{case}] expected {'a finding' if want_hit else 'no finding'}, got: {found}")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+GOOD_SETUP_ROW = (SETUP_ROW_PREFIX + " x | Each is read by the one switch rule: on when the value is "
+    "`true` in any case, with nothing trimmed; unset takes the stage's default, "
+    "off for intake, clarify, plan and tasks and on for implement and finalize |")
+
+
+def selftest_setup_doc():
+    _setup_doc_case("a setup.md row stating the rule and the defaults passes", GOOD_SETUP_ROW, False)
+    _setup_doc_case("a setup.md row without the one switch rule note fails",
+        SETUP_ROW_PREFIX + " x | Whether that stage files defects; off for intake, clarify, "
+        "plan and tasks and on for implement and finalize |", True)
+    _setup_doc_case("a setup.md row naming the wrong defaults fails",
+        GOOD_SETUP_ROW.replace("off for intake, clarify, plan and tasks and on for implement and finalize",
+                               "off for intake, clarify and plan and on for tasks, implement and finalize"), True)
+    _setup_doc_case("a setup.md with no findings-filing row fails", "| `OTHER` | x | y |", True)
+    found = check_setup_doc(".")
+    if found:
+        selftest_fail(f"[the real docs/setup.md row passes] {found}")
+    else:
+        note("[the real docs/setup.md row passes] passed")
+
+
 def run_selftest():
     use_utf8_stdout()
     selftest_clean_fixture_passes()
@@ -882,6 +960,7 @@ def run_selftest():
     selftest_expected_form_is_the_one_switch_rule()
     selftest_real_six_pass()
     selftest_wrapper_real_six_pass()
+    selftest_setup_doc()
     print(f"verify-stage-findings-wiring --self-test: "
           f"{len(selftest_failures)} failure(s).")
     return 1 if selftest_failures else 0
@@ -899,6 +978,7 @@ def main():
 
     found = evaluate(".")
     found += evaluate_wrapper_filing_enabled(".")
+    found += check_setup_doc(".")
     print(f"verify-stage-findings-wiring: {len(found)} failure(s).")
     sys.exit(1 if found else 0)
 
