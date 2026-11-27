@@ -435,7 +435,14 @@ def check_review_round3_linked_issue():
              ("fixed #8", 8), ("Resolves: #9", 9), ("close #10", 10),
              ("for #901, refs #902, ref #903", None), ("Lifecycle issue: #12 and more", None))
     for body, want in cases:
-        got = me.linked_issue("final", {"body": body})
+        got = me.linked_issue("final", {"body": body}, "o/r")
+        if got != want:
+            problems.append("linked issue: {0!r} links #{1}, expected {2}".format(body, got, want))
+    # The closing-keyword forms CLOSING_RE reads, not only a bare #N; another
+    # repository's issue links nothing.
+    for body, want in (("Closes o/r#21", 21), ("Fixes https://github.com/o/r/issues/22", 22),
+                       ("resolves GH-23", 23), ("Closes other/repo#24", None)):
+        got = me.linked_issue("final", {"body": body}, "o/r")
         if got != want:
             problems.append("linked issue: {0!r} links #{1}, expected {2}".format(body, got, want))
     return problems

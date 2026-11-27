@@ -696,18 +696,19 @@ CLOSING_ALTERNATION_RE = re.compile(r"close\[sd\]|fix\((?:\?:)?e\[sd\]\)|resolve
 def closing_keyword_single_home(path=os.path.join(HERE, "verify-pr-closing-keywords.py"), text=None):
     """CLAUDE.md "Shared logic has exactly one home": the closing-keyword
     pattern lives in board_backlog_lines.CLOSING_RE; Gate 182's
-    verify-pr-closing-keywords.py reads it through closing_keyword_refs()
-    and carries no keyword alternation of its own (found by the code
-    review of #1314)."""
+    verify-pr-closing-keywords.py and wc_merge_evidence.py read it through
+    closing_keyword_refs() and carry no keyword alternation of their own
+    (found by the code review of #1314)."""
     if text is None:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
+    name = os.path.basename(path)
     errors = []
     if CLOSING_ALTERNATION_RE.search(text):
-        errors.append("verify-pr-closing-keywords.py carries its own closing-keyword pattern -- "
-                      "use board_backlog_lines.closing_keyword_refs()")
+        errors.append("{0} carries its own closing-keyword pattern -- "
+                      "use board_backlog_lines.closing_keyword_refs()".format(name))
     if "from board_backlog_lines import closing_keyword_refs" not in text:
-        errors.append("verify-pr-closing-keywords.py does not read board_backlog_lines.closing_keyword_refs()")
+        errors.append("{0} does not read board_backlog_lines.closing_keyword_refs()".format(name))
     return errors
 
 
@@ -817,7 +818,9 @@ def run(fixtures=None, verbose=True):
         for error in board_loop_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: board-loop.yml: {0}".format(error))
-        for error in run_link_single_home() + closing_keyword_single_home() + closing_re_single_reader():
+        for error in (run_link_single_home() + closing_keyword_single_home()
+                      + closing_keyword_single_home(os.path.join(HERE, "wc_merge_evidence.py"))
+                      + closing_re_single_reader()):
             failures += 1
             print("::error::verify-board-backlog-lines: {0}".format(error))
         for error in issue_context_wiring():
