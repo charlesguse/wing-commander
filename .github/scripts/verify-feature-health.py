@@ -31,6 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import wc_feature_health as fh  # noqa: E402
+import wc_proof_list  # noqa: E402
 import wc_shell_harness as harness  # noqa: E402
 from board_prove import Exemption  # noqa: E402
 
@@ -1133,10 +1134,15 @@ def check_section_built_own_marker(registry):
     return problems
 
 
-def check_final_pr_selector(registry, finalize_text):
+def check_final_pr_selector(registry, finalize_text, finalize_re=None):
     """The lifecycle signal counts only final PRs: its `spec/` head match is
     narrowed by a title prefix finalize.yml itself writes, so a `spec/` PR
-    that is not final cannot make a stalled lifecycle read healthy (#889)."""
+    that is not final cannot make a stalled lifecycle read healthy (#889).
+    The proof list reads the same title (wc_proof_list.FINALIZE_RE), so each
+    prefix must also be one that reader accepts: a prefix moved with a new
+    finalize.yml title cannot leave the proof list reading the old one."""
+    if finalize_re is None:
+        finalize_re = wc_proof_list.FINALIZE_RE
     problems = []
     sig = next((e.get("signal") or {}) for e in registry if e["name"] == "lifecycle")
     titles = sig.get("title_prefixes") or []
@@ -1147,6 +1153,9 @@ def check_final_pr_selector(registry, finalize_text):
         if '--title "{0}'.format(t) not in finalize_text:
             problems.append("lifecycle signal: title prefix {0!r} is not the title finalize.yml opens the "
                             "final PR with".format(t))
+        if not finalize_re.match("{0}A feature (#1)".format(t)):
+            problems.append("lifecycle signal: title prefix {0!r} is not a final PR title the proof list's "
+                            "wc_proof_list.FINALIZE_RE reads".format(t))
     return problems
 
 
@@ -1189,6 +1198,8 @@ def main():
         problems.append("self-check: a lifecycle signal with no title_prefixes is not noticed")
     if not check_final_pr_selector(registry, finalize_text.replace('--title "Finalize: ', '--title "Final: ')):
         problems.append("self-check: a finalize.yml title that drifted from title_prefixes is not noticed")
+    if not check_final_pr_selector(registry, finalize_text, re.compile(r"^Final:.*\(#(\d+)\)\s*$")):
+        problems.append("self-check: a title prefix the proof list's FINALIZE_RE does not read is not noticed")
     with open(os.path.abspath(__file__), encoding="utf-8") as fp:
         problems += check_check_names(fp.read())
     if check_check_names("def check_review_round_two():\n") == []:
