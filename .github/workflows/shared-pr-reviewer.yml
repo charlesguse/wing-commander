@@ -90,7 +90,7 @@ jobs:
         env:
           CALLER_REF: ${{ github.ref }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
-          PAUSED: ${{ inputs.paused }}
+          PAUSED: ${{ inputs.paused == 'true' }}
         run: |
           set -euo pipefail
           if [ -z "$DEFAULT_BRANCH" ] || [ "$CALLER_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
@@ -98,13 +98,11 @@ jobs:
             echo "refused: not run from the default branch ($CALLER_REF)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          case "$PAUSED" in
-            true|1|yes)
-              echo "proceed=false" >> "$GITHUB_OUTPUT"
-              echo "paused" >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-              ;;
-          esac
+          if [ "$PAUSED" = "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "paused" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
   # Reads the PR as data. The App token is read-only; nothing here runs PR code.
@@ -219,7 +217,7 @@ jobs:
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
           BOT_LOGIN: ${{ steps.app.outputs.app-slug }}[bot]
           BUDGET: ${{ inputs.round-budget }}
-          PAUSED: ${{ inputs.paused }}
+          PAUSED: ${{ inputs.paused == 'true' }}
           DISMISSALS: ${{ inputs.dismissals }}
         run: |
           set -euo pipefail

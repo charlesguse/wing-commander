@@ -837,12 +837,8 @@ READER_EXCEPTIONS = {
 # and relay_problems() fails on a raw relay of a switch that is neither here
 # nor in ONE_RULE_RELAYS, and on an entry whose relay is gone.
 PENDING_SHELL_READERS = (
-    ("spec-pr-review.yml", "WING_COMMANDER_SPEC_REVIEW_PAUSED", "spec-pr-review.yml"),
     ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED", "lifecycle-review-gate.yml"),
-    ("watchdog.yml", "WING_COMMANDER_WATCHDOG_PAUSED", "watchdog.yml"),
     ("auto-release.yml", "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED", "auto-release.yml"),
-    ("wing-commander-shared-pr-reviewer.yml", "WING_COMMANDER_SHARED_REVIEWER_PAUSED",
-     "shared-pr-reviewer.yml"),
 )
 # Raw relays of a switch to a reader one_rule_problems() runs (or to the
 # registered exception): workflow file -> the switches it relays that way
@@ -853,6 +849,9 @@ ONE_RULE_RELAYS = {
     "wing-commander-feature-health.yml": None,  # wc_feature_health.collect
     "board-loop.yml": {"WING_COMMANDER_BOARD_BACKLOG_LINES", "WING_COMMANDER_BOARD_LOOP_PAUSED",
                        "WING_COMMANDER_BOARD_AUTO_MERGE"},  # selection_gate; the exception
+    # shared-pr-reviewer.yml's `paused` input, which its guard and prepare
+    # jobs read as `inputs.paused == 'true'` (shell_pause_readers()).
+    "wing-commander-shared-pr-reviewer.yml": {"WING_COMMANDER_SHARED_REVIEWER_PAUSED"},
 }
 # A value handed out of GitHub's expression untouched (with or without an
 # empty-string default), for some later reader to compare.
@@ -863,6 +862,26 @@ def kill_switch_vars(reference):
     """The switches docs/reference.md's Kill switches table lists."""
     kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
     return set(re.findall(r"^\| `(WING_COMMANDER_[A-Z0-9_]+)` \|", kill, re.M))
+
+
+NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+
+
+def pending_docs_problems(kill_flat, pending):
+    """docs/reference.md's "N readers do not follow it yet" sentence states
+    how many readers are pending and names only their workflow files."""
+    m = re.search(r"(\w+) readers? do(?:es)? not follow it yet(.*?)\| Switch \|", kill_flat)
+    if not m:
+        return ["docs/reference.md's Kill switches section has no \"do not follow it yet\" list"]
+    problems = []
+    want = NUMBER_WORDS[len(pending)] if len(pending) < len(NUMBER_WORDS) else str(len(pending))
+    if m.group(1).lower() != want:
+        problems.append("the list says {0!r} readers; {1} are pending".format(m.group(1), len(pending)))
+    named = set(re.findall(r"`([\w.-]+\.yml)`", m.group(2)))
+    extra = sorted(named - {path for path, _var in pending})
+    if extra:
+        problems.append("the list names {0}, which no longer has a pending reader".format(extra))
+    return problems
 
 
 def relay_problems(root, switch_vars, pending, conforming):
@@ -1076,6 +1095,106 @@ def real_readers(root):
     }
 
 
+def _workflow_step(root, path, job, step_id):
+    import yaml
+    with open(os.path.join(root, path), encoding="utf-8") as fh_:
+        steps = yaml.safe_load(fh_)["jobs"][job]["steps"]
+    found = [st for st in steps if st.get("id") == step_id]
+    if len(found) != 1:
+        raise ValueError("{0}: job {1} has {2} step(s) with id {3}".format(path, job, len(found), step_id))
+    return found[0]
+
+
+def _run_step(script, env):
+    """Run a step's shell with only `env` (plus PATH) and GitHub's two
+    output files; return (exit code, outputs, summary)."""
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        out, summary = os.path.join(tmp, "output"), os.path.join(tmp, "summary")
+        for f in (out, summary):
+            open(f, "w").close()
+        full = dict(env, PATH=os.environ.get("PATH", ""), GITHUB_OUTPUT=out, GITHUB_STEP_SUMMARY=summary)
+        code = subprocess.run(["bash", "-c", script], capture_output=True, env=full).returncode
+        with open(out, encoding="utf-8") as fh_:
+            outputs = dict(line.split("=", 1) for line in fh_.read().splitlines() if "=" in line)
+        with open(summary, encoding="utf-8") as fh_:
+            return code, outputs, fh_.read()
+
+
+def shell_pause_readers(root):
+    """#889 ("One rule for all switches"): the shell pause checks that were
+    PENDING_SHELL_READERS until they followed the rule, each run as shipped:
+    the step's env expression evaluated by wc_gha_expr from the variable's
+    raw value, then the step's own shell (or wc_shared_review.guard) on the
+    result."""
+    import wc_gha_expr as gx
+    import wc_shared_review as sr
+    known = ("vars.", "inputs.")
+
+    def env_of(step, key, var, value):
+        ctx = {} if value is None else {"vars." + var: value}
+        return gx.interpolate(step["env"][key], ctx, known)
+
+    spec = ".github/workflows/spec-pr-review.yml"
+    sel = _workflow_step(root, spec, "select", "pause")
+    elig = _workflow_step(root, spec, "review", "eligible")
+    elig_lines = [ln for ln in elig["run"].splitlines() if "PAUSED" in ln]
+    wd = _workflow_step(root, ".github/workflows/watchdog.yml", "act", "write-suppression")
+    shared = ".github/workflows/shared-pr-reviewer.yml"
+    decide = _workflow_step(root, shared, "guard", "decide")
+    state = _workflow_step(root, shared, "prepare", "state")
+    import yaml
+    with open(os.path.join(root, ".github", "workflows", "wing-commander-shared-pr-reviewer.yml"),
+              encoding="utf-8") as fh_:
+        relay = yaml.safe_load(fh_)["jobs"]["review"]["with"]["paused"]
+
+    def shared_input(value):
+        """The wrapper's `paused:` input as the reusable workflow receives it."""
+        ctx = {} if value is None else {"vars.WING_COMMANDER_SHARED_REVIEWER_PAUSED": value}
+        return {"inputs.paused": gx.interpolate(relay, ctx, known)}
+
+    def spec_select(value):
+        code, outputs, _ = _run_step(sel["run"], {"PAUSED": env_of(sel, "PAUSED", "WING_COMMANDER_SPEC_REVIEW_PAUSED",
+                                                                    value)})
+        if code or outputs.get("paused") not in ("true", "false"):
+            raise ValueError("spec-pr-review pause step exited {0} with {1!r}".format(code, outputs))
+        return outputs["paused"] == "true"
+
+    def spec_eligible(value):
+        if len(elig_lines) != 1:
+            raise ValueError("spec-pr-review eligible step has {0} PAUSED line(s)".format(len(elig_lines)))
+        code, _, _ = _run_step("set -uo pipefail\n" + elig_lines[0],
+                               {"PAUSED": env_of(elig, "PAUSED", "WING_COMMANDER_SPEC_REVIEW_PAUSED", value)})
+        return code != 0
+
+    def watchdog(value):
+        code, outputs, _ = _run_step(wd["run"], {"CAPPED": "false", "PAUSED": env_of(
+            wd, "PAUSED", "WING_COMMANDER_WATCHDOG_PAUSED", value)})
+        if code or outputs.get("suppressed") not in ("true", "false"):
+            raise ValueError("watchdog write-suppression exited {0} with {1!r}".format(code, outputs))
+        return outputs.get("reason") == "paused"
+
+    def shared_guard(value):
+        env = {"CALLER_REF": "refs/heads/main", "DEFAULT_BRANCH": "main",
+               "PAUSED": gx.interpolate(decide["env"]["PAUSED"], shared_input(value), known)}
+        code, outputs, _ = _run_step(decide["run"], env)
+        if code or outputs.get("proceed") not in ("true", "false"):
+            raise ValueError("shared-pr-reviewer guard exited {0} with {1!r}".format(code, outputs))
+        return outputs["proceed"] == "false"
+
+    def shared_prepare(value):
+        paused = gx.interpolate(state["env"]["PAUSED"], shared_input(value), known)
+        return sr.guard("refs/heads/main", "main", "pr", paused)[1] == "paused"
+
+    return {
+        "spec-pr-review.yml select pause step": spec_select,
+        "spec-pr-review.yml review eligibility re-check": spec_eligible,
+        "watchdog.yml write suppression": watchdog,
+        "shared-pr-reviewer.yml guard (via the wrapper's input)": shared_guard,
+        "shared-pr-reviewer.yml prepare's wc_shared_review.guard (via the wrapper's input)": shared_prepare,
+    }
+
+
 def reader_half():
     """#889: every switch follows the one rule (owner decision 2026-11-27).
     Each real reader runs on the same values and must give one_rule()'s
@@ -1085,7 +1204,7 @@ def reader_half():
     import inspect
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     check("jq is available to run board-loop.yml's merge comparison", shutil.which("jq") is not None)
-    readers = real_readers(root)
+    readers = dict(real_readers(root), **shell_pause_readers(root))
     problems = one_rule_problems(root, readers, READER_EXCEPTIONS)
     check("every switch reader follows the one switch rule, but the one registered exception",
           not problems, problems)
@@ -1210,6 +1329,12 @@ def docs_half():
     for path, var in pending:
         check("docs/reference.md's Kill switches section names {0}'s reader of {1}".format(path, var),
               "`{0}`".format(path) in kill_flat and "`{0}`".format(var) in kill_flat, kill_flat[:400])
+    # Code review of #1329: and names no other, so a reader brought under
+    # the rule leaves that list with its PENDING_SHELL_READERS entry.
+    problems = pending_docs_problems(kill_flat, pending)
+    check("docs/reference.md's not-yet list names only the readers still pending", not problems, problems)
+    check("a reader the not-yet list still names after its fix fails",
+          pending_docs_problems(kill_flat, pending[:-1]))
 
 
 def main():
