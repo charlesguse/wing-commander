@@ -788,6 +788,10 @@ PR_CONDITION_CASES = [
     ("Always()", {"a"}, ["a"], False),
     # `||` returns an operand: (null || 'a') == true is 'a' == true, false.
     ("!((inputs.x || 'a') == true)", set(), [], False),
+    # `&&` returns an operand too: (true && 'a') == true is 'a' == true.
+    ("!((true && 'a') == true)", set(), [], False),
+    # needs.a.result.x reads a property of a string: null, not 'skipped'.
+    ("always() && !needs.a.result.x", {"a"}, ["a"], False),
     # needs.a.outputs is an object, never equal to ''.
     ("always() && needs.a.outputs != ''", {"a"}, ["a"], False),
 ]
