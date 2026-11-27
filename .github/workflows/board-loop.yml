@@ -1,6 +1,9 @@
 # Scheduled board loop: takes exactly one open issue per run through
 # triage, route, fix, review, and readiness (and, via the pull_request:
-# closed resume path, prove) -- deferring merge to a human (FR-003).
+# closed resume path, prove). The readiness job stops at ready; the `merge`
+# job (spec 115) merges what it reported ready when
+# WING_COMMANDER_BOARD_AUTO_MERGE is on, and a human merges when it is off
+# (FR-003).
 # See specs/057-autonomous-board-loop/{spec.md,plan.md,research.md} and
 # contracts/board-loop-workflow.md for the full contract.
 #

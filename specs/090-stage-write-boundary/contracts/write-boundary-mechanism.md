@@ -15,6 +15,34 @@ documents the contract between:
 5. `wing-commander-stage-findings`'s new `finding-kind` input.
 6. `finalize.yml`'s new deterministic lookup step and its prompt.
 
+## Status: routed filing is retired for implement (since spec 123)
+
+Spec 123 (`specs/123-implement-task-completion`, final PR #1119) classifies
+an unchecked task outside the write boundary as work no implement cycle can
+do: `count-tasks-checkboxes.sh` lists it in `maintainer-items`, and implement
+lists it for the maintainer as a maintainer step on the lifecycle issue. The
+owner chose to keep that behaviour and retire this contract's routed-issue
+filing for implement (#1122, option a, 2026-11-22).
+
+What that means for the sections below:
+
+- implement's "Classify write-boundary tasks" steps read the checkbox
+  count's `impl-unchecked-items`, not `unchecked-items` (§3), so an
+  out-of-boundary task never reaches the classifier's `findings-json`.
+  `all-unchecked-out-of-boundary` and `routed` (§4) therefore stay `false`
+  on implement, and the "Route out-of-boundary tasks" step (§5's
+  `routed-task` call site) does not fire. Its wiring is still in
+  `implement.yml`, but implement files no routed issue.
+- `finalize.yml`'s routed-item lookup (§6) and `wing-commander-stage-
+  findings`' `routed-task` kind (§5) stay in place. On implement's tasks
+  they find nothing to look up or file.
+- The `no-write-paths` input, the tool-args denies and the prompt
+  statement (§1, §2) are unchanged: the boundary is still enforced. Only
+  routing out-of-boundary work changed, from a filed issue to a maintainer
+  step.
+
+The sections below describe the mechanism as spec 090 shipped it.
+
 ## 1. `implement.yml` — new `workflow_call` inputs
 
 | Name | Required | Default | Description |

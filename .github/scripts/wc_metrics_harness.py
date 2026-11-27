@@ -311,35 +311,47 @@ def sweep_runs_json(runs):
 # Driver: one whole sweep through the composite's four shipped steps
 # --------------------------------------------------------------------------
 def run_sweep(work, runs, seed_records="", reject_pushes=0, bash=None,
-              mutate=None):
+              mutate=None, runs_via="file"):
     """Drive one whole sweep. Returns per-step results plus the destination
     branch's post-sweep state (records, sweep_state, unpersisted, commits).
 
     `mutate(step_name, script) -> script` lets a gate prove one of the
     shipped guards is load-bearing (constitution VIII).
+
+    `runs_via` is how the run list reaches the composite: "file" (the
+    `sweep-runs-file` input metrics-persist.yml passes, #889) or "env"
+    (the older `sweep-runs` input, still accepted).
     """
     bash = bash or resolve_bash()
     ensure_jq()
     _origin, repo = make_workspace(work, {DEST: seed_records}, reject_pushes)
     _bindir(work)
-    return _drive(work, repo, runs, bash, 1, mutate)
+    return _drive(work, repo, runs, bash, 1, mutate, runs_via)
 
 
-def resweep(work, result, runs, bash=None, pass_no=2, mutate=None):
+def resweep(work, result, runs, bash=None, pass_no=2, mutate=None,
+            runs_via="file"):
     """A second sweep over the same destination branch, as the next day's
     schedule would run it — a fresh RUNNER_TEMP, the same origin."""
     return _drive(work, result["repo"], runs, bash or resolve_bash(), pass_no,
-                  mutate)
+                  mutate, runs_via)
 
 
-def _drive(work, repo, runs, bash, pass_no, mutate=None):
+def _drive(work, repo, runs, bash, pass_no, mutate=None, runs_via="file"):
     fix = write_fixtures(work, runs)
     # A fresh RUNNER_TEMP per sweep: the runner's temp is per-run, and a
     # reused one would hand the second sweep the first one's batch file.
     tmp = os.path.join(work, f"tmp{pass_no}")
     os.makedirs(tmp, exist_ok=True)
+    listing = sweep_runs_json(runs)
+    runs_file = ""
+    if runs_via == "file":
+        runs_file = os.path.join(work, f"sweep-runs{pass_no}.json")
+        with open(runs_file, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(listing + "\n")
     env = {"GH_TOKEN": "stub-token", "RUN_ID": "",
-           "SWEEP_RUNS": sweep_runs_json(runs),
+           "SWEEP_RUNS": "" if runs_file else listing,
+           "SWEEP_RUNS_FILE": runs_file,
            "GITHUB_REPOSITORY": REPO, "BRANCH": BRANCH, "DEST_PATH": DEST,
            "WC_FIX": fix,
            "PATH": os.path.join(work, "bin") + os.pathsep
@@ -440,9 +452,12 @@ def run_window(work, candidates, mark=None, since_input="", bash=None,
            "PATH": _bindir(work) + os.pathsep + os.environ.get("PATH", "")}
     rc, out, outputs, summary = run_step(bash, script, repo, env, tmp)
     listed = []
-    if outputs.get("sweep-runs"):
+    # The step hands its list over as a file (#889), never as an output.
+    runs_file = outputs.get("sweep-runs-file", "")
+    if runs_file and os.path.isfile(runs_file):
         try:
-            listed = json.loads(outputs["sweep-runs"])
+            with open(runs_file, encoding="utf-8") as fh:
+                listed = json.loads(fh.read())
         except ValueError:
             listed = []
     return {"rc": rc, "out": out, "outputs": outputs, "summary": summary,

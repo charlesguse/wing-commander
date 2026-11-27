@@ -44,6 +44,16 @@ inputs:
       whose artifacts had already expired).
     required: false
     default: ""
+  sweep-runs-file:
+    description: >
+      The same JSON array as `sweep-runs`, read from this file instead
+      (#889). Linux caps one environment string at 128 KiB, and an input
+      reaches each step as an environment variable, so a large sweep window
+      passed through `sweep-runs` fails every step before its first line
+      runs. metrics-persist.yml passes this. When set, `sweep-runs` is
+      ignored.
+    required: false
+    default: ""
 
 outputs:
   persisted-count:
@@ -72,8 +82,20 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
         SWEEP_RUNS: ${{ inputs.sweep-runs }}
+        SWEEP_RUNS_FILE: ${{ inputs.sweep-runs-file }}
       run: |
         set -uo pipefail
+        # sweep-runs-file (#889): read the run list from the file, into a
+        # variable that is not exported -- no process this step starts then
+        # carries it in its environment, whatever the window's size. The
+        # three later steps repeat this read -- see this step.
+        if [ -n "${SWEEP_RUNS_FILE:-}" ]; then
+          export -n SWEEP_RUNS
+          if ! SWEEP_RUNS="$(cat -- "$SWEEP_RUNS_FILE")" || [ -z "$SWEEP_RUNS" ]; then
+            echo "::error::wing-commander-metrics-persist: could not read the sweep's run list from sweep-runs-file '$SWEEP_RUNS_FILE'."
+            exit 1
+          fi
+        fi
         base="$RUNNER_TEMP/wc-metrics-persist"
         mkdir -p "$base"
 
@@ -129,8 +151,17 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
         SWEEP_RUNS: ${{ inputs.sweep-runs }}
+        SWEEP_RUNS_FILE: ${{ inputs.sweep-runs-file }}
       run: |
         set -uo pipefail
+        # sweep-runs-file -- see "Discover jobs and metrics-record artifacts".
+        if [ -n "${SWEEP_RUNS_FILE:-}" ]; then
+          export -n SWEEP_RUNS
+          if ! SWEEP_RUNS="$(cat -- "$SWEEP_RUNS_FILE")" || [ -z "$SWEEP_RUNS" ]; then
+            echo "::error::wing-commander-metrics-persist: could not read the sweep's run list from sweep-runs-file '$SWEEP_RUNS_FILE'."
+            exit 1
+          fi
+        fi
         base="$RUNNER_TEMP/wc-metrics-persist"
         if [ -n "${SWEEP_RUNS:-}" ]; then
           run_ids="$(printf '%s' "$SWEEP_RUNS" | jq -r '.[].run_id' 2>/dev/null)"
@@ -199,8 +230,17 @@ runs:
       env:
         RUN_ID: ${{ inputs.run-id }}
         SWEEP_RUNS: ${{ inputs.sweep-runs }}
+        SWEEP_RUNS_FILE: ${{ inputs.sweep-runs-file }}
       run: |
         set -uo pipefail
+        # sweep-runs-file -- see "Discover jobs and metrics-record artifacts".
+        if [ -n "${SWEEP_RUNS_FILE:-}" ]; then
+          export -n SWEEP_RUNS
+          if ! SWEEP_RUNS="$(cat -- "$SWEEP_RUNS_FILE")" || [ -z "$SWEEP_RUNS" ]; then
+            echo "::error::wing-commander-metrics-persist: could not read the sweep's run list from sweep-runs-file '$SWEEP_RUNS_FILE'."
+            exit 1
+          fi
+        fi
         base="$RUNNER_TEMP/wc-metrics-persist"
         batch="$base/new-records.jsonl"
         : > "$batch"
@@ -362,8 +402,17 @@ runs:
         DEST_PATH: ${{ inputs.destination-path }}
         RUN_ID: ${{ inputs.run-id }}
         SWEEP_RUNS: ${{ inputs.sweep-runs }}
+        SWEEP_RUNS_FILE: ${{ inputs.sweep-runs-file }}
       run: |
         set -uo pipefail
+        # sweep-runs-file -- see "Discover jobs and metrics-record artifacts".
+        if [ -n "${SWEEP_RUNS_FILE:-}" ]; then
+          export -n SWEEP_RUNS
+          if ! SWEEP_RUNS="$(cat -- "$SWEEP_RUNS_FILE")" || [ -z "$SWEEP_RUNS" ]; then
+            echo "::error::wing-commander-metrics-persist: could not read the sweep's run list from sweep-runs-file '$SWEEP_RUNS_FILE'."
+            exit 1
+          fi
+        fi
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         dir="$RUNNER_TEMP/wc-metrics-persist"

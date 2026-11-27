@@ -74,7 +74,7 @@ jobs:
       - name: Stand down when the kill switch is set
         id: pause
         env:
-          PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED }}
+          PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED == 'true' }}
         run: |
           if [ "${PAUSED:-}" = "true" ]; then
             echo "spec-pr-review: standing down -- WING_COMMANDER_SPEC_REVIEW_PAUSED is set; no round runs." >> "$GITHUB_STEP_SUMMARY"
@@ -369,7 +369,7 @@ jobs:
           HEAD_REF: ${{ needs.select.outputs.head-ref }}
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           ISSUE: ${{ needs.select.outputs.issue }}
-          PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED }}
+          PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED == 'true' }}
         run: |
           set -uo pipefail
           if ! fresh="$(gh pr view "$PR_NUMBER" --json state,headRefName,headRefOid,isCrossRepository)"; then
