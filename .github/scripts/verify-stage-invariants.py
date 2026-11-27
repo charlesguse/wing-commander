@@ -48,6 +48,17 @@ For every workflow whose `on:` declares `workflow_call` AND NOTHING ELSE:
   2. no `vars.<NAME>` read
   3. no `secrets: inherit`
 
+and, across every workflow in the repository:
+
+  4. every local-path caller (`uses: ./.github/workflows/<stage>`) of a
+     stage with a CREDENTIAL-FREE pipeline-ref resolver passes
+     `pipeline-ref`. A local-path call leaves `github.job_workflow_sha`
+     empty, and a resolver step (id `pipeline-ref`) with no OIDC fallback,
+     or in a job whose permissions grant no id-token, then has no way to
+     find the pipeline commit. #1077 pinned one such caller by hand
+     (verify-implement-gate-suite-preflight.py) and the startup-check
+     wrapper got a second hand pin; this check covers the next one (#889).
+
 Reads are counted only in EXPRESSION context - inside `${{ ... }}`, or in
 the value of an `if:` key, which GitHub evaluates as an expression with or
 without the braces. Prose is not a read: `watchdog.yml` has two comments
@@ -492,6 +503,69 @@ def apply_waivers(findings, waivers, stages):
 # --------------------------------------------------------------------------
 # The gate
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Credential-free pipeline-ref resolvers and their local-path callers
+# --------------------------------------------------------------------------
+PIPELINE_REF_STEP_ID = "pipeline-ref"
+OIDC_FALLBACK_MARKER = "ACTIONS_ID_TOKEN_REQUEST_URL"
+LOCAL_STAGE_USES_RE = re.compile(r"^\./\.github/workflows/([^/@\s]+)$")
+
+
+def _grants_id_token(permissions):
+    """None (inherited from the caller) cannot be decided statically and is
+    given the benefit of the doubt; an explicit block must grant it."""
+    if permissions is None:
+        return True
+    if isinstance(permissions, str):
+        return permissions == "write-all"
+    return isinstance(permissions, dict) and permissions.get("id-token") == "write"
+
+
+def credential_free_resolvers(loaded, stages):
+    """-> {stage basename: [job, ...]} for each stage job whose pipeline-ref
+    resolver cannot work without the pipeline-ref input."""
+    out = {}
+    for path, _, parsed in loaded:
+        if path not in stages or not isinstance(parsed, dict):
+            continue
+        for job_name, job in (parsed.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict) or step.get("id") != PIPELINE_REF_STEP_ID:
+                    continue
+                has_oidc = OIDC_FALLBACK_MARKER in str(step.get("run") or "")
+                if not (has_oidc and _grants_id_token(job.get("permissions"))):
+                    out.setdefault(os.path.basename(path), []).append(job_name)
+    return out
+
+
+def pipeline_ref_caller_failures(loaded, stages):
+    resolvers = credential_free_resolvers(loaded, stages)
+    failures = []
+    for path, _, parsed in loaded:
+        if not isinstance(parsed, dict):
+            continue
+        for job_name, job in (parsed.get("jobs") or {}).items():
+            if not isinstance(job, dict):
+                continue
+            m = LOCAL_STAGE_USES_RE.match(str(job.get("uses") or "").strip())
+            if not m or m.group(1) not in resolvers:
+                continue
+            ref = (job.get("with") or {}).get("pipeline-ref")
+            if isinstance(ref, str) and ref.strip():
+                continue
+            failures.append(
+                "{0}: job `{1}` calls {2} by local path without passing "
+                "pipeline-ref. A local-path call leaves github.job_workflow_sha "
+                "empty, and {2}'s credential-free pipeline-ref resolver (job(s) "
+                "{3}) has no OIDC fallback, so it cannot find the pipeline "
+                "commit. Pass `pipeline-ref:` set to the caller's own commit "
+                "(#1077, #889).".format(
+                    path, job_name, m.group(1), ", ".join(resolvers[m.group(1)])))
+    return failures
+
+
 def evaluate(root="."):
     """-> (failures, stages, findings, waived_count)."""
     failures = []
@@ -567,6 +641,8 @@ def evaluate(root="."):
     for path, source, _ in loaded:
         if path in stages:
             findings.extend(scan_text(path, source))
+
+    failures.extend(pipeline_ref_caller_failures(loaded, stages))
 
     waivers, waiver_failures = load_waivers(root)
     failures.extend(waiver_failures)
@@ -803,6 +879,59 @@ jobs:
 """
 
 
+# A credential-free pipeline-ref resolver (implement's gate-suite job,
+# agent-startup-check's classify-startup) and an OIDC-backed one.
+CF_RESOLVER_STAGE = """\
+name: credential-free resolver
+on:
+  workflow_call:
+    inputs:
+      pipeline-ref:
+        type: string
+        default: ""
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: echo "ref=${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}" >> "$GITHUB_OUTPUT"
+"""
+
+OIDC_RESOLVER_STAGE = """\
+name: oidc resolver
+on:
+  workflow_call:
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - id: pipeline-ref
+        run: |
+          ref="${JOB_WORKFLOW_SHA:-}"
+          [ -n "$ref" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || ref=x
+"""
+
+# The same OIDC code in a job whose permissions grant no id-token: the
+# fallback can never run, so the resolver is credential-free after all.
+OIDC_NO_GRANT_STAGE = OIDC_RESOLVER_STAGE.replace(
+    "      id-token: write\n", "      contents: read\n")
+
+
+def _local_caller(stage, with_ref):
+    return ("name: local caller\n"
+            "on:\n  workflow_dispatch:\n"
+            "jobs:\n  call:\n"
+            "    uses: ./.github/workflows/{0}\n".format(stage)
+            + ("    with:\n      pipeline-ref: ${{ github.sha }}\n"
+               if with_ref else ""))
+
+
 def _waiver(file, check, pattern, count):
     """A fixture waiver. `file` is a bare name; waivers name repo paths."""
     return {"file": WORKFLOWS_DIR + "/" + file, "check": check,
@@ -869,6 +998,24 @@ FIXTURES = [
     ("the |2- indicator order is still a block scalar",
      {"clean.yml": CLEAN, "order.yml": HEREDOC_INDICATOR_ORDER}, None,
      ("order.yml:10: `vars.INDICATOR_ORDER_FORM`", 1)),
+    # #889: local-path callers of a credential-free pipeline-ref resolver.
+    ("a local-path caller of a credential-free resolver that passes "
+     "pipeline-ref is clean",
+     {"cf.yml": CF_RESOLVER_STAGE,
+      "wing-commander-1.yml": _local_caller("cf.yml", True)}, None, None),
+    ("a local-path caller of a credential-free resolver without "
+     "pipeline-ref is caught",
+     {"cf.yml": CF_RESOLVER_STAGE,
+      "wing-commander-1.yml": _local_caller("cf.yml", False)}, None,
+     ("wing-commander-1.yml: job `call` calls cf.yml by local path without "
+      "passing pipeline-ref", 1)),
+    ("a local-path caller of an OIDC-backed resolver needs no pipeline-ref",
+     {"oidc.yml": OIDC_RESOLVER_STAGE,
+      "wing-commander-1.yml": _local_caller("oidc.yml", False)}, None, None),
+    ("an OIDC fallback in a job granted no id-token is credential-free",
+     {"oidc.yml": OIDC_NO_GRANT_STAGE,
+      "wing-commander-1.yml": _local_caller("oidc.yml", False)}, None,
+     ("calls oidc.yml by local path without passing pipeline-ref", 1)),
     # the empty-subject guard
     ("a checkout with no stage at all is a failure, not a clean pass",
      {"wing-commander-1.yml": WRAPPER}, None,
