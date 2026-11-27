@@ -558,7 +558,10 @@ def run_prove_gate_mints_after_ownership():
              ("a labelled PR whose head repository was deleted",
               closed({"labels": [{"name": "board:owned"}], "head": {"repo": None}}), "false"),
              ("a directed prove dispatch",
-              ("workflow_dispatch", {"inputs": {"directed-stage": "prove", "directed-pr": "9"}}, ""), "true"))
+              ("workflow_dispatch", {"inputs": {"directed-stage": "prove", "directed-pr": "9"}}, ""), "true"),
+             # Validation of #1345: only workflow_dispatch passes through, so
+             # widening the job's if: to another event cannot mint unchecked.
+             ("a scheduled run", ("schedule", {"schedule": "17 * * * *"}, ""), "false"))
     for label, (event_name, payload, pr_number), want in cases:
         with tempfile.TemporaryDirectory() as work:
             event = os.path.join(work, "event.json")

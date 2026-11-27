@@ -6673,7 +6673,9 @@ jobs:
       # BOARD_PR_OWNED_JQ, read off the event's own payload before any
       # secret is used, so closing any other pull request holds no App
       # token at all. A directed dispatch is a maintainer's own run and
-      # re-derives ownership from a fresh read in the decision step below.
+      # re-derives ownership from a fresh read in the decision step below,
+      # so only workflow_dispatch passes through; any other event reads
+      # ownership off its payload and fails closed (validation of #1345).
       - name: Check the closed pull request is this loop's own, before any App token
         id: own
         env:
@@ -6681,7 +6683,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "owned=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
