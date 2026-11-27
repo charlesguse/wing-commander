@@ -26,9 +26,14 @@ byte-for-byte unchanged and no new records commit was made.
 Spec 120 adds a third case: a run whose job id changed between attempts
 (a re-run) must still leave one record per run/job_key/step_index.
 
-Three mutations -- the append step's existing-key skip removed, its
-attempt-independent skip removed, and the sweep's per-run loop collapsed to
-the first run -- must each break an assertion.
+#889 adds a sweep whose run list passes Linux's 128 KiB environment-string
+cap: handed over as `sweep-runs-file`, it must persist every run. The stage
+must pass that input, and the composite's four steps must read it alike.
+
+Four mutations -- the append step's existing-key skip removed, its
+attempt-independent skip removed, the sweep's per-run loop collapsed to
+the first run, and discovery ignoring sweep-runs-file -- must each break
+an assertion.
 
 Wiring: lint-workflows.yml, Gate 76.
 """
@@ -37,10 +42,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import yaml  # noqa: E402
 from wc_metrics_harness import (ACTION, APPEND, DISCOVER,  # noqa: E402
-                                SWEEP_STEPS, cleanup, metrics_record,
+                                STAGE, SWEEP_STEPS, cleanup, metrics_record,
                                 persisted_record, record_keys, record_line,
-                                resolved_key, resweep, run_sweep)
+                                resolved_key, resweep, run_sweep,
+                                sweep_runs_json)
 from wc_shell_harness import (find_step, resolve_bash,  # noqa: E402
                               use_utf8_stdout)
 
@@ -109,6 +116,74 @@ def suite(bash, mutate=None):
     finally:
         cleanup(work)
     broke += rerun_failures(bash, mutate)
+    broke += large_listing_failures(bash, mutate)
+    return broke
+
+
+# #889: Linux caps one environment string at 128 KiB (MAX_ARG_STRLEN), and
+# a composite input reaches its steps as one. A sweep window over that size
+# passed as `sweep-runs` fails every step before its first line runs, so
+# metrics-persist.yml hands the list over as `sweep-runs-file`. Three runs
+# whose `workflow` field is padded take the listing past the cap.
+ENV_STRING_CAP = 128 * 1024
+LARGE_RUNS = [
+    {"run_id": f"710{i}", "workflow": f"{'w' * 50000}-{i}.yml",
+     "concluded_at": f"2026-09-21T0{i}:00:00Z",
+     "records": [metrics_record(f"710{i}", "implement")]}
+    for i in range(1, 4)]
+
+
+def large_listing_failures(bash, mutate=None):
+    listing = sweep_runs_json(LARGE_RUNS)
+    if len(listing.encode("utf-8")) <= ENV_STRING_CAP:
+        return [f"the large-listing fixture is only {len(listing)} bytes; "
+                f"it must pass the {ENV_STRING_CAP}-byte cap to prove anything"]
+    work = tempfile.mkdtemp(prefix="wc-gate76-large-")
+    try:
+        result = run_sweep(work, LARGE_RUNS, bash=bash, mutate=mutate)
+        want = sorted(resolved_key(r["run_id"]) for r in LARGE_RUNS)
+        if result["rc"] != 0:
+            return [f"a sweep whose run list is {len(listing)} bytes failed: "
+                    f"{result['steps'][-1][2].strip()[:300]}"]
+        if sorted(record_keys(result["records"])) != want:
+            return [f"a sweep whose run list is {len(listing)} bytes, passed "
+                    f"as sweep-runs-file, persisted "
+                    f"{record_keys(result['records'])}, expected {want}"]
+    finally:
+        cleanup(work)
+    return []
+
+
+def wiring_failures():
+    """#889: the stage passes the list as a file, and the composite's four
+    steps read it the same way (one block, repeated per step)."""
+    broke = []
+    with open(STAGE, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    steps = doc["jobs"]["persist"]["steps"]
+    persist = next(st for st in steps if st.get("id") == "persist")
+    window = next(st for st in steps if st.get("id") == "sweep")
+    if "sweep-runs" in persist.get("with", {}):
+        broke.append("metrics-persist.yml passes `sweep-runs` to the composite; "
+                     "a large window then passes the 128 KiB environment-string "
+                     "cap -- pass `sweep-runs-file`")
+    if persist.get("with", {}).get("sweep-runs-file") != \
+            "${{ steps.sweep.outputs.sweep-runs-file }}":
+        broke.append("metrics-persist.yml's persist step does not pass "
+                     "`sweep-runs-file: ${{ steps.sweep.outputs.sweep-runs-file }}`")
+    if "sweep-runs=" in window["run"]:
+        broke.append("the window step still writes a `sweep-runs` output")
+    blocks = []
+    for name in SWEEP_STEPS:
+        body = find_step(ACTION, name)["run"]
+        start = body.find('if [ -n "${SWEEP_RUNS_FILE:-}" ]; then')
+        if start < 0:
+            broke.append(f"composite step {name!r} never reads SWEEP_RUNS_FILE")
+            continue
+        blocks.append(body[start:body.index("\nfi\n", start)])
+    if len(set(blocks)) > 1:
+        broke.append("the composite's sweep-runs-file reads differ between steps; "
+                     "keep the four copies identical")
     return broke
 
 
@@ -175,6 +250,13 @@ def mut_discover_only_takes_the_first_run(name, script):
     return script.replace("jq -r '.[].run_id'", "jq -r '.[0].run_id'")
 
 
+def mut_discover_ignores_the_runs_file(name, script):
+    if name != DISCOVER:
+        return script
+    return script.replace('if [ -n "${SWEEP_RUNS_FILE:-}" ]; then',
+                          'if false; then', 1)
+
+
 MUTATIONS = [
     ("the append step stops skipping already-persisted keys",
      mut_append_forgets_existing_keys),
@@ -182,13 +264,15 @@ MUTATIONS = [
      mut_append_forgets_stable_keys),
     ("discovery only covers the sweep's first run",
      mut_discover_only_takes_the_first_run),
+    ("discovery ignores sweep-runs-file (#889)",
+     mut_discover_ignores_the_runs_file),
 ]
 
 
 def main():
     use_utf8_stdout()
     bash = resolve_bash()
-    failures = suite(bash)
+    failures = wiring_failures() + suite(bash)
     for f in failures:
         print(f"::error::{f}")
     mutation_failures = 0

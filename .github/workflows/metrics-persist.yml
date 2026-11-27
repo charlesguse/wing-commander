@@ -342,7 +342,7 @@ jobs:
       # specs/058-per-job-minute-floor (FR-022/FR-027, research.md
       # R-C1/R-C3). Skipped entirely on the completion-triggered path, so
       # that path is byte-for-byte what spec 043 shipped: the composite
-      # below then reads an empty `sweep-runs` and processes `run-id` alone.
+      # below then reads an empty `sweep-runs-file` and processes `run-id` alone.
       # No new job — this runs inside the one `persist` job already
       # allocated, which has already checked out and already holds the
       # token every read below needs.
@@ -464,7 +464,16 @@ jobs:
             "$cand" 2>/dev/null)" || runs='[]'
           echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
           echo "since=$since" >> "$GITHUB_OUTPUT"
-          echo "sweep-runs=$runs" >> "$GITHUB_OUTPUT"
+          # A file, not a step output (#889): the composite would receive an
+          # output as an input, and so as an environment variable, which
+          # Linux caps at 128 KiB -- about 1,000 runs with no
+          # sweep-workflow-paths filter.
+          runs_file="$RUNNER_TEMP/wc-sweep-runs.json"
+          if ! printf '%s\n' "$runs" > "$runs_file"; then
+            echo "::error::wing-commander metrics-persist stage: could not write the sweep's run list to $runs_file."
+            exit 1
+          fi
+          echo "sweep-runs-file=$runs_file" >> "$GITHUB_OUTPUT"
 
       - name: Persist this run's metrics records
         id: persist
@@ -475,7 +484,7 @@ jobs:
           destination-path: ${{ inputs.destination-path }}
           # Empty whenever the step above was skipped — i.e. on every
           # completion-triggered run, which is single-run mode unchanged.
-          sweep-runs: ${{ steps.sweep.outputs.sweep-runs }}
+          sweep-runs-file: ${{ steps.sweep.outputs.sweep-runs-file }}
 
       # Last step, success() only: persist's `completed` output is the one
       # signal that survives continue-on-error (a tolerated job reports
