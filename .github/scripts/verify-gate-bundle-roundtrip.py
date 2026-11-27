@@ -86,19 +86,27 @@ def write(repo, rel, text):
 
 
 def sh(shared, script, args, cwd, env_extra=None):
-    out = tempfile.mktemp()
-    # A host's PYTHONUNBUFFERED would hide a suite whose output is lost when
-    # it is stopped; a runner sets none.
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
-    env.update(GITHUB_OUTPUT=out, **(env_extra or {}))
-    proc = subprocess.run(["bash", os.path.join(shared, script)] + list(args), cwd=cwd,
-                          env=env, capture_output=True, text=True)
-    outputs = {}
-    if os.path.exists(out):
-        for line in open(out, encoding="utf-8").read().splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                outputs[k] = v
+    # Created here (mkstemp), not merely named, so no other process can put
+    # a file at the path first; removed once its outputs are read.
+    fd, out = tempfile.mkstemp(prefix="wc-gate-bundle-output-")
+    os.close(fd)
+    try:
+        # A host's PYTHONUNBUFFERED would hide a suite whose output is lost when
+        # it is stopped; a runner sets none.
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+        env.update(GITHUB_OUTPUT=out, **(env_extra or {}))
+        proc = subprocess.run(["bash", os.path.join(shared, script)] + list(args), cwd=cwd,
+                              env=env, capture_output=True, text=True)
+        outputs = {}
+        if os.path.exists(out):
+            with open(out, encoding="utf-8") as fh:
+                for line in fh.read().splitlines():
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        outputs[k] = v
+    finally:
+        if os.path.exists(out):
+            os.unlink(out)
     return proc.returncode, proc.stdout + proc.stderr, outputs
 
 

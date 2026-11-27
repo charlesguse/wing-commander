@@ -51,6 +51,7 @@ import yaml
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from wc_gate_suite_sites import EXEMPT_GATE_SUITE_SITES, SITES, suite_steps  # noqa: E402
+from wc_regex_probe import finishes  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows")
@@ -74,8 +75,11 @@ REQUIRED_PHRASES = (
 )
 PUSH_USES = ("wing-commander-hardened-push", "wing-commander-publish-stranded-commits",
              "wing-commander-fold-commit")
+# A separate option argument never starts with `-` (`-C -x` reads as two
+# options), so a run of options has one parse and cannot backtrack
+# exponentially -- the same rule as verify-hardened-push.py's RAW_PUSH_RE.
 RAW_PUSH_RE = re.compile(
-    r"^[^#\n]*\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*push\b",
+    r"^[^#\n]*\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+[^-\s]\S*\s+|-\S+\s+)*push\b",
     re.MULTILINE)
 
 
@@ -281,6 +285,14 @@ def self_test():
             print("note: mutation caught ({0})".format(label))
         else:
             failures.append("mutation {0!r} not caught for {1!r}: {2}".format(label, expect, got))
+    for cmd in ("git push origin HEAD", '  git -C "$d" push', "git -c k=v push", "git -C -x push"):
+        if not RAW_PUSH_RE.search(cmd):
+            failures.append("`{0}` not recognised as a push".format(cmd))
+    for cmd in ("# git push", "git pushd", "echo done"):
+        if RAW_PUSH_RE.search(cmd):
+            failures.append("`{0}` misread as a push".format(cmd))
+    if not finishes(RAW_PUSH_RE, "git " + "-C -! " * 40):
+        failures.append("RAW_PUSH_RE takes unbounded time on a long run of git options")
     for f in failures:
         print("::error::Gate 153 self-test: " + f)
     if failures:

@@ -30,6 +30,9 @@ fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$work/wc-tmp"; mkdir -p "$TMPDIR"
 
 python3 - "$work" <<'PY'
 import os

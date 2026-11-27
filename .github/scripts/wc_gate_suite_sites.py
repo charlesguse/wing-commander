@@ -50,9 +50,12 @@ EXEMPT_GATE_SUITE_SITES = {
 
 
 # A shell line that invokes the suite (not one that merely names it in prose
-# or a quoted prompt): the interpreter starts the command.
+# or a quoted prompt): the interpreter starts the command. Each prefix has
+# one parse: whitespace after `if` belongs to `if`, and `cd`'s directory
+# holds no `&`, so a long run of prefixes cannot backtrack exponentially
+# (verify-gate-suite-credential-free.py's self-test times one).
 SUITE_INVOCATION_RE = re.compile(
-    r"^\s*(?:if\s+!?\s*|\(\s*|timeout\s+\S+\s+|exec\s+|cd\s+\S+\s*&&\s*)*"
+    r"^\s*(?:if\s+(?:!\s*)?|\(\s*|timeout\s+\S+\s+|exec\s+|cd\s+[^\s&]+\s*&&\s*)*"
     r"(?:\S*/)?python3?(?:\.\d+)?\s+(?:-\S+\s+)*\S*run-local-gates\.py\b", re.MULTILINE)
 COMMENT_LINE_RE = re.compile(r"^[ \t]*#[^\n]*$", re.MULTILINE)
 

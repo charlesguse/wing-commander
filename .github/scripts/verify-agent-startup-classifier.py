@@ -61,6 +61,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_regex_probe import finishes  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, gh_escape_guard_preamble, resolve_bash, run_step, step_shell)
 
@@ -76,6 +77,13 @@ CREDENTIAL_INPUTS = ("anthropic_api_key", "claude_code_oauth_token", "anthropic_
 MODEL_CREDENTIAL_ENV = re.compile(
     r"\b(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)"
     r"|AWS_BEARER_TOKEN_BEDROCK|ANTHROPIC_FEDERATION_RULE_ID)\b")
+# A write to an error log: an fd redirect, or tee with its options and any
+# other files it writes. A tee option is `-` and then one or more of [\w-]
+# (`-a`, `--append`), written so a run of options has one parse; `--?[\w-]+`
+# let `---` split two ways per option and backtrack exponentially on a long
+# run (the self-test times one).
+ERROR_LOG_WRITE_RE = re.compile(r"(\d?>[>|]?|&>>?|\btee(\s+-[\w-]+)*(\s+[\w./][\w./-]*)*?\s)\s*"
+                                r"\"?(\$\{?\w+\}?/)?[\w./-]*-error\.log\"?")
 
 
 def load_classifier(path=CLASSIFIER):
@@ -261,8 +269,7 @@ def check_workflow(path):
             rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
             # Writing an error log (any fd redirect or tee, quoted or under a
             # directory) is not reading it.
-            rest = re.sub(r"(\d?>[>|]?|&>>?|\btee(\s+--?[\w-]+)*(\s+[\w./][\w./-]*)*?\s)\s*"
-                          r"\"?(\$\{?\w+\}?/)?[\w./-]*-error\.log\"?", "", rest)
+            rest = ERROR_LOG_WRITE_RE.sub("", rest)
             if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
                     or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
                 raw.append(l.strip())
@@ -866,6 +873,14 @@ def self_test():
         expect("prereq result not reported", mutated(drop_prereq_report),
                "report verify-image-prerequisites' result")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
+    for line in ('echo x > job-error.log', 'cmd 2>&1 | tee -a "$RUNNER_TEMP/job-error.log"',
+                 'tee --append x/y-error.log', 'cmd &>> "${D}/a-error.log"', 'tee --- a-error.log'):
+        if ERROR_LOG_WRITE_RE.sub("", line) == line:
+            failures.append("`{0}` not recognised as writing an error log".format(line))
+    if ERROR_LOG_WRITE_RE.search("cat a-error.log"):
+        failures.append("`cat a-error.log` misread as writing an error log")
+    if not finishes(ERROR_LOG_WRITE_RE, "tee" + " ---" * 40):
+        failures.append("ERROR_LOG_WRITE_RE takes unbounded time on a long run of tee options")
     for f in failures:
         print("::error::Gate 147 self-test: " + f)
     if not failures:
