@@ -478,12 +478,122 @@ def run_board_pr_owned_jq_single_home():
     return failures
 
 
+OWN_STEP_NAME = "Check the closed pull request is this loop's own, before any App token"
+
+
+def _prove_gate_steps(doc=None):
+    if doc is None:
+        with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    return ((doc.get("jobs") or {}).get("prove-gate") or {}).get("steps") or []
+
+
+def mint_order_problems(steps):
+    """prove-gate mints the App token only after its ownership check: the
+    ownership step comes before the wing-commander-context step, holds no
+    secret, and both the context step and the decision step run only when
+    it read `owned == 'true'` (owner decision, 2026-11-27)."""
+    problems = []
+    names = [(s or {}).get("name") for s in steps]
+    ctx = next((i for i, s in enumerate(steps)
+                if str((s or {}).get("uses", "")).endswith("/wing-commander-context")), None)
+    own = names.index(OWN_STEP_NAME) if OWN_STEP_NAME in names else None
+    if own is None or ctx is None:
+        return ["prove-gate has no {0!r} step or no wing-commander-context step".format(OWN_STEP_NAME)]
+    if own > ctx:
+        problems.append("prove-gate's ownership check comes after the App token is minted")
+    if "secrets." in json.dumps(steps[own]):
+        problems.append("prove-gate's ownership check reads a secret")
+    want = "steps.own.outputs.owned == 'true'"
+    for label, idx in (("the App token mint", ctx), ("the prove decision", names.index(GATE_STEP_NAME)
+                                                       if GATE_STEP_NAME in names else None)):
+        if idx is None or (steps[idx] or {}).get("if") != want:
+            problems.append("prove-gate: {0} does not run only when {1}".format(label, want))
+    return problems
+
+
+def run_prove_gate_mints_after_ownership():
+    """The shipped ownership step, run on a pull_request payload: a PR this
+    loop owns reads owned=true; any other closed PR reads owned=false and
+    says no token was minted. The order rule above is shown to fail on a
+    mutated job."""
+    failures = 0
+    for p in mint_order_problems(_prove_gate_steps()):
+        failures += 1
+        print("::error::verify-board-prove-recovery: " + p)
+    step = find_step(REPO_BOARD_LOOP, OWN_STEP_NAME)
+    cases = (("an owned PR", {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": REPO}}}, "true"),
+             ("a PR with no board:owned label", {"labels": [], "head": {"repo": {"full_name": REPO}}}, "false"),
+             ("a labelled PR from another repository",
+              {"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": "someone-else/fork"}}}, "false"))
+    for label, pr, want in cases:
+        with tempfile.TemporaryDirectory() as work:
+            event = os.path.join(work, "event.json")
+            with open(event, "w", encoding="utf-8") as fh:
+                json.dump({"pull_request": dict(pr, number=9)}, fh)
+            runner_temp = os.path.join(work, "runner_temp")
+            os.makedirs(runner_temp, exist_ok=True)
+            rc, out, outputs, summary = run_step(
+                BASH, step["run"], work,
+                {"EVENT_NAME": "pull_request", "PR_NUMBER": "9", "GITHUB_REPOSITORY": REPO,
+                 "GITHUB_EVENT_PATH": event, "BOARD_PR_OWNED_JQ": BOARD_PR_OWNED_JQ},
+                runner_temp)
+        if rc != 0 or outputs.get("owned") != want:
+            failures += 1
+            print("::error::verify-board-prove-recovery: the ownership step on {0} read "
+                  "owned={1!r} (rc {2}), expected {3}: {4}".format(label, outputs.get("owned"), rc, want, out))
+        elif want == "false" and "no App token was minted" not in (summary or ""):
+            failures += 1
+            print("::error::verify-board-prove-recovery: the ownership step on {0} does not say "
+                  "no App token was minted".format(label))
+        else:
+            print("[ok] prove-gate's ownership step reads owned={0} for {1}".format(want, label))
+    # Shown to fail: each mutation of the shipped job is noticed.
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    steps = _prove_gate_steps(doc)
+    names = [(s or {}).get("name") for s in steps]
+    ctx = next(i for i, s in enumerate(steps) if str((s or {}).get("uses", "")).endswith("/wing-commander-context"))
+
+    def moved_after(st):
+        st = list(st)
+        own = st.pop(names.index(OWN_STEP_NAME))
+        st.insert(ctx, own)
+        return st
+
+    def mint_ungated(st):
+        st = [dict(x) for x in st]
+        st[ctx].pop("if", None)
+        return st
+
+    def decision_ungated(st):
+        st = [dict(x) for x in st]
+        st[names.index(GATE_STEP_NAME)].pop("if", None)
+        return st
+
+    def own_reads_secret(st):
+        st = [dict(x) for x in st]
+        own = names.index(OWN_STEP_NAME)
+        st[own]["env"] = dict(st[own].get("env") or {}, K="${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}")
+        return st
+
+    for label, mutate in (("the ownership check moved after the mint", moved_after),
+                          ("the mint's if: dropped", mint_ungated),
+                          ("the decision's if: dropped", decision_ungated),
+                          ("the ownership check given a secret", own_reads_secret)):
+        if not mint_order_problems(mutate(steps)):
+            failures += 1
+            print("::error::verify-board-prove-recovery: self-check: {0} was not noticed".format(label))
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
                 + run_displacement_writer_passes_outcome_reason()
                 + run_directed_dispatch_reaches_prove_gate()
-                + run_board_pr_owned_jq_single_home())
+                + run_board_pr_owned_jq_single_home()
+                + run_prove_gate_mints_after_ownership())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 
