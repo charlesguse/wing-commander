@@ -232,6 +232,11 @@ WHAT IT CHECKS
    on every PR, so a copy added to a file outside the filter is caught by
    the push to main and the daily schedule, which have no paths filter.
 
+7. trust-gate contract token (#889, code review of #1292). The token the
+   comment trust gate's contract (TRUST_GATE_CONTRACT) names is the one
+   intake.yml's `comment-trust-gate` step hands wing-commander-issue-
+   context, and the contract names no other token expression.
+
 `--self-test`: synthetic tempdir fixtures prove each check can fail (a
 board-loop tool-args grant carrying `gh issue view`, a second file
 re-implementing all three trust-filter fragments, and spec-request
@@ -1658,8 +1663,65 @@ def check_spec_request_bodies(path):
     return problems
 
 
+INTAKE = ".github/workflows/intake.yml"
+TRUST_GATE_CONTRACT = "specs/029-intake-issue-comments/contracts/comment-trust-gate.md"
+TRUST_GATE_STEP_ID = "comment-trust-gate"
+# A token expression a contract can name: a step output, an env relay or a
+# secret, with or without the ${{ }} around it.
+CONTRACT_TOKEN_RE = re.compile(
+    r"`(?:token: )?(?:\$\{\{\s*)?((?:steps\.[\w-]+\.outputs\.token|env\.[A-Z_]*TOKEN[A-Z_]*|"
+    r"secrets\.[\w-]+))(?:\s*\}\})?`")
+
+
+def check_trust_gate_contract_token(workflow_path=INTAKE,
+                                    contract_path=TRUST_GATE_CONTRACT):
+    """#889 (code review of #1292): the comment trust gate's contract names
+    the token intake.yml actually hands wing-commander-issue-context, and
+    no other. It once said `steps.ctx.outputs.token` while intake passed
+    `env.WC_BOT_TOKEN`."""
+    with open(workflow_path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    passed = None
+    for job in (doc.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            if step.get("id") == TRUST_GATE_STEP_ID:
+                token = str((step.get("with") or {}).get("token") or "")
+                m = re.fullmatch(r"\$\{\{\s*(\S+)\s*\}\}", token.strip())
+                passed = m.group(1) if m else token.strip()
+    if not passed:
+        return [f"{workflow_path}: no `{TRUST_GATE_STEP_ID}` step passing a "
+                f"`token:` -- the contract check would pass vacuously."]
+    with open(contract_path, encoding="utf-8") as fh:
+        named = set(CONTRACT_TOKEN_RE.findall(fh.read()))
+    problems = []
+    if passed not in named:
+        problems.append(f"{contract_path}: does not name `{passed}`, the "
+                        f"token {workflow_path}'s {TRUST_GATE_STEP_ID} step passes.")
+    for other in sorted(named - {passed}):
+        problems.append(f"{contract_path}: names `{other}` as the trust gate's "
+                        f"token, but {workflow_path} passes `{passed}`.")
+    return problems
+
+
+def _self_test_trust_gate_contract(tmpdir):
+    failures = []
+    with open(TRUST_GATE_CONTRACT, encoding="utf-8") as fh:
+        real = fh.read()
+    for label, text in (
+            ("a contract naming steps.ctx.outputs.token",
+             real.replace("`env.WC_BOT_TOKEN`", "`steps.ctx.outputs.token`")),
+            ("a contract naming no token", CONTRACT_TOKEN_RE.sub("the token", real))):
+        path = os.path.join(tmpdir, "comment-trust-gate.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if not check_trust_gate_contract_token(contract_path=path):
+            failures.append(f"trust-gate contract fixture ({label}) was not caught")
+    return failures
+
+
 def check_repo():
     problems = []
+    problems.extend(check_trust_gate_contract_token())
     problems.extend(check_tool_grants(BOARD_LOOP))
     problems.extend(check_spec_request_bodies(BOARD_LOOP))
     problems.extend(check_read_only_git(BOARD_LOOP))
@@ -3607,6 +3669,7 @@ def run_self_test():
         failures.extend(_self_test_spec_request_sites(tmpdir))
         failures.extend(_self_test_read_only_git(tmpdir))
         failures.extend(_self_test_gh_rationale_home(tmpdir))
+        failures.extend(_self_test_trust_gate_contract(tmpdir))
     failures.extend(_self_test_builder())
     failures.extend(_mutation_check_builder())
     failures.extend(_mutation_check_spec_request_sites())

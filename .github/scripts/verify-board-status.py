@@ -556,7 +556,10 @@ def merge_evidence_half():
     check("failed: the latest audit failed",
           run([mk(4, "2026-11-20T05:41:00Z", conclusion="failure")], {})["status"] == "failed")
     check("paused: the switch is set, whatever the history",
-          run([audit], {3: True}, {"merge_evidence_paused": "True "})["status"] == "paused")
+          run([audit], {3: True}, {"merge_evidence_paused": "True"})["status"] == "paused")
+    # The one switch rule never trims (#889): a padded value is not a pause.
+    check("a padded pause switch is not a pause",
+          run([audit], {3: True}, {"merge_evidence_paused": "True "})["status"] != "paused")
     check("unreadable: the artifact is missing", run([audit], {3: True}, download="none")["status"] == "unreadable")
 
     # #1173 review R3: ~25 runs a day, so the last good audit can sit past the
@@ -795,6 +798,363 @@ def fit_half():
           bs.append_section("body\n", "") == "body\n" and bs.append_section("body\n", "x\n") == "body\n\nx\n")
 
 
+# The one switch rule (#889; owner decision 2026-11-27, on the Roadmap
+# issue: all switches work the same way, with exceptions only where the
+# technology forces one): a switch is on when its value equals "true"
+# compared case-insensitively, with no trimming. That is GitHub's own
+# `vars.X == 'true'`, which most switches are read by and which nothing here
+# can change, so it is the answer every other reader must give.
+def one_rule(value):
+    return str(value or "").lower() == "true"
+
+
+# Values a person could type into a variable. None is an unset variable.
+READER_VALUES = ("true", "True", "TRUE", "tRuE", "true ", " true", "\ttrue\n", "false", "False",
+                 "", None, "yes", "1", "truee")
+BOARD_LOOP = ".github/workflows/board-loop.yml"
+GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
+# The one temporary exception: a reader that may still disagree with the
+# rule, the tracker that holds its fix, and the exact line (stripped) it is
+# registered against. When that line changes the exception fails, so it is
+# dropped with the fix rather than left to excuse a later drift.
+READER_EXCEPTIONS = {
+    "board-loop.yml merge decision (jq)": {
+        "tracker": "#889",
+        "path": BOARD_LOOP,
+        "line": "'{class: $class, switch_on: ($switch_on == \"true\"),",
+    },
+}
+# Shell pause checks that do not follow the rule yet, tracked on #889
+# ("One rule for all switches"): (workflow file that relays the raw value,
+# switch, workflow file whose check reads it). Not run by
+# one_rule_problems(); docs_half() requires docs/reference.md to name each,
+# and relay_problems() fails on a raw relay of a switch that is neither here
+# nor in ONE_RULE_RELAYS, and on an entry whose relay is gone.
+PENDING_SHELL_READERS = (
+    ("spec-pr-review.yml", "WING_COMMANDER_SPEC_REVIEW_PAUSED", "spec-pr-review.yml"),
+    ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED", "lifecycle-review-gate.yml"),
+    ("watchdog.yml", "WING_COMMANDER_WATCHDOG_PAUSED", "watchdog.yml"),
+    ("auto-release.yml", "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED", "auto-release.yml"),
+    ("wing-commander-shared-pr-reviewer.yml", "WING_COMMANDER_SHARED_REVIEWER_PAUSED",
+     "shared-pr-reviewer.yml"),
+)
+# Raw relays of a switch to a reader one_rule_problems() runs (or to the
+# registered exception): workflow file -> the switches it relays that way
+# (None: every switch). A `switch-value:` hand-off to the watch-guard
+# composite is checked by READER_SITES' guard shape instead.
+ONE_RULE_RELAYS = {
+    "board-status.yml": None,  # wc_board_status
+    "wing-commander-feature-health.yml": None,  # wc_feature_health.collect
+    "board-loop.yml": {"WING_COMMANDER_BOARD_BACKLOG_LINES", "WING_COMMANDER_BOARD_LOOP_PAUSED",
+                       "WING_COMMANDER_BOARD_AUTO_MERGE"},  # selection_gate; the exception
+}
+# A value handed out of GitHub's expression untouched (with or without an
+# empty-string default), for some later reader to compare.
+RAW_RELAY_RE = re.compile(r"\$\{\{\s*vars\.(WING_COMMANDER_[A-Z0-9_]+)\s*(?:\|\|\s*''\s*)?\}\}")
+
+
+def kill_switch_vars(reference):
+    """The switches docs/reference.md's Kill switches table lists."""
+    kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
+    return set(re.findall(r"^\| `(WING_COMMANDER_[A-Z0-9_]+)` \|", kill, re.M))
+
+
+def relay_problems(root, switch_vars, pending, conforming):
+    """Every raw relay of a switch in .github/workflows goes to a reader the
+    one-rule check runs, or is a registered pending reader; every pending
+    reader still has its relay, so it is dropped with its fix."""
+    wf_dir = os.path.join(root, ".github", "workflows")
+    found = set()
+    for name in sorted(os.listdir(wf_dir)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        for line in _file_lines(root, os.path.join(".github", "workflows", name)):
+            if line.startswith("#") or line.startswith("switch-value:"):
+                continue
+            for var in RAW_RELAY_RE.findall(line):
+                if var in switch_vars:
+                    found.add((name, var))
+    problems = []
+    registered = {(relay, var) for relay, var, _reader in pending}
+    for name, var in sorted(found):
+        allowed = conforming.get(name, set())
+        if (allowed is None or var in allowed) or (name, var) in registered:
+            continue
+        problems.append("{0} relays {1} raw to a reader this check does not run; bring it under "
+                        "the one switch rule or register it in PENDING_SHELL_READERS".format(name, var))
+    for relay, var in sorted(registered - found):
+        problems.append("{0} no longer relays {1} raw; drop its PENDING_SHELL_READERS entry and "
+                        "its docs/reference.md mention".format(relay, var))
+    return problems
+# Where each switch Board status reports is read, as the literal statement
+# in its file. Every statement must have one of SITE_SHAPES' shapes (or be
+# an exception's line), so a switch cannot pick up a reader of its own that
+# this check never runs.
+READER_SITES = {
+    "auto_release_paused": [(".github/workflows/auto-release.yml",
+                             "if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'")],
+    "board_auto_merge": [(BOARD_LOOP, "SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}"),
+                         (BOARD_LOOP, "'{class: $class, switch_on: ($switch_on == \"true\"),")],
+    "board_backlog_lines": [(BOARD_LOOP, "BACKLOG_LINES_SWITCH: ${{ vars.WING_COMMANDER_BOARD_BACKLOG_LINES }}"),
+                            (BOARD_LOOP, "\"switch\": os.environ.get(\"BACKLOG_LINES_SWITCH\") or \"\","),
+                            (".github/scripts/board_backlog_lines.py",
+                             "if not wc_board_status._switch_on(env.get(\"backlog_lines_switch\")):")],
+    "board_can_push_workflows": [(BOARD_LOOP,
+                                  "CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}")],
+    "board_loop_paused": [(BOARD_LOOP,
+                           "if [ \"${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}\" = \"true\" ]; then")],
+    "lifecycle_auto_merge": [(".github/workflows/lifecycle-review-gate.yml",
+                              "!cancelled() && vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE == 'true'")],
+    "review_gate_paused": [(".github/workflows/lifecycle-review-gate.yml",
+                            "if: vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED != 'true'")],
+    "feature_health_paused": [(".github/workflows/wing-commander-feature-health.yml",
+                               "switch-value: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}")],
+    "merge_evidence_paused": [(".github/workflows/wing-commander-merge-evidence.yml",
+                               "switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}")],
+    "proof_list_paused": [(".github/workflows/wing-commander-proof-list.yml",
+                           "switch-value: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}")],
+}
+# The shapes a reader site may have: GitHub's comparison, a hand-off to the
+# watch-guard composite, a raw relay to a reader one_rule_problems() runs,
+# or a call to the rule's one home.
+SITE_SHAPES = {
+    "expression": re.compile(r"vars\.WING_COMMANDER_[A-Z_]+ [!=]= 'true'"),
+    "guard": re.compile(r"^switch-value: \$\{\{ vars\.WING_COMMANDER_[A-Z_]+ \}\}$"),
+    "relay": re.compile(r"^[A-Z_]+: \$\{\{ vars\.WING_COMMANDER_[A-Z_]+ \}\}$|os\.environ\.get\(\"[A-Z_]+\"\)"),
+    "rule": re.compile(r"\bwc_board_status\._switch_on\("),
+}
+
+
+def _file_lines(root, path):
+    with open(os.path.join(root, path), encoding="utf-8") as fh:
+        return [line.strip() for line in fh.read().splitlines()]
+
+
+def reader_sites_problems(root, sites, exceptions):
+    """Every switch has a site; every site's statement is a line of its file,
+    names its own variable and has one of SITE_SHAPES' shapes or is an
+    exception's line; a guard site hands the value to the watch-guard
+    composite."""
+    problems = []
+    excused = {(ex["path"], ex["line"]) for ex in exceptions.values()}
+    for key in sorted(set(bs.SWITCH_ENV) - {"tasks_review"}):
+        if not sites.get(key):
+            problems.append("{0}: no reader site".format(key))
+        var = "WING_COMMANDER_" + bs.SWITCH_ENV[key]
+        for path, statement in sites.get(key, []):
+            try:
+                lines = _file_lines(root, path)
+            except OSError as err:
+                problems.append("{0}: {1} unreadable ({2})".format(key, path, err))
+                continue
+            at = [i for i, line in enumerate(lines) if statement in line]
+            if not at:
+                problems.append("{0}: {1} no longer has the line {2!r}".format(key, path, statement))
+            shapes = [name for name, rx in SITE_SHAPES.items() if rx.search(statement)]
+            if not shapes and (path, statement) not in excused:
+                problems.append("{0}: {1!r} reads the switch some way other than the one rule".format(key, statement))
+            if "WING_COMMANDER_" in statement and var not in statement:
+                problems.append("{0}: {1!r} reads another variable".format(key, statement))
+            if "guard" in shapes:
+                near = lines[max(0, at[0] - 10):at[0] + 1] if at else []
+                if not any(line.startswith("uses:") and "wing-commander-watch-guard" in line for line in near) \
+                        or "switch-name: " + var not in near:
+                    problems.append("{0}: {1} does not hand {2} to wing-commander-watch-guard".format(key, path, var))
+    for key in sorted(set(sites) - set(bs.SWITCH_ENV)):
+        problems.append("{0}: a reader site for a switch SWITCH_ENV does not have".format(key))
+    return problems
+
+
+def one_rule_problems(root, readers, exceptions, values=READER_VALUES):
+    """Every reader gives one_rule()'s answer on every value. A reader that
+    disagrees fails unless it is the registered exception; the exception
+    fails once its line has changed or once its reader agrees, so it is
+    dropped with the fix."""
+    problems = []
+    if len(exceptions) > 1:
+        problems.append("more than one reader exception: {0}".format(sorted(exceptions)))
+    for name, read in readers.items():
+        try:
+            wrong = [(v, read(v)) for v in values if read(v) != one_rule(v)]
+        except Exception as err:  # a reader that cannot run is not shown to agree
+            problems.append("{0}: could not run ({1})".format(name, err))
+            continue
+        ex = exceptions.get(name)
+        if ex is None:
+            if wrong:
+                problems.append("{0} disagrees with the one switch rule on {1}".format(name, wrong))
+            continue
+        try:
+            present = ex["line"] in _file_lines(root, ex["path"])
+        except OSError:
+            present = False
+        if not present:
+            problems.append("{0}: the exception's line {1!r} is gone from {2}; drop the exception "
+                            "(tracker {3})".format(name, ex["line"], ex["path"], ex["tracker"]))
+        elif not wrong:
+            problems.append("{0} now follows the one switch rule; drop its exception (tracker {1})".format(
+                name, ex["tracker"]))
+    for name in sorted(set(exceptions) - set(readers)):
+        problems.append("{0}: an exception for a reader this check does not run".format(name))
+    return problems
+
+
+def real_readers(root):
+    """Every real reader of a switch Board status reports, each run on the
+    raw value the way the pipeline hands it over."""
+    import subprocess
+    import yaml
+    import board_backlog_lines as bbl
+    import wc_feature_health as fh
+
+    def board_status(value):
+        answers = {bs.switch_set({key: value}, key) for key in bs.SWITCH_ENV if key != "tasks_review"}
+        if len(answers) != 1:
+            raise ValueError("Board status reads its switches differently on {0!r}".format(value))
+        return answers.pop()
+
+    with open(os.path.join(root, GUARD_ACTION), encoding="utf-8") as fh_:
+        pause = next(st for st in yaml.safe_load(fh_)["runs"]["steps"] if st.get("id") == "pause")
+
+    def guard(value):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "output")
+            open(out, "w").close()
+            env = dict(os.environ, SWITCH_VALUE=str(value or ""), SWITCH_NAME="X", GITHUB_OUTPUT=out,
+                       SCRIPTS=os.path.join(root, ".github", "scripts"))
+            subprocess.run(["bash", "-c", pause["run"]], check=True, capture_output=True, env=env)
+            with open(out, encoding="utf-8") as fh_:
+                got = fh_.read().split()
+        if got not in (["paused=true"], ["paused=false"]):
+            raise ValueError("pause step wrote {0!r}".format(got))
+        return got == ["paused=true"]
+
+    def feature_health(value):
+        entry = [{"name": "f", "workflows": [], "kill_switch": "WING_COMMANDER_BOARD_X"}]
+        got = fh.collect(entry, "own/repo", fh.parse_time("2026-11-20T00:00:00"),
+                         gh=lambda *_a, **_k: [], environ={"BOARD_X": str(value or "")})
+        ctx = got[2] if isinstance(got, tuple) else got
+        return ctx["switches"]["WING_COMMANDER_BOARD_X"] is True
+
+    def backlog(value):
+        ok, reason = bbl.selection_gate({"backlog_lines_switch": str(value or ""), "loop_paused": False,
+                                         "constitution_text": None})
+        return reason != "backlog lines switch is not true"
+
+    def backlog_paused(value):
+        ok, reason = bbl.selection_gate({"backlog_lines_switch": "true", "loop_paused": str(value or ""),
+                                         "constitution_text": None})
+        return reason == "board loop is paused"
+
+    # board-loop.yml's merge decision: the comparison is read from the
+    # workflow line and run through real jq, so a fixed line is run as fixed.
+    lines = _file_lines(root, BOARD_LOOP)
+    merge_line = next((line for line in lines if "switch_on: (" in line and "$switch_on" in line), "")
+    match = re.search(r"switch_on: (\(\$switch_on.*?\)),", merge_line)
+
+    def jq_merge(value):
+        if not match:
+            raise ValueError("no merge-decision switch_on comparison in {0}".format(BOARD_LOOP))
+        out = subprocess.run(["jq", "-n", "--arg", "switch_on", str(value or ""), match.group(1)],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        return out == "true"
+
+    return {
+        "wc_board_status._switch_on": bs._switch_on,
+        "Board status (switch_set, every reported switch)": board_status,
+        "wing-commander-watch-guard pause step": guard,
+        "wc_feature_health.collect": feature_health,
+        "board_backlog_lines.selection_gate": backlog,
+        "board_backlog_lines.selection_gate (loop paused)": backlog_paused,
+        "board-loop.yml merge decision (jq)": jq_merge,
+    }
+
+
+def reader_half():
+    """#889: every switch follows the one rule (owner decision 2026-11-27).
+    Each real reader runs on the same values and must give one_rule()'s
+    answers; the only reader allowed to disagree is the registered
+    exception, and it fails once its line changes."""
+    import ast
+    import inspect
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    check("jq is available to run board-loop.yml's merge comparison", shutil.which("jq") is not None)
+    readers = real_readers(root)
+    problems = one_rule_problems(root, readers, READER_EXCEPTIONS)
+    check("every switch reader follows the one switch rule, but the one registered exception",
+          not problems, problems)
+    check("the one exception is board-loop.yml's merge decision, tracked on #889",
+          {k: v["tracker"] for k, v in READER_EXCEPTIONS.items()} == {"board-loop.yml merge decision (jq)": "#889"},
+          READER_EXCEPTIONS)
+
+    # Shown to fail: a reader that trims, one that reads only exact "true",
+    # an exception whose line changed, an exception whose reader agrees, and
+    # a second exception.
+    trims = lambda v: str(v or "").strip().lower() == "true"  # noqa: E731
+    exact = lambda v: str(v or "") == "true"  # noqa: E731
+    check("a reader that trims fails the one rule",
+          one_rule_problems(root, dict(readers, trimmed=trims), READER_EXCEPTIONS))
+    check("a reader that reads only the exact text 'true' fails the one rule",
+          one_rule_problems(root, dict(readers, exact=exact), READER_EXCEPTIONS))
+    moved = {k: dict(v, line=v["line"].replace('== "true"', '| ascii_downcase == "true"'))
+             for k, v in READER_EXCEPTIONS.items()}
+    check("an exception whose line has changed fails", one_rule_problems(root, readers, moved))
+    fixed = dict(readers, **{"board-loop.yml merge decision (jq)": one_rule})
+    check("an exception whose reader now follows the rule fails",
+          one_rule_problems(root, fixed, READER_EXCEPTIONS))
+    check("a second exception fails",
+          one_rule_problems(root, dict(readers, exact=exact),
+                            dict(READER_EXCEPTIONS, exact=dict(tracker="#889", path=BOARD_LOOP, line="x"))))
+    check("with no exception registered, the merge decision's disagreement fails",
+          one_rule_problems(root, readers, {}))
+
+    problems = reader_sites_problems(root, READER_SITES, READER_EXCEPTIONS)
+    check("every switch's reader site still reads it by the one rule", not problems, problems)
+
+    # Code review of #1318 (pass 2): the readers that do not follow the rule
+    # yet are all registered, found from the workflows' raw relays rather
+    # than from memory.
+    with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+        switch_vars = kill_switch_vars(fh.read())
+    switch_vars |= {"WING_COMMANDER_" + v for k, v in bs.SWITCH_ENV.items() if k != "tasks_review"}
+    check("docs/reference.md's Kill switches table is read", len(switch_vars) > len(bs.SWITCH_ENV), switch_vars)
+    problems = relay_problems(root, switch_vars, PENDING_SHELL_READERS, ONE_RULE_RELAYS)
+    check("every raw relay of a switch reaches a one-rule reader or a registered pending reader",
+          not problems, problems)
+    check("an unregistered exact shell reader fails the relay check",
+          relay_problems(root, switch_vars, PENDING_SHELL_READERS[:-1], ONE_RULE_RELAYS))
+    check("a pending reader whose relay is gone fails the relay check",
+          relay_problems(root, switch_vars, PENDING_SHELL_READERS
+                         + (("board-status.yml", "WING_COMMANDER_NO_SUCH_SWITCH", "board-status.yml"),),
+                         ONE_RULE_RELAYS))
+    drifted = dict(READER_SITES, board_auto_merge=[(BOARD_LOOP, "switch_on: ($switch_on | ascii_downcase == \"true\")")])
+    check("a drifted reader site fails the tie", reader_sites_problems(root, drifted, READER_EXCEPTIONS))
+    check("an exact comparison that is not the exception's line fails the tie",
+          reader_sites_problems(root, READER_SITES, {}))
+    check("a switch with no reader site fails the tie",
+          reader_sites_problems(root, {k: v for k, v in READER_SITES.items() if k != "proof_list_paused"},
+                                READER_EXCEPTIONS))
+
+    # Everything in wc_board_status reads a switch through switch_set().
+    tree = ast.parse(inspect.getsource(bs))
+    direct = sorted({node.lineno for top in tree.body if getattr(top, "name", None) != "switch_set"
+                     for node in ast.walk(top) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Name) and node.func.id == "_switch_on"})
+    check("wc_board_status reads no switch with _switch_on but through switch_set", not direct, direct)
+
+    # The rule as Board status shows it.
+    shown = bs.render(dict(SNAP, switches=dict(SNAP["switches"], board_can_push_workflows="True")))
+    check("board can-push-workflows set to 'True' renders on, as GitHub's comparison reads it",
+          "workflow-file fixes allowed" in shown, shown)
+    padded = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], lifecycle_auto_merge="true ")))
+                            ["owner"])
+    check("a padded lifecycle auto-merge leaves the final PR with the owner, as the gate's if: reads it",
+          675 in padded, padded.get(675))
+    cased = rows_by_number(bs.classify(dict(SNAP, switches=dict(SNAP["switches"], lifecycle_auto_merge="TRUE")))
+                           ["pipeline"])
+    check("lifecycle auto-merge set to 'TRUE' hands the final PR to the review gate", 675 in cased, cased.get(675))
+
+
 def docs_half():
     """#889: docs/setup.md says where Board status reports each switch. The
     switches render() states are read from its own state() calls, so a
@@ -817,11 +1177,40 @@ def docs_half():
         check("docs/setup.md's {0} row says Board status reports it".format(var),
               'The "Board status" issue reports this switch' in rows.get(var, ""), rows.get(var, "")[-160:])
 
+    # #889 (code review of #1301): docs/reference.md names the switches
+    # Board status reports, in its board-status.yml row and its Known
+    # limits line, rather than calling them "the merge switches".
+    with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+        reference = fh.read()
+    check("docs/reference.md no longer calls Board status's switch lines the merge switches",
+          "merge switches" not in reference)
+    ref_row = next((line for line in reference.splitlines() if line.startswith("| `board-status.yml` |")), "")
+    limits = reference.split("## Known limits", 1)[-1]
+    limit = next((item for item in re.split(r"\n- ", limits) if '"Board status" issue shows' in item), "")
+    for key in keys:
+        var = "`WING_COMMANDER_{0}`".format(bs.SWITCH_ENV[key])
+        check("docs/reference.md's board-status.yml row names {0}".format(var), var in ref_row, ref_row[:160])
+        check("docs/reference.md's Known limits line names {0}".format(var), var in limit, limit[:200])
+
+    # Code review of #1318: the Kill switches section names every reader that
+    # does not follow the one switch rule yet -- the registered exception and
+    # the shell pause re-checks the #889 line "One rule for all switches"
+    # tracks -- rather than claiming a single one. Drop an entry here with
+    # its fix.
+    kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
+    kill_flat = " ".join(kill.split())
+    pending = [(ex["path"].rsplit("/", 1)[-1], "WING_COMMANDER_BOARD_AUTO_MERGE")
+               for ex in READER_EXCEPTIONS.values()] + [(reader, var) for _r, var, reader in PENDING_SHELL_READERS]
+    for path, var in pending:
+        check("docs/reference.md's Kill switches section names {0}'s reader of {1}".format(path, var),
+              "`{0}`".format(path) in kill_flat and "`{0}`".format(var) in kill_flat, kill_flat[:400])
+
 
 def main():
     render_half()
     runtime_half()
     switches_half()
+    reader_half()
     docs_half()
     proof_list_half()
     merge_evidence_half()
