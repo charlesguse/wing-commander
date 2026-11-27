@@ -1330,6 +1330,16 @@ def docs_half():
     check("a reader the not-yet list still names after its fix fails",
           pending_docs_problems(kill_flat, pending[:-1]))
 
+    # Code review of #1329 (pass 2): shared-pr-reviewer.yml's `paused` input
+    # now follows the rule (owner decision on #890 accepting the narrowed
+    # input), and the contract that names the input says which values pause.
+    with open(os.path.join(root, "specs", "127-shared-pr-reviewer", "contracts", "round-record.md"),
+              encoding="utf-8") as fh:
+        contract = " ".join(fh.read().split())
+    check("specs/127's round-record.md says the paused flag follows the one switch rule",
+          re.search(r"paused flag \([^)]*one switch rule", contract) is not None,
+          contract[contract.find("paused flag"):][:200])
+
 
 def main():
     render_half()
