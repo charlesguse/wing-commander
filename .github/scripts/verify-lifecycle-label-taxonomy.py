@@ -44,6 +44,12 @@ WHAT IT CHECKS
    a missing file means zero waivers; a malformed file or an entry missing
    a required field is a hard failure naming the malformed entry, never a
    silent skip.
+4. The STALLED-CLEAR scenarios (#889, found by the code review of #1266):
+   clarify.yml's and intake.yml's `Flip stage label for clarification`
+   steps are executed under each outcome with a stub `gh`; one that lands
+   the lifecycle back on stage:clarify/stage:spec must remove
+   `stage:stalled`, and one that does not recover (blocked, no outcome)
+   must leave it.
 
 VERDICT
 -------
@@ -58,6 +64,9 @@ FAIL   a waiver's `pattern` names a label `docs/setup.md` no longer
        documented mentions -- stale, either direction.
 FAIL   the registry file is malformed, or an entry is missing a required
        field -- names the malformed entry.
+FAIL   a clarification flip clears `stage:stalled` on the wrong outcomes,
+       or fails to clear it on a recovering one -- names the workflow and
+       the scenario.
 
 Usage:
     python3 .github/scripts/verify-lifecycle-label-taxonomy.py
@@ -83,6 +92,7 @@ DOC_PATH = "docs/setup.md"
 WORKFLOWS_DIR = ".github/workflows"
 ACTIONS_DIR = ".github/actions"
 WAIVERS_PATH = ".github/scripts/lifecycle-label-taxonomy-waivers.json"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 STAGE_TOKEN_RE = re.compile(r'^stage:[a-z-]+$')
 DOC_MENTION_RE = re.compile(r'`(stage:[a-z-]+)`')
@@ -408,8 +418,127 @@ def evaluate(root="."):
     return failures
 
 
+# --------------------------------------------------------------------------
+# Stalled-clear scenarios (Maintenance backlog #889, found by the code
+# review of #1266). A stalled clarify that the requester's reply restarts
+# must lose `stage:stalled` where the clarification flip lands it back on
+# stage:clarify / stage:spec -- otherwise the lifecycle reads stalled on the
+# board through spec review and plan after clarify has recovered. The flip
+# step's `run:` is EXECUTED under each outcome with a stub `gh` that logs
+# its argv, so the check sees what the shell does, not what it says.
+# --------------------------------------------------------------------------
+FLIP_STEP = "Flip stage label for clarification"
+
+# (workflow, scenario name, env, expect stage:stalled removed)
+STALLED_SCENARIOS = (
+    ("clarify.yml", "follow-up questionnaire posted",
+     {"OUTCOME": "needs-clarification", "BLOCKED": "false"}, True),
+    ("clarify.yml", "ready, unblocked",
+     {"OUTCOME": "ready", "BLOCKED": "false"}, True),
+    ("clarify.yml", "ready but blocked by a marker",
+     {"OUTCOME": "ready", "BLOCKED": "true"}, False),
+    ("clarify.yml", "no outcome",
+     {"OUTCOME": "none", "BLOCKED": ""}, False),
+    ("intake.yml", "questionnaire needed",
+     {"NEEDED": "true", "SPECIFIED": "true", "BLOCKED": "false",
+      "SPEC_DIR": "specs/001-x"}, True),
+    ("intake.yml", "specified, no open questions",
+     {"NEEDED": "false", "SPECIFIED": "true", "BLOCKED": "false",
+      "SPEC_DIR": "specs/001-x"}, True),
+    ("intake.yml", "specified but blocked by a marker",
+     {"NEEDED": "false", "SPECIFIED": "true", "BLOCKED": "true",
+      "SPEC_DIR": "specs/001-x"}, False),
+    ("intake.yml", "nothing specified",
+     {"NEEDED": "false", "SPECIFIED": "false", "BLOCKED": "false",
+      "SPEC_DIR": ""}, False),
+)
+
+GH_STUB = """#!/bin/sh
+for a in "$@"; do printf '%s\\037' "$a"; done >> "$GH_LOG"
+printf '\\n' >> "$GH_LOG"
+exit 0
+"""
+
+
+def flip_step_runs(root="."):
+    """-> {workflow basename: run text of its FLIP_STEP}; a workflow whose
+    step is missing maps to None."""
+    out = {}
+    for name in sorted({sc[0] for sc in STALLED_SCENARIOS}):
+        path = os.path.join(root, WORKFLOWS_DIR, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise GateParseError(f"{path}: could not be read ({exc})") from exc
+        found = None
+        for steps in _step_lists(doc):
+            for step in steps:
+                if (step or {}).get("name") == FLIP_STEP:
+                    found = str(step.get("run") or "")
+        out[name] = found
+    return out
+
+
+def _gh_calls(run_text, env_extra):
+    import shutil
+    import subprocess
+    tmp = tempfile.mkdtemp(prefix="verify_gate105_stalled_")
+    try:
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        stub = os.path.join(bindir, "gh")
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write(GH_STUB)
+        os.chmod(stub, 0o755)
+        log = os.path.join(tmp, "gh.log")
+        open(log, "w").close()
+        env = {"PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+               "GH_LOG": log, "ISSUE": "7",
+               "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary.md")}
+        env.update(env_extra)
+        proc = subprocess.run(["bash", "-e", "-c", run_text], env=env,
+                              capture_output=True, text=True, timeout=60)
+        with open(log, encoding="utf-8") as fh:
+            calls = [tuple(x for x in line.rstrip("\n").split("\x1f") if x)
+                     for line in fh if line.strip()]
+        return proc.returncode, calls, proc.stderr
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def stalled_clear_failures(runs):
+    """runs: {workflow basename: flip-step run text or None} -> failures."""
+    failures = []
+    for name, scenario, env, expect in STALLED_SCENARIOS:
+        run_text = runs.get(name)
+        if run_text is None:
+            failures.append(f"{name}: no `{FLIP_STEP}` step found -- the "
+                            f"stalled-clear scenarios have nothing to run.")
+            continue
+        rc, calls, err = _gh_calls(run_text, env)
+        if rc != 0:
+            failures.append(f"{name} `{FLIP_STEP}` ({scenario}): the step "
+                            f"exited {rc} under a stub gh ({err.strip()!r}).")
+            continue
+        removed = any(c[:2] == ("issue", "edit") and "--remove-label" in c
+                      and "stage:stalled" in c for c in calls)
+        if removed != expect:
+            failures.append(
+                f"{name} `{FLIP_STEP}` ({scenario}): stage:stalled was "
+                f"{'' if removed else 'not '}removed, expected it "
+                f"{'' if expect else 'not '}to be. A clarification flip "
+                f"that lands the lifecycle back on stage:clarify/stage:spec "
+                f"clears stage:stalled; one that does not recover leaves it.")
+    return failures
+
+
 def main():
     failures = evaluate()
+    try:
+        failures.extend(stalled_clear_failures(flip_step_runs()))
+    except GateParseError as exc:
+        failures.append(str(exc))
     for f in failures:
         print(f"::error::Gate 105: {f}")
     print(f"Gate 105: lifecycle label taxonomy check; {len(failures)} failure(s).")
@@ -656,13 +785,57 @@ def self_test():
     check("(9) a with.prompt-only writer counts as a writer",
           build_9, expect_fail=False)
 
+    # 10-13. Stalled-clear scenarios against the live flip steps and
+    #    mutations of them: dropping either workflow's stage:stalled
+    #    removal, or clearing it on an outcome that did not recover,
+    #    must fail.
+    def stalled_check(label, mutate, expect_fail, name_fragment=None):
+        runs = flip_step_runs(_REPO_ROOT)
+        runs = mutate(dict(runs))
+        fs = stalled_clear_failures(runs)
+        fired = len(fs) > 0
+        if fired != expect_fail:
+            failed.append(f"{label}: expected "
+                          f"{'FAIL' if expect_fail else 'PASS'}, got {fs!r}")
+            return
+        if expect_fail and name_fragment and not any(name_fragment in f for f in fs):
+            failed.append(f"{label}: failed, but not naming {name_fragment!r} ({fs!r})")
+            return
+        print(f"ok    {label}")
+
+    def drop_stalled(name):
+        def m(runs):
+            runs[name] = "\n".join(
+                l for l in runs[name].splitlines() if "stage:stalled" not in l)
+            return runs
+        return m
+
+    def stalled_always(name):
+        def m(runs):
+            runs[name] = ('gh issue edit "$ISSUE" --remove-label "stage:stalled"\n'
+                          + runs[name])
+            return runs
+        return m
+
+    stalled_check("(10) the live clarify/intake flip steps clear stage:stalled "
+                  "exactly when they recover", lambda r: r, expect_fail=False)
+    stalled_check("(11) clarify.yml's flip without the stage:stalled removal fails",
+                  drop_stalled("clarify.yml"), expect_fail=True,
+                  name_fragment="clarify.yml")
+    stalled_check("(12) intake.yml's flip without the stage:stalled removal fails",
+                  drop_stalled("intake.yml"), expect_fail=True,
+                  name_fragment="intake.yml")
+    stalled_check("(13) clearing stage:stalled on a blocked outcome fails",
+                  stalled_always("clarify.yml"), expect_fail=True,
+                  name_fragment="blocked")
+
     if failed:
         print(f"::error::Gate 105 self-test: {len(failed)} check(s) behaved "
               f"wrongly: {'; '.join(failed)}. Gate 105's detection logic does "
               f"not do what its name claims, so a green Gate 105 on the real "
               f"fleet means nothing.")
         return 1
-    print("Gate 105 self-test: all 9 checks behaved as expected.")
+    print("Gate 105 self-test: all 13 checks behaved as expected.")
     return 0
 
 

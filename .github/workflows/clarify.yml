@@ -793,7 +793,9 @@ jobs:
 
             Steps:
             1. Read ${{ steps.ctx.outputs.spec-dir }}/spec.md and find the open
-               [NEEDS CLARIFICATION] markers.
+               [NEEDS CLARIFICATION] markers. A marker quoted inside inline code
+               or a fenced code block is not open: it is text the spec quotes,
+               so never answer it, replace it or report it as a question.
             2. Read the answer file. Map answers to questions (they may reference
                Q1/Q2/Q3, option letters, or free text). If the reply does not
                actually answer any open question, comment on issue
@@ -1197,7 +1199,10 @@ jobs:
       # research.md D3): a follow-up questionnaire just posted means the
       # issue is waiting on the requester again; a ready, unblocked outcome
       # means the spec is back to awaiting review. Deterministic, reading
-      # only this step's own outputs above.
+      # only this step's own outputs above. Either flip also clears
+      # stage:stalled: a stall this run recovered from must not keep the
+      # lifecycle reading stalled on the board (Gate 105's stalled-clear
+      # scenarios).
       - name: Flip stage label for clarification
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
@@ -1213,6 +1218,7 @@ jobs:
                 echo "::warning::wing-commander clarify: could not add stage:clarify to issue #$ISSUE (the follow-up questionnaire was still posted)." >> "$GITHUB_STEP_SUMMARY"
               fi
               gh issue edit "$ISSUE" --remove-label "stage:spec" 2>/dev/null || true
+              gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
               ;;
             ready)
               if [ "$BLOCKED" != "true" ]; then
@@ -1221,6 +1227,7 @@ jobs:
                   echo "::warning::wing-commander clarify: could not add stage:spec to issue #$ISSUE (the spec PR was still announced ready)." >> "$GITHUB_STEP_SUMMARY"
                 fi
                 gh issue edit "$ISSUE" --remove-label "stage:clarify" 2>/dev/null || true
+                gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
               fi
               ;;
             none|*)
