@@ -61,6 +61,11 @@ run on `True` (not JSON) where the one switch rule (owner decision on the
 Roadmap issue: `true` in any case, never trimmed) reads it as on; GitHub's
 `==` ignores case and trims nothing, so the comparison is that rule.
 
+Also checks (#889, the docs half of the #1331 line): docs/setup.md's
+`WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED` row says the variables are
+read by the one switch rule, and names each stage's default, in both its
+Default column and its prose, as WRAPPER_FILING_ENABLED sets it.
+
 Also checks (#420, found by the spec 056 quickstart §3 drill): every agent
 prompt that carries the paragraph also names every REQUIRED key of
 .github/schemas/stage-finding.schema.json, quoted exactly as the schema
@@ -472,12 +477,24 @@ def _join_stages(stages):
     return stages[0] if len(stages) == 1 else ", ".join(stages[:-1]) + " and " + stages[-1]
 
 
-def expected_setup_defaults_phrase():
+def _stages_by_default():
     on, off = [], []
     for var_name, default_literal in WRAPPER_FILING_ENABLED.values():
         stage = var_name[len("WING_COMMANDER_"):-len("_FINDINGS_FILING_ENABLED")].lower()
         (on if default_literal == "true" else off).append(stage)
+    return on, off
+
+
+def expected_setup_defaults_phrase():
+    on, off = _stages_by_default()
     return f"off for {_join_stages(off)} and on for {_join_stages(on)}"
+
+
+def expected_setup_default_cell():
+    # The row names the defaults twice: in its Default column and in the
+    # Meaning prose. Both are checked, so neither can go stale alone.
+    on, off = _stages_by_default()
+    return f"`true` for {_join_stages(on)}; `false` for {_join_stages(off)}"
 
 
 def check_setup_doc(root="."):
@@ -492,6 +509,11 @@ def check_setup_doc(root="."):
         fail(f"{SETUP_DOC} has {len(rows)} rows starting {SETUP_ROW_PREFIX!r}; expected exactly one.")
         return failures[before:]
     row = rows[0]
+    cells = [c.strip() for c in row.split("|")]
+    default_cell = cells[2] if len(cells) > 2 else ""
+    if default_cell != expected_setup_default_cell():
+        fail(f"{SETUP_DOC}'s findings-filing row has Default {default_cell!r}; the "
+            f"wrappers set {expected_setup_default_cell()!r}.")
     for phrase in SETUP_RULE_PHRASES + (expected_setup_defaults_phrase(),):
         if phrase not in row:
             fail(f"{SETUP_DOC}'s findings-filing row does not say {phrase!r} — it must "
@@ -920,7 +942,8 @@ def _setup_doc_case(case, row, want_hit):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-GOOD_SETUP_ROW = (SETUP_ROW_PREFIX + " x | Each is read by the one switch rule: on when the value is "
+GOOD_SETUP_ROW = (SETUP_ROW_PREFIX + " `true` for implement and finalize; `false` for intake, "
+    "clarify, plan and tasks | Each is read by the one switch rule: on when the value is "
     "`true` in any case, with nothing trimmed; unset takes the stage's default, "
     "off for intake, clarify, plan and tasks and on for implement and finalize |")
 
@@ -928,11 +951,15 @@ GOOD_SETUP_ROW = (SETUP_ROW_PREFIX + " x | Each is read by the one switch rule: 
 def selftest_setup_doc():
     _setup_doc_case("a setup.md row stating the rule and the defaults passes", GOOD_SETUP_ROW, False)
     _setup_doc_case("a setup.md row without the one switch rule note fails",
-        SETUP_ROW_PREFIX + " x | Whether that stage files defects; off for intake, clarify, "
+        SETUP_ROW_PREFIX + " `true` for implement and finalize; `false` for intake, clarify, plan and "
+        "tasks | Whether that stage files defects; off for intake, clarify, "
         "plan and tasks and on for implement and finalize |", True)
     _setup_doc_case("a setup.md row naming the wrong defaults fails",
         GOOD_SETUP_ROW.replace("off for intake, clarify, plan and tasks and on for implement and finalize",
                                "off for intake, clarify and plan and on for tasks, implement and finalize"), True)
+    _setup_doc_case("a setup.md row whose Default column names the wrong defaults fails",
+        GOOD_SETUP_ROW.replace("`true` for implement and finalize; `false` for intake, clarify, plan and tasks",
+                               "`true` for tasks, implement and finalize; `false` for intake, clarify and plan"), True)
     _setup_doc_case("a setup.md with no findings-filing row fails", "| `OTHER` | x | y |", True)
     found = check_setup_doc(".")
     if found:
