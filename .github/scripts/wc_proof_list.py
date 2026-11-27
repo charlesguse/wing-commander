@@ -378,6 +378,28 @@ CALL_TIMEOUT = 120
 _deadline = [None]  # monotonic seconds, set by start_budget()
 
 
+# Progress lines (#889): a build logs each phase, and every PROGRESS_EVERY
+# merges read, with the time since it started and the `gh` and `git` calls
+# made so far, so a slow build's log says where the time went. Silent unless
+# main() turns it on; they go to stderr, so stdout keeps its one line.
+PROGRESS_EVERY = 10
+_progress = {"stream": None, "started": 0.0, "gh": 0, "git": 0}
+
+
+def start_progress(stream):
+    import time
+    _progress.update(stream=stream, started=time.monotonic(), gh=0, git=0)
+
+
+def progress(what):
+    import time
+    if _progress["stream"] is None:
+        return
+    print("wc_proof_list: {0} ({1:.1f} s; {2} gh and {3} git calls so far)".format(
+        what, time.monotonic() - _progress["started"], _progress["gh"], _progress["git"]),
+        file=_progress["stream"], flush=True)
+
+
 def start_budget(seconds=BUILD_BUDGET_SECONDS):
     import time
     _deadline[0] = None if seconds is None else time.monotonic() + seconds
@@ -401,6 +423,9 @@ def _subprocess(argv, **kwargs):
     """subprocess.run under call_timeout(); a call that outlives it is a failed read."""
     import subprocess
     timeout = call_timeout(argv)
+    tool = os.path.basename(argv[0]) if argv else ""
+    if tool in ("gh", "git"):
+        _progress[tool] += 1
     try:
         return subprocess.run(argv, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired:
@@ -602,9 +627,10 @@ class Collector:
         from board_backlog_lines import pr_issue, pr_line
         from board_route_backstop import diff_name_list
         out = []
-        for sha, when in first_parent_commits(self.since):
-            if when > self.end:
-                continue
+        commits = [(sha, when) for sha, when in first_parent_commits(self.since) if when <= self.end]
+        for sha, when in commits:
+            if out and len(out) % PROGRESS_EVERY == 0:
+                progress("entries: {0} of {1} merges read".format(len(out), len(commits)))
             pulls = api("repos/{0}/commits/{1}/pulls".format(self.repository, sha), paginate=True)
             pr = next((p for p in pulls if p.get("merge_commit_sha") == sha), None)
             if pr is None:
@@ -613,6 +639,9 @@ class Collector:
                 merged = [p for p in pulls if p.get("merged_at")]
                 pr = merged[0] if len(merged) == 1 else None
             changed = diff_name_list(sha + "^1", sha)
+            # diff_name_list runs its own git, outside _subprocess: count it
+            # here so the progress lines' git count is every git call.
+            _progress["git"] += 1
             needs_run, reason = actions_only(changed)
             entry = {"sha": sha, "merged_at": utc_text(when),
                      "pr": pr["number"] if pr else None, "named_issues": [],
@@ -748,40 +777,43 @@ class Collector:
         return out
 
     # -- runs --------------------------------------------------------------
+    def completed_runs(self, list_path, label):
+        """Every completed run in `list_path` (a run-list endpoint) created
+        since the aged-out day began: one paged read, or one per day when the
+        window holds more than RUN_CAP, since the API lists no further."""
+        query = "{0}?status=completed&per_page=100&created=%3E%3D{1}".format(list_path, utc_text(self.since))
+        if run_total(query) <= RUN_CAP:
+            return api(query, paginate=True)
+        runs, day = [], self.since
+        while day < self.end:
+            nxt = day + datetime.timedelta(days=1)
+            # The range is inclusive at both ends: stop one second early.
+            span = "created={0}..{1}".format(
+                utc_text(day),
+                utc_text(nxt - datetime.timedelta(seconds=1)))
+            q = "{0}?status=completed&per_page=100&{1}".format(list_path, span)
+            if run_total(q) > RUN_CAP:
+                raise ReadError("{0}: more than {1} runs in one day".format(label, RUN_CAP))
+            runs += api(q, paginate=True)
+            day = nxt
+        return runs
+
     def workflow_runs(self, path):
         if path in self.run_lists:
             return self.run_lists[path]
         base = "repos/{0}/actions".format(self.repository)
-        created = "created=%3E%3D{0}".format(utc_text(self.since))
         name = path.rsplit("/", 1)[-1]
-        query = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, created)
         try:
-            total = run_total(query)
-            if total <= RUN_CAP:
-                runs = api(query, paginate=True)
-            else:
-                runs = []
-                day = self.since
-                while day < self.end:
-                    nxt = day + datetime.timedelta(days=1)
-                    # The range is inclusive at both ends: stop one second early.
-                    span = "created={0}..{1}".format(
-                        utc_text(day),
-                        utc_text(nxt - datetime.timedelta(seconds=1)))
-                    q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
-                    if run_total(q) > RUN_CAP:
-                        raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
-                    runs += api(q, paginate=True)
-                    day = nxt
+            runs = self.completed_runs("{0}/workflows/{1}/runs".format(base, name), name)
         except NotFound:
             # The file is gone from the default branch: read the repository's
-            # runs and keep the ones of that path (a later-deleted workflow
-            # is still credited, FR-013).
-            fallback = "{0}/runs?status=completed&per_page=100&{1}".format(base, created)
-            if run_total(fallback) > RUN_CAP:
-                raise ReadError("{0}: the repository has more than {1} runs in the window; "
-                                "a deleted workflow's runs cannot be read completely".format(name, RUN_CAP))
-            runs = [r for r in api(fallback, True) if (r.get("path") or "") == path]
+            # runs, sliced by day the same way (the whole repository passes
+            # the cap in any window), and keep the ones of that path. A run's
+            # `path` can carry an `@refs/...` suffix (#889). A later-deleted
+            # workflow is still credited (FR-013).
+            runs = [r for r in self.completed_runs(
+                        "{0}/runs".format(base), "{0} (deleted; the repository's runs)".format(name))
+                    if (r.get("path") or "").split("@")[0] == path]
         self.run_lists[path] = runs
         return runs
 
@@ -814,6 +846,7 @@ class Collector:
         for path in paths:
             relevant = [e for e in entries if any(w["path"] == path for w in e.get("reaching") or ())]
             out[path] = [self.run_record(r, relevant) for r in self.workflow_runs(path)]
+            progress("runs: {0} runs of {1}".format(len(out[path]), path))
         return out
 
     def named_runs(self, comments_by_sha, entries):
@@ -842,13 +875,19 @@ class Collector:
 
 def collect(repository, built_at, window=window_for):
     """Every input of the pure half, read from git and the API."""
-    check_rate_limit()
+    progress("start: {0} API requests remain".format(check_rate_limit()))
     col = Collector(repository, built_at, window)
     entries = col.entries()
+    progress("entries: {0} merges read, {1} need a run".format(
+        len(entries), sum(1 for e in entries if e["needs_run"])))
     col.bound_threads([e for e in entries if e["needs_run"]])
     comments_by_sha = {e["sha"]: col.comments_for(e) for e in entries if e["needs_run"]}
+    progress("comments: {0} threads read".format(len(col.threads)))
     runs = col.runs(entries)
+    progress("runs: {0} runs of {1} reaching workflows read".format(
+        sum(len(v) for v in runs.values()), len(runs)))
     named = col.named_runs(comments_by_sha, entries)
+    progress("named runs: {0} read".format(len(named)))
     return {"repository": repository, "built_at": utc_text(col.built_at),
             "head_sha": git("rev-parse", "HEAD").strip(), "entries": entries, "runs": runs,
             "comments": comments_by_sha, "named_runs": named}
@@ -989,6 +1028,7 @@ def main(argv=None):
             return 0
         if not args.repository:
             parser.error("--repository (or GITHUB_REPOSITORY) is required")
+        start_progress(sys.stderr)
         if args.cmd == "build":
             start_budget()
             now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
@@ -1009,6 +1049,8 @@ def main(argv=None):
         why = " ".join(err.split()) if isinstance(err, str) else ""
         print("::error::wc_proof_list: {0}{1}".format(exc, ": " + why if why else ""))
         return 1
+    finally:
+        _progress["stream"] = None
 
 
 if __name__ == "__main__":
