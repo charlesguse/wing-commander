@@ -27,8 +27,9 @@
 # wing-commander-lifecycle-gate and wing-commander-board-stop-check, #1210)
 # wraps the `gh issue view` read in `timeout "$read_timeout" ...` so a hung
 # read becomes a retryable 124 rather than a stalled stage. Gate 23's drift
-# scan reads run: blocks only, not _shared/*.sh, so nothing there would
-# notice this line going stale. That action runs INSIDE the adopter's
+# scan reads _shared/*.sh too since #889, but skips text inside $(...),
+# where this call sits, so it would not notice this line going stale on
+# that call's account. That action runs INSIDE the adopter's
 # container (every gated stage's job carries container: image:), so the
 # image has to provide it. It was previously assumed present under Gate
 # 23's ALWAYS_AVAILABLE coreutils set, which is exactly how a hard
