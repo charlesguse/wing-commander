@@ -47,6 +47,20 @@ suite having judged the head that is handed off.
   hand-off; its verdict goes to finalize as information and does not block the
   hand-off (FR-014).
 
+### Session 2026-11-27
+
+- Q: Which of spec 117's hand-offs to finalize get the informational
+  post-agent suite run: blocker hand-offs only, or cap-reached hand-offs too?
+  → A: Every hand-off spec 117 marks `handoff=true` — the named-blocker
+  hand-off and the iteration-cap hand-off alike, matching spec 117's own
+  definition (FR-014).
+- Q: On a stall hand-off, does finalize's dispatch wait (bounded by the suite
+  budget) for the informational verdict, and where must finalize show it?
+  → A: Finalize's dispatch waits for the post-agent job, at most its suite
+  budget; the verdict's outcome never blocks the hand-off, and finalize shows
+  it in the final PR body. The verdict is delivered without widening the
+  finalize wrapper's fixed dispatch signature (FR-014, SC-007).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A converging cycle is judged by the full suite before hand-off (Priority: P1)
@@ -88,11 +102,12 @@ convergence and the hand-off to finalize.
    whose post-agent suite cannot run because a prerequisite or the pipeline
    checkout is missing, **When** convergence is decided, **Then** the cycle is
    recorded not converged and the reason names the missing prerequisite.
-6. **Given** a cycle that stalls with only human-only work left (spec 117's
-   hand-off), **When** the hand-off to finalize happens, **Then** the
-   post-agent suite runs on the handed-off head and its verdict reaches
-   finalize as information, and a red or missing verdict does not stop the
-   hand-off.
+6. **Given** a cycle that hands off to finalize under spec 117 with
+   `handoff=true` (a named blocker or the iteration cap), **When** the
+   hand-off to finalize happens, **Then** the post-agent suite runs on the
+   handed-off head, finalize's dispatch waits for it at most the suite
+   budget, its verdict is shown in the final PR body, and a red, missing or
+   late verdict does not stop the hand-off.
 
 ---
 
@@ -168,12 +183,14 @@ and quote the first failing gate.
   the reason names the missing prerequisite; it does not degrade to a skip the
   way the cycle-start job does. A repository with no local gate suite still
   converges on tasks alone (owner answer on #1180, 2026-11-26, Q1).
-- The cycle hands off early to finalize because it stalled with only
-  human-only work left (spec 117's handoff), rather than converging: the
-  post-agent full suite also runs on the head being handed off, and its
-  verdict is passed to finalize as information. It does not block the
-  hand-off — a red, absent or unrunnable verdict is reported, not used to hold
-  the cycle (owner answer on #1180, 2026-11-26, Q2).
+- The cycle hands off to finalize under spec 117 with `handoff=true` (a
+  named blocker or the iteration cap), rather than converging: the post-agent
+  full suite also runs on the head being handed off, finalize's dispatch
+  waits for it at most the suite budget, and its verdict is passed to
+  finalize as information and shown in the final PR body. It does not block
+  the hand-off — a red, absent, late or unrunnable verdict is reported, not
+  used to hold the cycle (owner answers on #1180, 2026-11-26 Q2 and
+  2026-11-27).
 
 ## Requirements *(mandatory)*
 
@@ -229,13 +246,18 @@ and quote the first failing gate.
   missing prerequisite. It MUST NOT degrade to a converged cycle with a
   "suite skipped" note. A repository with no local gate suite MUST still
   converge on tasks alone, with no post-agent suite run.
-- **FR-014**: When a cycle hands off early to finalize under spec 117's stall
-  hand-off, the post-agent full suite MUST also run on the head being handed
+- **FR-014**: When a cycle hands off to finalize under spec 117 with
+  `handoff=true` — the named-blocker hand-off and the iteration-cap hand-off
+  alike — the post-agent full suite MUST also run on the head being handed
   off, in the same credential-free context as FR-002, and its verdict (pass or
   fail, first failing gate, head judged) MUST be passed to finalize as
-  information. The verdict MUST NOT block or delay the hand-off: a red,
-  absent, unreadable or unrunnable verdict is reported to finalize as such,
-  and the hand-off proceeds as it does today.
+  information. Finalize's dispatch MUST wait for the post-agent job, for at
+  most the suite budget of FR-007. The verdict's outcome MUST NOT block the
+  hand-off: a red, absent, unreadable, unrunnable or late verdict is reported
+  to finalize as such, and the hand-off proceeds as it does today. Finalize
+  MUST show the verdict (or the report that none was produced) in the final
+  PR body. The verdict MUST reach finalize without widening the finalize
+  wrapper's fixed dispatch signature.
 
 ### Key Entities
 
@@ -244,9 +266,10 @@ and quote the first failing gate.
 - **Converging cycle**: a completed, non-truncated implement attempt whose
   pushed head has zero unchecked tasks; the only kind of cycle whose
   convergence the post-agent verdict decides.
-- **Stall hand-off**: spec 117's early hand-off to finalize when only
-  human-only work is left; the post-agent suite also judges its head, but the
-  verdict is information for finalize, not a gate on the hand-off.
+- **Stall hand-off**: a spec 117 hand-off to finalize with `handoff=true`
+  (a named blocker or the iteration cap); the post-agent suite also judges
+  its head, but the verdict is information for finalize, shown in the final
+  PR body, not a gate on the hand-off.
 
 ## Success Criteria *(mandatory)*
 
@@ -266,9 +289,10 @@ and quote the first failing gate.
   except a spec 117 stall hand-off to finalize, which incurs exactly one.
 - **SC-006**: In a repository with the local gate suite, 0% of cycles whose
   post-agent suite could not run are recorded converged.
-- **SC-007**: 100% of spec 117 stall hand-offs to finalize carry a post-agent
-  verdict (or a report that none could be produced) to finalize, and none is
-  delayed or blocked by it.
+- **SC-007**: 100% of spec 117 `handoff=true` hand-offs to finalize carry a
+  post-agent verdict (or a report that none could be produced) to finalize
+  and show it in the final PR body; none is blocked by the verdict's outcome,
+  and none waits longer than the suite budget for it.
 
 ## Assumptions
 
@@ -289,6 +313,3 @@ and quote the first failing gate.
   the owner with the final PR.
 - An earlier comment on #1180 mentions a `--changed` filter; the later owner
   decision (closing #1281) supersedes it, and the existing name filter is used.
-
-[NEEDS CLARIFICATION: Which of spec 117's hand-offs to finalize get the informational post-agent suite run: blocker hand-offs only, or cap-reached hand-offs too?]
-[NEEDS CLARIFICATION: On a stall hand-off, does finalize's dispatch wait (bounded by the suite budget) for the informational verdict, and where must finalize show it?]

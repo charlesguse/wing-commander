@@ -36,6 +36,12 @@
   a gate suite (FR-013), and spec 117's stall hand-off also runs the
   post-agent suite, with its verdict passed to finalize as information only
   (FR-014).
+- The two markers raised by spec-pr-review round 1 on #1293 were resolved by
+  the owner's answer on #1180 (2026-11-27): every spec 117 `handoff=true`
+  hand-off (blocker or iteration cap) gets the informational run, and
+  finalize's dispatch waits for it at most the suite budget, never blocked by
+  its outcome, showing it in the final PR body without widening the finalize
+  wrapper's signature (FR-014, SC-007).
 - The spec names the gate runner, the credential boundary and the pipeline's
   own stages because this repository's "users" are pipeline operators; those
   names are the domain, not an implementation choice.
