@@ -14,6 +14,9 @@ cd "$SP"
 WC_TEST_WORK="$(mktemp -d)"
 export WC_TEST_WORK
 trap 'rm -rf "$WC_TEST_WORK"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$WC_TEST_WORK/wc-tmp"; mkdir -p "$TMPDIR"
 
 SUITES=(t1_new_target.sh t2_idempotent.sh t3_converge_after_install.sh t4_refuse_self.sh t5_refuse_foreign.sh t6_no_delete.sh t7_readiness_workflow.sh t8_container_image_pin.sh t9_maintainer_feedback.sh)
 if [ "$#" -gt 0 ]; then

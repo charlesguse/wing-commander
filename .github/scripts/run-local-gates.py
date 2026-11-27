@@ -48,6 +48,24 @@ command_for avoids for the scripts. A heredoc step that cannot be run
 verbatim (an env: block, a shell:, a working-directory:, a `${{ }}`
 expression) is not silently dropped: verify-gate-wiring.py fails on it.
 
+TEMP FILES
+----------
+Every gate this runner starts runs with TMPDIR (and TEMP/TMP, which
+Windows Python reads) pointed at one `wc-local-gates-*` directory that
+the runner removes when it finishes, passes or fails or is interrupted
+with Ctrl-C. The inline gates' scripts are written under it too. A gate
+or a harness step that makes a temp file and never removes it (an
+extracted step's `mktemp`, a fixture's `mkdtemp`) then costs one run's
+worth of disk, not one entry in the OS temp dir per run: a day of local
+runs once left about 555,000 entries in /tmp and filled the disk (#889).
+Gate 140 (verify-shell-harness-parity.py) runs this script under an
+empty TMPDIR and fails on anything left behind. The timing cache below
+is resolved before the redirect, so it still lives in the OS temp dir;
+so does wc_actionlint.py's pinned actionlint/shellcheck download cache,
+which reads the OS temp dir from WC_OS_TMPDIR, set here before the
+redirect -- otherwise every local run would download both again, and a
+run offline would fail on a cache it used to have.
+
 WHAT IT DOES NOT RUN
 --------------------
 Checks wired to other workflows — verify-watchdog-run.sh belongs to the
@@ -153,6 +171,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -358,10 +377,30 @@ def _run_one(script, args, bash, label):
     return label, proc.returncode, elapsed, out
 
 
+def _contain_temp():
+    """Make one scratch directory, point this process's and every child's
+    temp dir at it, and return it -- see TEMP FILES in the module
+    docstring. The caller removes it."""
+    os.environ.setdefault("WC_OS_TMPDIR", tempfile.gettempdir())
+    root = tempfile.mkdtemp(prefix="wc-local-gates-")
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[name] = root
+    tempfile.tempdir = root
+    return root
+
+
 def main(argv):
     use_utf8_stdout()
     if not os.path.isdir(".github/workflows"):
         sys.exit("run this from the repository root.")
+    scratch = _contain_temp()
+    try:
+        return _main(argv)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _main(argv):
     ensure_jq()
     bash = resolve_bash()
 

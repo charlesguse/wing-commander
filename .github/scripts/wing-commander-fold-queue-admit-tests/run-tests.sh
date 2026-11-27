@@ -73,6 +73,9 @@ mkdir -p "$STUBDIR"
 git init --quiet --bare "$REMOTE"
 
 trap 'rm -f "$SCRIPT"; rm -rf "$WORK"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$WORK/wc-tmp"; mkdir -p "$TMPDIR"
 
 # GH_STUB_STATUS selects the fake `gh api .../runs/<id>`'s reported status
 # for the reclaim-stale path's independent liveness check.

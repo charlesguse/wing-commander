@@ -30,6 +30,9 @@ fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$work/wc-tmp"; mkdir -p "$TMPDIR"
 
 python3 - "$work" <<'PY'
 import os
@@ -74,6 +77,94 @@ PY
 py_rc=$?
 if [ "$py_rc" -ne 0 ]; then
   reason "the shipped 'Determine issue-filing eligibility' step (executed directly, not a copy) failed one or more class fixtures — see ::error:: above"
+fi
+
+# ── The class vocabulary fails closed (#889, found by the code review of
+#    #1181): EXECUTE the shipped `Resolve finding-class vocabulary` step
+#    with a `gh` that fails and with one that finds no label. Both must
+#    compile `class` into an enum of exactly the classes the eligibility
+#    step and the evidence-validity gate name, plus `__new__`, never into
+#    free text, where a synonym of an issue-exempt class would be filed as
+#    a defect. A third run finds only an unrelated label (the registry a
+#    fresh repo has after its first `Register new finding class`): the
+#    enum must still offer exactly the eligibility step's exempt classes.
+python3 - "$work" <<'PY'
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, ".github/scripts")
+from wc_shell_harness import ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout  # noqa: E402
+
+use_utf8_stdout()
+bash = resolve_bash()
+ensure_jq()
+work = sys.argv[1]
+WF = ".github/workflows/watchdog.yml"
+vocab = find_step(WF, "Resolve finding-class vocabulary")["run"]
+if "${{" in vocab:
+    sys.exit("::error::verify-narrative-drift-routing: 'Resolve finding-class "
+             "vocabulary' now contains an unresolved ${{ }} expression this "
+             "harness does not substitute.")
+
+
+def arms(step_name):
+    """Every class literal a `case "$FINDING_CLASS"` arm of the step names."""
+    text = find_step(WF, step_name)["run"]
+    m = re.search(r'case "\$FINDING_CLASS" in\n(.*?)\n\s*esac', text, re.S)
+    if not m:
+        sys.exit(f"::error::verify-narrative-drift-routing: no case arm list in '{step_name}'")
+    found = set()
+    for pat in re.findall(r"^\s*([a-z0-9|-]+)\)", m.group(1), re.M):
+        found.update(pat.split("|"))
+    return found
+
+
+exempt = arms("Determine issue-filing eligibility")
+named = exempt | arms("Evidence validity gate")
+if not {"narrative-drift", "denied-tool"} <= exempt:
+    sys.exit("::error::verify-narrative-drift-routing: could not read the "
+             f"eligibility step's exempt arms (got {sorted(exempt)})")
+
+failures = []
+for case, gh_body, want in (("query-fails", "exit 1", named),
+                            ("no-labels", "echo '[]'", named),
+                            ("partial-registry", "echo '[\"unrelated-class\"]'",
+                             exempt | {"unrelated-class"})):
+    d = os.path.join(work, "vocab-" + case)
+    bindir = os.path.join(d, "bin")
+    os.makedirs(bindir)
+    with open(os.path.join(bindir, "gh"), "w", newline="\n") as fh:
+        fh.write("#!/usr/bin/env bash\n" + gh_body + "\n")
+    os.chmod(os.path.join(bindir, "gh"), 0o755)
+    with open(os.path.join(d, "watchdog-signals.json"), "w") as fh:
+        json.dump([{"id": "s1"}], fh)
+    rc, out, outputs, _ = run_step(bash, vocab, d, {
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+        "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r",
+        "LABEL_PREFIX": "\U0001F415 · "}, d)
+    try:
+        cls = json.loads(outputs.get("schema", ""))["properties"]["findings"]["items"]["properties"]["class"]
+    except (ValueError, KeyError, TypeError):
+        failures.append(f"{case}: rc={rc}, no parseable schema output: {out}")
+        continue
+    enum = set(cls.get("enum") or [])
+    want = want | {"__new__"}
+    if rc != 0 or enum != want:
+        failures.append(f"{case}: rc={rc}, class schema {json.dumps(cls)} is not "
+                        f"a fixed enum of exactly {sorted(want)} (missing "
+                        f"{sorted(want - enum)}, extra {sorted(enum - want)})")
+    else:
+        print(f"::notice::verify-narrative-drift-routing: {case}: class is the expected fixed enum")
+
+if failures:
+    for f in failures:
+        print(f"::error::verify-narrative-drift-routing: {f}")
+    sys.exit(1)
+PY
+if [ "$?" -ne 0 ]; then
+  reason "the shipped 'Resolve finding-class vocabulary' step does not fail closed to an enum of exactly the classes the eligibility and evidence-validity steps name, or drops an issue-exempt class from a partial registry — see ::error:: above"
 fi
 
 # ── Confirm the live wiring: Ensure pipeline-defect issue gates on
