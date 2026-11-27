@@ -163,18 +163,25 @@ def decide_arm_failures(text, fixture="cycle-outcome-line"):
     arms = []
     for i, line in enumerate(lines):
         if line.lstrip().startswith('decision="$(') and 'bash "$DECIDE_SCRIPT"' in line:
+            # Start at the arm's own turns_used assignment just above, so the
+            # step-env source of TURNS_USED is run too, not injected.
+            start = i
+            for k in range(i - 1, max(i - 4, -1), -1):
+                if lines[k].lstrip().startswith("turns_used="):
+                    start = k
+                    break
             for j in range(i, min(i + 40, len(lines))):
                 if lines[j].strip() == 'cycle_outcome="$(pick cycle-outcome)"':
-                    arms.append("\n".join(l.strip() for l in lines[i:j + 1]))
+                    arms.append("\n".join(l.strip() for l in lines[start:j + 1]))
                     break
     failures = []
     if len(arms) != 2:
         return [f"implement.yml: expected 2 read-back arms whose inline decide command is followed by "
                 f"cycle_outcome=\"$(pick cycle-outcome)\", found {len(arms)}"]
     shell_vars = {"ok": fx.get("OK", ""), "truncated": fx.get("TRUNCATED", ""),
-                  "turns_used": fx.get("TURNS_USED", ""), "converge_sha": fx.get("CONVERGE_SHA", "")}
+                  "converge_sha": fx.get("CONVERGE_SHA", "")}
     env = {"PATH": os.environ.get("PATH", ""), "DECIDE_SCRIPT": DECIDE,
-           "INTENDED_TURNS": fx.get("TURN_BUDGET", "")}
+           "INTENDED_TURNS": fx.get("TURN_BUDGET", ""), "TURNS_REPORTED": fx.get("TURNS_USED", "")}
     for k, v in fx.items():
         if k not in ("OK", "TRUNCATED", "TURNS_USED", "CONVERGE_SHA", "TURN_BUDGET"):
             env[k] = v
@@ -205,6 +212,8 @@ def check_cycle_outcome_wiring(failures):
         ('TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE=',
          'TURN_BUDGET="${INTENDED_TURNS:-}"IMPL_CHECKED_BASE=', "a glued env assignment"),
         ('TURNS_USED="$turns_used"', 'TURNS_USED="$turns"', "a renamed turns variable"),
+        ('turns_used="${TURNS_REPORTED:-}"', 'turns_used="${TURN_REPORTED:-}"',
+         "a misspelt TURNS_REPORTED source"),
     ):
         if old not in text or not decide_arm_failures(text.replace(old, new)):
             failures.append(f"cycle-outcome wiring check does not catch {what}")
