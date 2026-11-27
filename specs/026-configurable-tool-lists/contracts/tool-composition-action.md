@@ -96,9 +96,16 @@ run with a clear error if the inputs conflict (FR-010).
    Callers must not read `shell-commands` as the enforced set. `allowed-tools`
    and `disallowed-tools` are the enforcement surface; this output is prose
    derived from both of them, after the fact.
-5. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
+5. **Append the fixed denies** (#1310): `Read(//proc/**)` and
+   `Bash(*proc/*)` end every `disallowed-tools`, after composition, so no
+   `extra-allowed-tools` or `*-override` reopens them, and after the render,
+   so `shell-commands` does not name them. `/proc/<pid>/environ` holds the
+   step's model credential and GitHub token; no stage reads `/proc`.
+   `verify-agent-credential-scrub.py` (Gate 181) runs the shipped step to
+   hold this.
+6. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
    composite actions' output style (e.g. `wing-commander-context`).
-6. **Never reached on validation failure** — steps 2–5 only run once step 1
+7. **Never reached on validation failure** — steps 2–6 only run once step 1
    passes for both directions.
 
 ## Call-site shape (one call per internal agent step)

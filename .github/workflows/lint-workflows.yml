@@ -5065,6 +5065,20 @@ jobs:
       - name: Gate 180 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant, a copied relay paragraph or comment, and a rule contract missing a wrapper's row each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
+      # Gate 181 — #1310: wing-commander-context exports the App token
+      # job-wide as WC_BOT_TOKEN, and claude-code-action hands Claude its
+      # whole environment. An agent step that runs with a read-only
+      # github_token sets WC_BOT_TOKEN empty in its own env:, and every
+      # agent step with a model credential is denied Read(//proc/**) and
+      # Bash(*proc/*) through the tool-args composite. Runs the shipped
+      # compose step to prove the denies survive an override.
+      # Numbered 181: open PRs #1271, #1272 and #1296 claim 177 to 179.
+      - name: Gate 181 — read-only agent steps do not inherit the App token, and every agent step is denied /proc
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-credential-scrub.py
+      - name: Gate 181 self-test — a removed or App-valued override, the App token under another env name, a missing github_token, a non-tool-args deny source, a hand list without /proc, a stale exemption and each composite deny removed each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-credential-scrub.py --self-test
 
       # Gate 175 — a workflow_dispatch input reaches a typed reusable-workflow
       # input only in an allowlisted form: fromJSON(inputs.X), fromJSON over a

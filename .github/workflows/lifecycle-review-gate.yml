@@ -712,14 +712,19 @@ jobs:
       # The action needs SOME github_token -- without one it falls back to
       # an OIDC exchange this job has no `id-token: write` for, and fails
       # before Claude starts (run 36640266298, #814; Gate 92 now fails that
-      # shape). Still open: the job-wide WC_BOT_TOKEN (exported via
-      # $GITHUB_ENV by wing-commander-context), a write-capable credential,
-      # is still inherited by this step's process environment -- tracked
-      # separately in #815.
+      # shape). #1310: wing-commander-context exports the write-capable
+      # App token job-wide as WC_BOT_TOKEN (through $GITHUB_ENV), and the
+      # action hands its whole environment to Claude. This step does not
+      # use it, so its own `env:` sets it empty for this step alone; the
+      # steps after it still read the job's value. The tool-args composite
+      # also denies every agent a read of /proc. Gate 181
+      # (verify-agent-credential-scrub.py) holds both.
       - name: Reviewer
         id: reviewer
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
+        env:
+          WC_BOT_TOKEN: ''
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
