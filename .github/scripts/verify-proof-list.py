@@ -946,36 +946,118 @@ def check_budget():
     return problems
 
 
+def _tree_snapshot(root, dest):
+    """Copy the files `git archive` would carry for TREE_PATHSPECS -- tracked
+    and untracked-but-not-ignored, so a local edit is still scanned -- from
+    the working tree at `root` into `dest`. The tree-cost check scans this
+    fixed copy, never the live tree: under `run-local-gates.py --jobs N` other
+    gates write ignored files into it mid-scan (the byte cache Python writes
+    in .github/actions/_shared/__pycache__ when a gate imports a shared
+    script), which a composite directory's walk picked up between two scans.
+    A file that vanishes while it is copied is left out of the copy."""
+    import shutil
+    from wc_repo_files import repo_files
+    for rel in sorted(set(repo_files(root, untracked=True, pathspecs=pl.TREE_PATHSPECS))):
+        target = os.path.join(dest, rel)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        try:
+            shutil.copy2(os.path.join(root, rel), target, follow_symlinks=False)
+        except (FileNotFoundError, IsADirectoryError):
+            continue
+
+
+def check_tree_snapshot():
+    """_tree_snapshot copies what the archive would carry, as it stood when
+    copied: local edits and new files yes; ignored files and the scripts'
+    test and fixture subdirectories no; a later write to the live tree
+    never reaches the copy."""
+    import subprocess
+    import tempfile
+    problems = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root, dest = os.path.join(tmp, "repo"), os.path.join(tmp, "copy")
+        files = {".gitignore": "__pycache__/\n",
+                 ".github/workflows/a.yml": "on: push\n",
+                 ".github/actions/x/action.yml": "runs: {}\n",
+                 ".github/scripts/board_x.py": "import os\n",
+                 ".github/scripts/tests/t.py": "x\n"}
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        subprocess.run(["git", "init", "-q", root], check=True)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        for rel, text in ((".github/actions/x/new.sh", "echo\n"),
+                          (".github/actions/x/__pycache__/m.pyc", "pyc"),
+                          (".github/workflows/a.yml", "on: pull_request\n")):
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        _tree_snapshot(root, dest)
+        with open(os.path.join(root, ".github/workflows/a.yml"), "w", encoding="utf-8") as fh:
+            fh.write("on: written after the copy\n")
+        got = sorted(os.path.relpath(os.path.join(d, n), dest).replace(os.sep, "/")
+                     for d, _ds, ns in os.walk(dest) for n in ns)
+        want = [".github/actions/x/action.yml", ".github/actions/x/new.sh",
+                ".github/scripts/board_x.py", ".github/workflows/a.yml"]
+        if got != want:
+            problems.append("tree snapshot: copied {0}, expected {1}".format(got, want))
+        elif open(os.path.join(dest, ".github/workflows/a.yml"), encoding="utf-8").read() != "on: pull_request\n":
+            problems.append("tree snapshot: the copy does not hold the working tree as it stood when copied")
+        # The copy is no git working tree: a pathspec listing there has no
+        # walk to fall back on, so it raises instead of listing everything.
+        from wc_repo_files import repo_files
+        try:
+            repo_files(dest, untracked=True, pathspecs=pl.TREE_PATHSPECS)
+            problems.append("tree snapshot: a pathspec listing outside a git tree walked the disk")
+        except RuntimeError:
+            pass
+    return problems
+
+
 def check_tree_cost():
     """A merge's tree is scanned once per merge in the window (87 at the
     2026-11-26 timeouts), so its cost bounds the build: an unchanged
     workflow text is parsed once per build, a path absent from a text never
     reaches the mention regex, and the archive leaves out the tests and
-    fixtures the scan never reads."""
+    fixtures the scan never reads. The scans read a fixed copy of the tree
+    (_tree_snapshot), so a gate writing to the live tree in parallel cannot
+    make two scans differ, and nothing the scan reads is a file git ignores."""
     import board_prove as bp
+    import subprocess
+    import tempfile
     problems = []
     parses = []
     real = bp.yaml.safe_load
+    repo = os.path.join(HERE, "..", "..")
 
     def counting(text, *a, **k):
         parses.append(1)
         return real(text, *a, **k)
-    bp.yaml.safe_load = counting
     previous = os.getcwd()
-    try:
-        os.chdir(os.path.join(HERE, "..", ".."))
-        first = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
-        before = len(parses)
-        again = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
-        bp.workflow_triggers(".github/workflows/wing-commander-proof-list.yml")
-        if len(parses) != before:
-            problems.append("tree cost: {0} unchanged workflow texts were parsed again".format(
-                len(parses) - before))
-        if first != again:
-            problems.append("tree cost: a second scan of the same tree differs from the first")
-    finally:
-        bp.yaml.safe_load = real
-        os.chdir(previous)
+    with tempfile.TemporaryDirectory() as tmp:
+        _tree_snapshot(repo, tmp)
+        bp.yaml.safe_load = counting
+        try:
+            os.chdir(tmp)
+            first = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+            before = len(parses)
+            again = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+            bp.workflow_triggers(".github/workflows/wing-commander-proof-list.yml")
+            if len(parses) != before:
+                problems.append("tree cost: {0} unchanged workflow texts were parsed again".format(
+                    len(parses) - before))
+            if first != again:
+                problems.append("tree cost: a second scan of the same tree differs from the first")
+        finally:
+            bp.yaml.safe_load = real
+            os.chdir(previous)
+    scanned = sorted(set(first[1]) | set(p for refs in first[1].values() for p in refs))
+    ignored = subprocess.run(["git", "check-ignore", "--no-index", "--stdin"], input="\n".join(scanned),
+                             capture_output=True, text=True, cwd=repo).stdout.split()
+    if ignored:
+        problems.append("tree cost: the scan read files git ignores, which the archive never carries: "
+                        "{0}".format(", ".join(ignored[:5])))
 
     class Counting:
         def __init__(self):
@@ -1570,7 +1652,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_deleted_workflow_runs() + check_progress() + check_forbidden_homes() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_snapshot() + check_tree_cost() + check_run_list_cost() + check_deleted_workflow_runs() + check_progress() + check_forbidden_homes() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

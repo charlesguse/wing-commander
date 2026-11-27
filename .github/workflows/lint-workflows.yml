@@ -2328,7 +2328,7 @@ jobs:
               "unalias", "uniq", "unset", "until", "wait", "wc", "while",
               "xargs", "xxd", "yes", "gzip", "gunzip", "zip",
               "mapfile", "readarray", "popd", "pushd", "dirs", "hash",
-              "ulimit", "umask", "compgen", "complete",
+              "ulimit", "umask", "compgen", "complete", "shopt",
           }
           # Shell keyword/operator tokens that a naive first-word split can
           # still surface (e.g. after a line continuation or a `then` on its
@@ -2354,6 +2354,7 @@ jobs:
               "wc_harden_git_env",  # _shared/git-push-hardening.sh (spec 095)
               "wc_push_from_shim",  # _shared/git-push-hardening.sh (spec 095)
               "wc_current_branch",  # _shared/git-push-hardening.sh (spec 095)
+              "kv",                 # _shared/kv.sh (read-spec-meta.sh sources it)
           }
           NOT_A_COMMAND = ALWAYS_AVAILABLE | SHARED_SHELL_FUNCTIONS | {
               "[", "[[", "]]", "]", "{", "}", "DOLLARSUBST", "GHEXPR"}
@@ -2362,7 +2363,11 @@ jobs:
           TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")
 
           def run_texts():
-              """Every run: script body in workflows and composite actions."""
+              """Every run: script body in workflows and composite actions,
+              then every shell script under .github/actions/_shared/: a
+              composite runs those inside the adopter's container too, so a
+              tool called only from one (timeout, mktemp) is a call site the
+              image must serve like any run: block's (#889)."""
               paths = (glob.glob(".github/workflows/*.yml")
                       + glob.glob(".github/workflows/*.yaml")
                       + glob.glob(".github/actions/**/action.yml", recursive=True)
@@ -2379,6 +2384,9 @@ jobs:
                       run = (step or {}).get("run")
                       if isinstance(run, str):
                           yield path, run
+              for path in sorted(glob.glob(".github/actions/_shared/**/*.sh",
+                                           recursive=True)):
+                  yield path, open(path, encoding="utf-8").read()
 
           # A `case "$x" in` arm — `skipped|cancelled)`, `*)`, or a one-liner
           # like `OWNER|MEMBER) echo authorized=true ;;` — uses `|` to mean
@@ -2512,6 +2520,20 @@ jobs:
           GHEXPR = re.compile(r"\$\{\{.*?\}\}", re.S)
           FUNC_DEF = re.compile(
               r"^(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\s*\))?\s*\{$")
+          # A one-line definition, `fail() { echo "$*" >&2; exit 1; }`, splits
+          # at its `;` into a segment that runs on past the `{`; the `()`
+          # (or the `function` keyword) is what makes it a definition.
+          FUNC_DEF_ONE_LINE = re.compile(
+              r"^(?:function\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s*\(\s*\))?"
+              r"|([A-Za-z_][A-Za-z0-9_-]*)\s*\(\s*\))\s*\{\s")
+
+          def defined_function(segment):
+              """The name a function definition opening `segment` defines."""
+              m = FUNC_DEF.match(segment)
+              if m:
+                  return m.group(1)
+              m = FUNC_DEF_ONE_LINE.match(segment)
+              return (m.group(1) or m.group(2)) if m else None
 
           def strip_command_substitutions(text):
               """Collapse every well-formed $(...) to one opaque placeholder.
@@ -2648,8 +2670,8 @@ jobs:
               # CALL to that same name in this script is a local call, not
               # an external dependency the adopter's image needs to
               # provide. Collected first so both are excluded below.
-              local_funcs = {m.group(1).lower() for m in
-                             (FUNC_DEF.match(seg.strip()) for seg in segments) if m}
+              local_funcs = {name.lower() for name in
+                             (defined_function(seg.strip()) for seg in segments) if name}
 
               tokens = set()
               for segment in segments:
@@ -2695,6 +2717,7 @@ jobs:
           drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
           if drift:
               print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "
+                    f"or .github/actions/_shared/ script "
                     f"somewhere in this repository invokes {', '.join(drift)}, which "
                     f"is in neither the canonical required-tool list nor a recorded "
                     f"maintenance-only/always-available exclusion. Add it to "

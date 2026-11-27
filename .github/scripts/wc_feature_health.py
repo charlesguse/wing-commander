@@ -30,7 +30,8 @@ REGISTRY_PATH = os.path.join(HERE, "feature-health-registry.json")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import wc_board_status  # noqa: E402
-from board_triage import TRIAGE_CLOSE_COMMENT_PREFIX, TRIAGE_CLOSE_GROUNDS  # noqa: E402
+from board_triage import (  # noqa: E402
+    BACKLOG_TICK_COMMENT_PREFIX, BACKLOG_TICK_COMMENT_SUFFIX, TRIAGE_CLOSE_COMMENT_PREFIX, TRIAGE_CLOSE_GROUNDS)
 
 # data-model.md "Health state": earliest wins.
 STATE_ORDER = ["unreadable", "paused", "not configured", "failing", "not running",
@@ -411,7 +412,7 @@ def fetch_runs(gh, repo, filename, start, end, events=None):
             continue
         out.append({"id": r["id"], "event": r.get("event"),
                     "started_at": r.get("run_started_at") or r["created_at"],
-                    "updated_at": r.get("updated_at"),
+                    "updated_at": r.get("updated_at"), "run_attempt": r.get("run_attempt") or 1,
                     "conclusion": r.get("conclusion") or "other"})
     return out
 
@@ -431,27 +432,35 @@ def _pages(gh, path, max_pages=10):
 # The comment board-loop.yml's triage step closes an issue with starts a line
 # with board_triage.TRIAGE_CLOSE_COMMENT_PREFIX and the ground, then a comma.
 # Anything else (a duplicate close at the route step, a deferral, a comment
-# that merely quotes a ground) is not a triage close (FR-003).
-TRIAGE_CLOSE_RE = re.compile(r"^{0}({1}),".format(
+# that merely quotes a ground) is not a triage close (FR-003). On a
+# Maintenance-backlog line the loop ticks the line instead and posts the same
+# sentence on the backlog issue, which stays open, behind BACKLOG_TICK_RE's
+# opening; that comment is a triage close too (#889).
+TRIAGE_CLOSE_RE = re.compile(r"^(?:{0}[^`\n]+{1})?{2}({3}),".format(
+    re.escape(BACKLOG_TICK_COMMENT_PREFIX), re.escape(BACKLOG_TICK_COMMENT_SUFFIX),
     re.escape(TRIAGE_CLOSE_COMMENT_PREFIX), "|".join(re.escape(g) for g in TRIAGE_CLOSE_GROUNDS)), re.M)
+BACKLOG_TICK_RE = re.compile(r"\A{0}[^`\n]+{1}".format(
+    re.escape(BACKLOG_TICK_COMMENT_PREFIX), re.escape(BACKLOG_TICK_COMMENT_SUFFIX)))
 
 
 def _triage_close_times(gh, repo, base, since, until=None):
-    """Times of triage closes in the window. The search API names the closed
-    issues whose comments carry the close sentence, newest update first, so
-    the read does not grow with the number of closed issues; each candidate's
+    """Times of triage closes in the window. The search API names the issues
+    whose comments carry the close sentence, newest update first, so the
+    read does not grow with the number of closed issues; each candidate's
     comments are then matched exactly. A candidate updated before the newest
     match found so far cannot hold a newer one, so the read stops there; a
     search still unresolved after SEARCH_PAGES pages raises (FR-010/011).
     `until` (the capture only) drops a close after it before the stop rule
     sees it, so a later close cannot end the read early and hide one in the
-    window. `is:closed` is today's state, so under `until` the search drops
-    it, and an issue open today with a close in the window raises: whether
-    it was still closed at `until` cannot be read back."""
+    window. The search does not ask for `is:closed`: a backlog-line tick
+    (BACKLOG_TICK_RE) is posted on the backlog issue, which stays open, and
+    counts whatever its state (#889). Any other close counts only on an issue
+    closed today; under `until`, an issue open today with such a close in the
+    window raises: whether it was still closed at `until` cannot be read
+    back."""
     s = fmt_time(since)
     u = fmt_time(until) if until else None
-    q = 'repo:{0} is:issue {1}updated:>={2} "{3}"'.format(
-        repo, "" if u else "is:closed ", s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
+    q = 'repo:{0} is:issue updated:>={1} "{2}"'.format(repo, s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
     path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
     times = []
     for page in range(1, SEARCH_PAGES + 1):
@@ -472,8 +481,11 @@ def _triage_close_times(gh, repo, base, since, until=None):
                 return times
             for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s),
                             COMMENT_PAGES):
-                if TRIAGE_CLOSE_RE.search(c.get("body") or "") and (u is None or c["created_at"] <= u):
-                    if u and i.get("state") == "open":
+                body = c.get("body") or ""
+                if TRIAGE_CLOSE_RE.search(body) and (u is None or c["created_at"] <= u):
+                    if i.get("state") == "open" and not BACKLOG_TICK_RE.match(body):
+                        if u is None:
+                            continue
                         raise RuntimeError("issue {0} was triage closed at {1} and is open now; its state "
                                            "at {2} cannot be read".format(i["number"], c["created_at"], u))
                     times.append(c["created_at"])
@@ -546,13 +558,18 @@ def read_signal(signal, repo, since, gh, environ, until=None):
         # Closed PRs newest update first, paged until a page ends before the
         # window: a PR merged in the window was updated in it, so nothing
         # older can hold one (#889). No page count cuts the read short.
+        # `title_prefixes`, when declared, narrows the head-prefix match to
+        # PRs whose title also starts with one of them: every `spec/` PR is
+        # not a final PR, only the one finalize.yml titles `Finalize: ` (#889).
+        titles = signal.get("title_prefixes")
         page = 0
         while True:
             page += 1
             got = gh("{0}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={1}".format(base, page))
             for p in got:
                 if p.get("merged_at") and p["merged_at"] >= s and any(
-                        p["head"]["ref"].startswith(x) for x in signal.get("head_prefixes", [])):
+                        p["head"]["ref"].startswith(x) for x in signal.get("head_prefixes", [])) and (
+                        not titles or any((p.get("title") or "").startswith(t) for t in titles)):
                     times.append(p["merged_at"])
             if len(got) < 100 or got[-1].get("updated_at", "") < s:
                 break
@@ -692,23 +709,49 @@ def _workflow_text_at(commit):
     return read
 
 
-def _runs_as_of(readings, now):
+def _completed_at(gh, repo, run):
+    """When the attempt `run` reports finished (ISO), from its jobs: the
+    latest job `completed_at`, or None while any job has none (still in
+    flight) or the attempt has no jobs. A run's `updated_at` is not that
+    time: GitHub moves it on later edits too (a log or artifact deletion,
+    #889)."""
+    path = "repos/{0}/actions/runs/{1}/attempts/{2}/jobs?per_page=100".format(
+        repo, run["id"], run.get("run_attempt") or 1)
+    jobs, page = [], 0
+    while True:
+        page += 1
+        got = (gh(path + "&page={0}".format(page)) or {}).get("jobs") or []
+        jobs.extend(got)
+        if len(got) < 100:
+            break
+    done = [j.get("completed_at") for j in jobs]
+    return max(done) if done and all(done) else None
+
+
+def _runs_as_of(readings, now, gh, repo):
     """Keep only what classify_workflow reads of each run, in place. A run
     created before `now` but re-run after it reports its later attempt's
     start and conclusion, and what it showed at `now` cannot be read back, so
     the capture refuses rather than record a later result as the window's.
     A run still in progress at `now` (finished after it) is dropped: a build
-    at `now` reads only completed runs, so it could not have seen it."""
+    at `now` reads only completed runs, so it could not have seen it. A run
+    whose `updated_at` is after `now` is judged by its attempt's completion
+    time (_completed_at), not by `updated_at`, which a later edit moves; one
+    updated by `now` was already finished then."""
     for name, reading in readings.items():
         late = [r["started_at"] for r in reading.get("runs") or [] if parse_time(r["started_at"]) > now]
         if late:
             raise SystemExit("feature-health capture: {0} has a run attempt started at {1}, after {2}; "
                              "its state then cannot be read".format(name, max(late), fmt_time(now)))
         if "runs" in reading:
-            reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
-                                      for r in reading["runs"]
-                                      if not (r.get("updated_at") and parse_time(r["updated_at"]) > now)),
-                                     key=lambda r: r["started_at"])
+            kept = []
+            for r in reading["runs"]:
+                if r.get("updated_at") and parse_time(r["updated_at"]) > now:
+                    done = _completed_at(gh, repo, r)
+                    if done is None or parse_time(done) > now:
+                        continue
+                kept.append({"started_at": r["started_at"], "conclusion": r["conclusion"]})
+            reading["runs"] = sorted(kept, key=lambda r: r["started_at"])
 
 
 def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=None):
@@ -727,7 +770,7 @@ def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=Non
     environ = _environ_as_of(registry, repo, now, gh)
     readings, signals, ctx = collect(registry, repo, now, gh, environ, _workflow_text_at(commit),
                                      start=start, until=now)
-    _runs_as_of(readings, now)
+    _runs_as_of(readings, now, gh, repo)
     return {"schema": 1, "repository": repo, "window": {"start": fmt_time(start), "now": fmt_time(now)},
             "now": fmt_time(now), "workflow_commit": commit,
             "captured_at": fmt_time(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)),

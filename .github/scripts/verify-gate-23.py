@@ -789,6 +789,22 @@ DRIFT_CASES = [
      {},
      True, ("somefancytool4",)),
 
+    # #889: a tool called only from a .github/actions/_shared/ script had no
+    # scanned call site, though composites run those scripts in the
+    # adopter's container like any run: block.
+    ("shared scripts under .github/actions/_shared/ are scanned for drift too",
+     {},
+     True, ("somesharedtool6",)),
+
+    ("no false positive: a one-line function definition, its calls, and the "
+     "bash builtin shopt",
+     {"stage.yml": stage(job("entry", needs="verify-image-prerequisites",
+                             if_expr=f"!cancelled() && {RESULT_GUARD}",
+                             run='die() { echo "$*" >&2; exit 1; }\n'
+                                 "shopt -s nullglob\n"
+                                 "[ -f x ] || die missing"))},
+     False, ()),
+
     # FR-011a's other direction: each stage's EMBEDDED list must be the
     # canonical one. The drift scan above cannot see this — the embedded
     # list is a shell assignment (skipped as a VAR=value prefix, never
@@ -1037,6 +1053,14 @@ def main():
                 io.open(os.path.join(act_dir, "action.yml"), "w", encoding="utf-8").write(
                     "name: fancy\nruns:\n  using: composite\n  steps:\n"
                     "    - run: somefancytool4 --check\n      shell: bash\n")
+            if name.startswith("shared scripts"):
+                io.open(os.path.join(wf_dir, "stage.yml"), "w",
+                       encoding="utf-8").write(stage(HEALTHY_ENTRY))
+                shared_dir = os.path.join(case_dir, ".github", "actions", "_shared")
+                os.makedirs(shared_dir)
+                io.open(os.path.join(shared_dir, "helper.sh"), "w",
+                        encoding="utf-8").write(
+                    "#!/usr/bin/env bash\nset -eu\nsomesharedtool6 --check\n")
 
             proc = subprocess.run([sys.executable, gate_path], cwd=case_dir, env=case_env(),
                                   capture_output=True, text=True,
