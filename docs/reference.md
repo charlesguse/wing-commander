@@ -210,7 +210,6 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | `wing-commander-feature-health.yml` | this repository | daily, 06:29 UTC; dispatch from the default branch only | gives each feature one health state (healthy, idle, quiet, not running, failing, paused, not configured or unreadable) from its run history, its kill switch and its own output signal, so a feature that runs green but produces nothing shows as quiet. Registry: `.github/scripts/feature-health-registry.json`, checked against this file by `verify-feature-health.py`. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a section of "Board status". It files nothing. A dispatch from another branch is refused. `WING_COMMANDER_FEATURE_HEALTH_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
 | `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite, split on pull requests into eight `lint-shard-N` jobs plus `harness-tests`, each gate its own step, and a `lint` aggregate job (the check name every verdict reader matches, in a workflow named exactly `lint · workflows`) that runs `always()`, times out after 5 minutes, and fails unless every unit is `success`; the target is a verdict within 10 minutes. On push, schedule and dispatch the units and aggregate are skipped. `verify-lint-aggregate.py` and `verify-lint-shard-layout.py` hold that layout. `python .github/scripts/run-local-gates.py` runs the same set locally. A newer push to a pull request cancels the run still going for its older head; push, schedule and dispatch runs are never cancelled |
-| `pr-closing-keyword-guard.yml` | this repository | every pull request: opened, edited, reopened and each push (no `paths:` filter) | fails the PR when its title, body or a commit message uses a closing keyword (close, fix or resolve, any form) on an open `disposition:tracking` issue, read live from the label; Gate 182 runs its self-test. Read-only, no agent, no App token; a 5-minute timeout. A newer event on the same PR cancels the run still going. It is not a required check |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
 
 Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
@@ -218,6 +217,14 @@ Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
 failure for the watchdog to find), `migrate-stranded-review-lifecycles.yml`,
 `auto-update-spec-kit-scratch-preflight.yml` (readiness check for a test
 repository) and `auto-release-switch.yml`.
+
+A pull-request check with no schedule: `pr-closing-keyword-guard.yml` runs on
+every pull request (opened, edited, reopened and each push; no `paths:`
+filter) and fails it when its title, body or a commit message uses a closing
+keyword (close, fix or resolve, any form) on an open `disposition:tracking`
+issue, read live from the label. Gate 182 runs its self-test. Read-only, no
+agent, no App token, a 5-minute timeout; a newer event on the same pull
+request cancels the run still going. It is not a required check.
 
 ## Merge classes
 
