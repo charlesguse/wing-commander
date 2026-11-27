@@ -59,7 +59,11 @@ one. Plus:
     arms' idempotency checks are executed here against a stubbed issue in
     every state that matters — closed, stage:done, already stalled, label
     absent, healthy, and a FAILED read, which must stop the job rather than
-    pass as any of the others.
+    pass as any of the others;
+  * teardown-done adds stage:done BEFORE its one close-with-comment call
+    (#889, found by the code review of #1107), so no reader sees a closed
+    lifecycle without it; a failed label call never reaches the close, and
+    a failed close leaves the label on for the retry.
 
 Mutations at the end reintroduce the shipped defect and four plausible drifts
 and assert the suite fails on each.
@@ -82,7 +86,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (ensure_jq, resolve_bash, run_step,
-                              use_utf8_stdout)
+                              step_shell, use_utf8_stdout)
 
 STAGE = ".github/workflows/cleanup.yml"
 STEP_NAME = "Verify spec artifacts and resolve lifecycle issue"
@@ -356,6 +360,113 @@ def _mut_failed_read_reads_as_answer(body):
 IDEMPOTENCY_MUTATIONS = [
     ("the shipped-lifecycle guard is removed", _mut_shipped_guard_removed),
     ("a failed read falls through as an answer", _mut_failed_read_reads_as_answer),
+]
+
+
+# teardown-done's close (#889, found by the code review of #1107): stage:done
+# goes on BEFORE the close-with-comment, so no reader ever sees a closed
+# lifecycle without it, and the close stays one call. GH_FAIL makes the
+# named `gh <a> <b>` call fail; `issue view` / `pr view` answer the stale
+# stage label the step then removes.
+CLOSE_JOB = "teardown-done"
+CLOSE_STEP = "Close lifecycle issue and flip label"
+SUMMARY_EXPR = "${{ steps.summary.outputs.summary-file }}"
+GH_CLOSE_STUB = """#!/bin/sh
+echo "gh $*" | head -n 1 >> "$GH_CALLS"
+if [ -n "${GH_FAIL:-}" ] && [ "$1 $2" = "$GH_FAIL" ]; then
+  echo "gh: Bad Gateway (HTTP 502)" >&2
+  exit 1
+fi
+case "$1 $2" in
+  "issue view"|"pr view") echo "stage:review" ;;
+esac
+exit 0
+"""
+LABEL_CALL = "gh issue edit 68 --add-label stage:done"
+CLOSE_CALL = "gh issue close 68 --comment"
+
+
+def run_close(body, root, fail_on=""):
+    """Run the close step once; returns (rc, [gh call lines])."""
+    work = tempfile.mkdtemp(dir=root)
+    runner_temp = os.path.join(work, "runner_temp")
+    bindir = os.path.join(work, "bin")
+    calls = os.path.join(work, "gh_calls")
+    os.makedirs(runner_temp, exist_ok=True)
+    os.makedirs(bindir, exist_ok=True)
+    open(calls, "w").close()
+    summary_file = os.path.join(work, "cleanup-summary.md")
+    with open(summary_file, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("Specification merged.\n")
+    stub = os.path.join(bindir, "gh")
+    with open(stub, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(GH_CLOSE_STUB)
+    os.chmod(stub, 0o755)
+    script = body.replace(SUMMARY_EXPR, summary_file.replace(os.sep, "/"))
+    rc, _, _, _ = run_step(
+        BASH, script, work,
+        {"GH_TOKEN": "x", "ISSUE": "68", "PR_NUMBER": PR_NUMBER,
+         "GH_CALLS": calls, "GH_FAIL": fail_on,
+         "PATH": bindir + os.pathsep + os.environ["PATH"]},
+        runner_temp, shell=step_shell(STAGE, CLOSE_STEP))
+    with open(calls, encoding="utf-8") as fh:
+        return rc, [l.rstrip("\n") for l in fh if l.startswith("gh ")]
+
+
+def close_order_failures(body, root):
+    failures = []
+    where = f"{CLOSE_JOB} / {CLOSE_STEP}"
+    rc, calls = run_close(body, root)
+    closes = [i for i, c in enumerate(calls) if c.startswith("gh issue close")]
+    labels = [i for i, c in enumerate(calls) if c == LABEL_CALL]
+    if rc != 0:
+        failures.append(f"{where}: healthy run exited {rc}; gh calls: {calls}")
+    if len(closes) != 1 or not calls[closes[0]].startswith(CLOSE_CALL):
+        failures.append(f"{where}: expected one atomic close-with-comment, got {calls}")
+    if any(c.startswith("gh issue comment") for c in calls):
+        failures.append(f"{where}: the close comment is posted separately, so a retry can duplicate it")
+    if not labels or (closes and labels[0] > closes[0]):
+        failures.append(f"{where}: stage:done is not added before the close, so a reader can see "
+                        f"a closed lifecycle with no stage:done (#889). gh calls: {calls}")
+    if not any(c.startswith("gh issue edit 68 --remove-label stage:review") for c in calls):
+        failures.append(f"{where}: the stale stage label is never removed; gh calls: {calls}")
+    # A failed label call must stop the step before the close: the issue stays
+    # open, this job's idempotency check (closed only) runs it again.
+    rc, calls = run_close(body, root, fail_on="issue edit")
+    if rc == 0 or any(c.startswith("gh issue close") for c in calls):
+        failures.append(f"{where}: a failed stage:done edit still closed the issue (rc={rc}); "
+                        f"gh calls: {calls}")
+    # A failed close leaves the issue open and labelled; the retry re-adds a
+    # label already there and closes once.
+    rc, calls = run_close(body, root, fail_on="issue close")
+    if rc == 0 or LABEL_CALL not in calls:
+        failures.append(f"{where}: a failed close did not fail the step with stage:done "
+                        f"already on (rc={rc}); gh calls: {calls}")
+    return failures
+
+
+def _mut_close_before_label(body):
+    """The #889 order: close first, then stage:done."""
+    close = 'gh issue close "$ISSUE" --comment "$(cat "' + SUMMARY_EXPR + '")"\n'
+    i = body.find(close)
+    j = body.find('gh label create "stage:done"')
+    if i < 0 or j < 0 or j > i:
+        return body
+    indent = body[body.rfind("\n", 0, j) + 1:j]
+    body = body.replace(indent + close, "", 1)
+    return body.replace(indent + 'gh label create "stage:done"',
+                        indent + close + indent + 'gh label create "stage:done"', 1)
+
+
+def _mut_split_close(body):
+    """A separate comment call, then a bare close: the race the atomic close avoids."""
+    return body.replace('gh issue close "$ISSUE" --comment "$(cat "' + SUMMARY_EXPR + '")"',
+                        'gh issue comment "$ISSUE" --body x; gh issue close "$ISSUE" --comment y', 1)
+
+
+CLOSE_MUTATIONS = [
+    ("the issue is closed before stage:done is added", _mut_close_before_label),
+    ("the close comment is posted as its own call", _mut_split_close),
 ]
 
 
@@ -698,6 +809,29 @@ def main():
                     print(f"::error::MUTATION SURVIVED — {label} in {job_name} "
                           f"broke nothing.")
                     failures.append(f"mutation survived: {label} ({job_name})")
+
+        close_body = None
+        for st in (jobs.get(CLOSE_JOB) or {}).get("steps") or []:
+            if (st or {}).get("name") == CLOSE_STEP:
+                close_body = st.get("run")
+        if close_body is None:
+            failures.append(f"job {CLOSE_JOB!r} has no step named {CLOSE_STEP!r} — "
+                            f"the close has moved; update this gate with it.")
+        else:
+            got = close_order_failures(close_body, root)
+            failures += got
+            print(f"cleanup close order ({CLOSE_JOB}): stage:done before the close, "
+                  f"{'held' if not got else 'BROKEN'}.")
+            for label, apply_mutation in CLOSE_MUTATIONS:
+                mutated = apply_mutation(close_body)
+                if mutated == close_body:
+                    print(f"::error::mutation {label!r} changed nothing — the code it edits was rewritten.")
+                    failures.append(f"mutation inapplicable: {label}")
+                elif close_order_failures(mutated, root):
+                    print(f"Mutation OK — {label}: caught.")
+                else:
+                    print(f"::error::MUTATION SURVIVED — {label} broke nothing.")
+                    failures.append(f"mutation survived: {label}")
 
         for f in failures:
             print(f"::error::{f}")
