@@ -1417,11 +1417,21 @@ def check_runtime_shared_review_reads(base_doc):
         if not_read or snap.get("shared_review_runs") != {}:
             problems.append("runtime: a failed read of a run another head's record names made the verdict "
                             "not-read: {0}".format(not_read))
+        # A merged PR: a record posted after the merge is cut before the
+        # verdict, so a failed read of its run leaves the verdict whole
+        # (#1346 pass 2). Round 2 (09:01) is after this merge time.
+        wc_shared_review._gh_api = lambda args, token=None: (None if "/runs/102" in args[0] else fake_gh(args))
+        snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read, as_of="2026-11-10T09:00:30Z")
+        if not_read or set(snap.get("shared_review_runs") or {}) != {"101"}:
+            problems.append("runtime: a failed read of a run a post-merge record names made the audit verdict "
+                            "not-read: {0}".format(not_read or snap.get("shared_review_runs")))
     finally:
         wc_shared_review._gh_api = saved
 
-    calls = []
-    spy = lambda repo, snap, bot_login, token, not_read: calls.append(snap.get("number"))
+    calls, as_ofs = [], []
+    spy = lambda repo, snap, bot_login, token, not_read, as_of=None: (calls.append(snap.get("number")),
+                                                                      as_ofs.append(as_of))
     maint = copy.deepcopy(base_doc["bases"]["maintainer"])
     with _Patched(_read_shared_review_runs=spy,
                   _gh_ok=lambda args: json.dumps({"reviews": [], "isCrossRepository": False}),
@@ -1430,15 +1440,18 @@ def check_runtime_shared_review_reads(base_doc):
     if calls != [maint["number"]]:
         problems.append("runtime: an open maintainer PR's snapshot never reads the shared reviewer's runs")
     calls.clear()
+    as_ofs.clear()
     pull = {"number": maint["number"], "head": {"sha": maint["headRefOid"], "ref": maint["headRefName"],
                                                 "repo": {"full_name": "o/r"}},
             "base": {"ref": "main"}, "body": "", "user": {"login": "owner", "type": "User"},
-            "changed_files": 1, "commits": 1, "comments": 0}
+            "changed_files": 1, "commits": 1, "comments": 0, "merged_at": "2026-11-10T10:00:00Z"}
     with _Patched(_read_shared_review_runs=spy, _issue_comments=lambda repo, number: [],
                   _rest_rollup=lambda repo, sha: [], board_merge__gh_items=lambda path, *a, **k: []):
         me._merged_snapshot("o/r", pull, base_doc["bot_login"], None, base_branch="main")
     if calls != [maint["number"]]:
         problems.append("runtime: a merged maintainer PR's snapshot never reads the shared reviewer's runs")
+    elif as_ofs != ["2026-11-10T10:00:00Z"]:
+        problems.append("runtime: a merged maintainer PR's run read is not cut at the merge ({0})".format(as_ofs))
     return problems
 
 

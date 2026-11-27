@@ -853,15 +853,20 @@ def _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch):
     return kind
 
 
-def _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read):
+def _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read, as_of=None):
     """For a session fix PR: the facts of every run its shared-reviewer
     records name (wc_shared_review.fetch_run_facts, the read's one home).
-    A failed read leaves `shared_review_runs` None and names it."""
+    A failed read leaves `shared_review_runs` None and names it. `as_of`,
+    for a merged PR, is its merge time: a record posted after it is cut
+    before the verdict (cut_snapshot), so its run is not read."""
     # Only the records at the head can decide (_review_round_conditions), so
     # a failed read of an older head's run never makes this verdict not-read.
     # Every record at the head, not only the newest: the audit cuts the
     # comments after this read, so an earlier round can be the one judged.
-    records = wc_shared_review.parse_records(snap.get("comments"), bot_login)
+    comments = snap.get("comments")
+    if as_of and comments is not None:
+        comments = [c for c in comments if not _after((c or {}).get("created_at"), as_of)]
+    records = wc_shared_review.parse_records(comments, bot_login)
     run_ids = sorted({str(r.get("run_id")) for r in wc_shared_review.rounds_for_commit(records, snap.get("headRefOid"))
                       if str(r.get("run_id") or "").isdigit()})
     runs = {}
@@ -1051,7 +1056,7 @@ def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/",
             snap["verificationRun"] = board_merge.fetch_verification_run(repo, record, actions_token)
     kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
     if kind == "maintainer":
-        _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read)
+        _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read, as_of=pull.get("merged_at"))
     issue = linked_issue(kind, snap, repo)
     snap["issue_comments"] = snap["labels"] = snap["label_events"] = None
     if issue is not None:

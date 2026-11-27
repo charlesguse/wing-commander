@@ -33,7 +33,7 @@
 
 `{name, result: met|unmet|not-read, reason}` — `reason` is one line, required unless `met`.
 
-Order: `checks_green_with_gate_suite` (every kind, FR-006), then the kind's own: bump → `verification_confirmed`; board-fix → `review_verdict_at_head`, `zero_open_findings`; final → `gate_round_at_head`, `round_clean`, `zero_open_in_scope`, `no_unresolved_changes_requested`, `no_hold_label`; spec/maintainer → `review_round_record` (for maintainer, the shared reviewer's newest confirmed round at the head; spec PRs count none).
+Order: `checks_green_with_gate_suite` (every kind, FR-006), then the kind's own: bump → `verification_confirmed`; board-fix → `review_verdict_at_head`, `zero_open_findings`; final → `gate_round_at_head`, `round_clean`, `zero_open_in_scope`, `no_unresolved_changes_requested`, `no_hold_label`; spec/maintainer → `review_round_record` (for maintainer, the shared reviewer's newest round at the head, which must be clean and confirmed; spec PRs count none).
 
 ## Reported record
 
