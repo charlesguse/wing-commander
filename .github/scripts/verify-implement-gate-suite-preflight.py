@@ -108,9 +108,10 @@ def expected_paragraph(leg, summary):
             "already ran once, deterministically, before this agent step\n"
             "started, so its state at {0} start is known without spending a\n"
             "turn on it: {1}.\n"
-            "That is a starting point only, not a substitute for the gate-suite\n"
-            "run CLAUDE.md's \"Before pushing\" section still asks you to make\n"
-            "yourself once your own changes are in place.").format(leg, summary)
+            "That is a starting point only. Do not run the full suite yourself:\n"
+            "run only the gates for the files you changed, by name\n"
+            "(`python .github/scripts/run-local-gates.py <name>`). The full\n"
+            "suite runs after this agent step and decides convergence.").format(leg, summary)
 
 
 def stub_bin(root, tools, name="bin", code=0):

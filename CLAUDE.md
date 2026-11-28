@@ -16,6 +16,11 @@ lint-workflows.yml actually invokes, so it is the same set CI runs:
 
     python .github/scripts/run-local-gates.py
 
+The implement stage agent is the exception: it runs only the gates for the
+files it changed, by name (`python .github/scripts/run-local-gates.py <name>`),
+and does not run the full suite. The full suite runs after the agent step and
+decides convergence (specs/133-post-agent-gate-verdict).
+
 A change that touches any `if:`, `continue-on-error:`, or failing step in a
 workflow should also get a pass from the `review-step-gating` skill.
 

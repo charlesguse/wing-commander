@@ -5195,6 +5195,18 @@ jobs:
       - name: Gate 184 self-test — a dropped part, bare "No findings", unnamed identifier, unclosed fence, over-budget body and closing keyword each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-message-parts.py --self-test
+      # Gate 185 — specs/133-post-agent-gate-verdict: implement.yml's
+      # post-agent gate job runs only for a converging or handing-off cycle,
+      # its suite budget sits below its step timeout, the dispatch lives once
+      # in implement-dispatch, `converged` comes from there, and the
+      # non-convergence reason names the post-agent full suite with the first
+      # failure fenced. Path trigger: .github/scripts/** above.
+      - name: Gate 185 — the post-agent verdict job runs only when due, keeps its budget, owns the dispatch and the converged output, and names its reasons
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-post-verdict.py
+      - name: Gate 185 self-test — a second dispatch, a lost hand-off condition, an equal budget, a converged output from the wrong job, a new finalize input, a reworded reason, a lost marker and an unfenced failure each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-post-verdict.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the

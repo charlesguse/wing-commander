@@ -298,6 +298,23 @@ def _mutations():
     def retry_unexempted(docs):
         return {}
 
+    def post_gate_write(docs):
+        docs["implement.yml"]["jobs"]["gate-suite-implement-post"]["permissions"][
+            "contents"] = "write"
+
+    def post_gate_ctx(docs):
+        docs["implement.yml"]["jobs"]["gate-suite-implement-post"]["steps"].insert(
+            1, {"name": "ctx", "uses": "./.wing-commander-pipeline/.github/actions/"
+                "wing-commander-context"})
+
+    def dispatch_runs_suite(docs):
+        docs["implement.yml"]["jobs"]["implement-dispatch"]["steps"].append(
+            {"id": "suite-again", "run": "python3 .github/scripts/run-local-gates.py\n"})
+
+    def dispatch_not_waiting(docs):
+        docs["implement.yml"]["jobs"]["implement-dispatch"]["needs"].remove(
+            "gate-suite-implement-post")
+
     return (
         ("gate-suite-fix granted contents: write", gate_write, "above read"),
         ("gate-suite-implement-cycle mints the App token", gate_ctx, "mints the App token"),
@@ -316,6 +333,13 @@ def _mutations():
         ("the retry exemption outlives its step", stale_exemption, "is stale"),
         ("the retry site without its exemption", retry_unexempted,
          "holds credentials and its step 'gate-suite-retry'"),
+        ("gate-suite-implement-post granted contents: write", post_gate_write, "above read"),
+        ("gate-suite-implement-post mints the App token", post_gate_ctx,
+         "mints the App token"),
+        ("implement-dispatch runs the suite itself", dispatch_runs_suite,
+         "holds credentials and its step 'suite-again'"),
+        ("implement-dispatch no longer needs the post-agent job", dispatch_not_waiting,
+         "cannot wait for the verdict"),
     )
 
 

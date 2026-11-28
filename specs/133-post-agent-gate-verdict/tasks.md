@@ -39,8 +39,8 @@
 - [X] T009 [US1] Point the `workflow_call` output `converged` and the metrics record's convergence field at `jobs.implement-dispatch.outputs.converged` in `.github/workflows/implement.yml` (FR-006); other outputs keep their names
 - [X] T010 [US1] Stall hand-off (`handoff=true`, blocker and cap alike): in `implement-dispatch`, wait for the post job at most the suite budget, post one lifecycle-issue comment starting `<!-- wing-commander:post-agent-verdict -->` with outcome, head and fenced first failure (or "no verdict produced: <reason>") per data-model.md `Stall hand-off verdict`, then dispatch finalize unchanged; the outcome never blocks the hand-off (FR-014)
 - [X] T011 [P] [US1] In `.github/workflows/finalize.yml` read the newest `<!-- wing-commander:post-agent-verdict -->` comment on the lifecycle issue and render it (or the "none produced" report) in the final PR body as untrusted fenced text; do not change finalize's `workflow_dispatch` inputs (FR-014, SC-007)
-- [ ] T012 [P] [US1] Extend `.github/scripts/verify-gate-suite-credential-free.py` (with self-test cases): `gate-suite-implement-post` holds `contents: read` only and no App-token step; `implement-dispatch` is its registered reader; no `run-local-gates.py` invocation in `implement-dispatch`
-- [ ] T013 [P] [US1] Create `.github/scripts/verify-implement-post-verdict.py` with `--self-test`: asserts the dispatch step exists exactly once in `implement.yml` inside `implement-dispatch`, the post job's `if:` and budget-below-timeout (FR-007), `converged` output sourced from `implement-dispatch`, and finalize's dispatch signature unchanged; register it with whatever lists `run-local-gates.py` and `lint-workflows.yml` use
+- [X] T012 [P] [US1] Extend `.github/scripts/verify-gate-suite-credential-free.py` (with self-test cases): `gate-suite-implement-post` holds `contents: read` only and no App-token step; `implement-dispatch` is its registered reader; no `run-local-gates.py` invocation in `implement-dispatch`
+- [X] T013 [P] [US1] Create `.github/scripts/verify-implement-post-verdict.py` with `--self-test`: asserts the dispatch step exists exactly once in `implement.yml` inside `implement-dispatch`, the post job's `if:` and budget-below-timeout (FR-007), `converged` output sourced from `implement-dispatch`, and finalize's dispatch signature unchanged; register it with whatever lists `run-local-gates.py` and `lint-workflows.yml` use
 - [ ] T014 [US1] Run the `review-step-gating` skill over the new `if:`/`needs` chain in `.github/workflows/implement.yml` and the `container-shell-safety` skill over the new container job; fix findings; run `python .github/scripts/run-local-gates.py`
 
 **Checkpoint**: US1 deliverable; converging cycles are judged post-agent.
@@ -53,9 +53,9 @@
 
 **Independent Test**: Read the implement prompt and CLAUDE.md "Before pushing"; neither asks for a full-suite run.
 
-- [ ] T015 [US2] Change the implement prompt text in `.github/workflows/implement.yml`: run only gates for changed files by name with `run-local-gates.py`'s existing name filter, full suite runs after the agent to decide convergence; keep the cycle-start result hand-over and the no-suite wording (FR-008, FR-009; no changed-file selector)
-- [ ] T016 [P] [US2] Update CLAUDE.md "Before pushing" (the part addressing the implement stage agent) to the same wording; owner approves with the final PR
-- [ ] T017 [US2] Extend the gate that pins prompt/guidance text (nearest existing `verify-*.py` covering implement prompt wording) so the two texts cannot contradict, with self-test cases
+- [X] T015 [US2] Change the implement prompt text in `.github/workflows/implement.yml`: run only gates for changed files by name with `run-local-gates.py`'s existing name filter, full suite runs after the agent to decide convergence; keep the cycle-start result hand-over and the no-suite wording (FR-008, FR-009; no changed-file selector)
+- [X] T016 [P] [US2] Update CLAUDE.md "Before pushing" (the part addressing the implement stage agent) to the same wording; owner approves with the final PR
+- [X] T017 [US2] Extend the gate that pins prompt/guidance text (nearest existing `verify-*.py` covering implement prompt wording) so the two texts cannot contradict, with self-test cases
 
 ---
 
@@ -66,7 +66,7 @@
 **Independent Test**: In the red case, step summary and lifecycle comment name "post-agent full suite" with the fenced first failing gate.
 
 - [X] T018 [US3] In `implement-dispatch` of `.github/workflows/implement.yml` render the non-convergence reason (step summary and lifecycle comment) as "post-agent full suite" plus the first failing gate in a fence, distinct from the unchecked-tasks reason, via the existing untrusted-text rendering helper (FR-010)
-- [ ] T019 [US3] Add self-test cases to `.github/scripts/verify-implement-post-verdict.py` asserting the reason strings are distinct and the first failure is fenced
+- [X] T019 [US3] Add self-test cases to `.github/scripts/verify-implement-post-verdict.py` asserting the reason strings are distinct and the first failure is fenced
 
 ---
 
@@ -85,7 +85,7 @@
 
 ## Phase 8: Convergence
 
-- [ ] T023 Make the metrics record's convergence field (`converged` in the implement job's "Record cycle outcome" jq at `.github/workflows/implement.yml`) report the final post-agent decision, not the tasks-only reading, or document in `contracts/post-agent-verdict.md` that the record keeps the tasks-only value; per FR-006 (partial)
+- [X] T023 Make the metrics record's convergence field (`converged` in the implement job's "Record cycle outcome" jq at `.github/workflows/implement.yml`) report the final post-agent decision, not the tasks-only reading, or document in `contracts/post-agent-verdict.md` that the record keeps the tasks-only value; per FR-006 (partial)
 
 ## Dependencies & Execution Order
 

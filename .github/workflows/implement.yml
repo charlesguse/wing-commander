@@ -1220,9 +1220,10 @@ jobs:
           already ran once, deterministically, before this agent step
           started, so its state at cycle start is known without spending a
           turn on it: $summary.
-          That is a starting point only, not a substitute for the gate-suite
-          run CLAUDE.md's \"Before pushing\" section still asks you to make
-          yourself once your own changes are in place."
+          That is a starting point only. Do not run the full suite yourself:
+          run only the gates for the files you changed, by name
+          (\`python .github/scripts/run-local-gates.py <name>\`). The full
+          suite runs after this agent step and decides convergence."
           fi
           d="wc-gate-suite-eof-$RANDOM$RANDOM$RANDOM"
           printf 'paragraph<<%s\n%s\n%s\n' "$d" "$paragraph" "$d" >> "$GITHUB_OUTPUT"
@@ -2215,9 +2216,10 @@ jobs:
           already ran once, deterministically, before this agent step
           started, so its state at retry start is known without spending a
           turn on it: $summary.
-          That is a starting point only, not a substitute for the gate-suite
-          run CLAUDE.md's \"Before pushing\" section still asks you to make
-          yourself once your own changes are in place."
+          That is a starting point only. Do not run the full suite yourself:
+          run only the gates for the files you changed, by name
+          (\`python .github/scripts/run-local-gates.py <name>\`). The full
+          suite runs after this agent step and decides convergence."
           fi
           d="wc-gate-suite-eof-$RANDOM$RANDOM$RANDOM"
           printf 'paragraph<<%s\n%s\n%s\n' "$d" "$paragraph" "$d" >> "$GITHUB_OUTPUT"
@@ -4285,10 +4287,11 @@ jobs:
 
       # The verdict for the head the implement job pushed, read fail-closed
       # (absent, unreadable, another head or a cancelled gate job all read as
-      # not-a-pass). Skipped only when the post-agent job itself was skipped.
+      # not-a-pass). Runs under the same condition as the post-agent job, so
+      # it is skipped exactly when that job was.
       - name: Read post-agent gate verdict
         id: verdict
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && needs.gate-suite-implement-post.result != 'skipped'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (needs.implement.outputs.tasks-converged == 'true' || needs.implement.outputs.handoff == 'true')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-verdict
         with:
           site: implement-post

@@ -1,47 +1,15 @@
-# Contract: post-agent verdict (live; fixed like code)
-
-## Jobs in `implement.yml`
-
-- `implement` — outputs added: `tasks-converged` (today's tasks-only
-  reading), `handoff`, `routed`, `truncated`, `head-sha`, plus the values
-  `implement-dispatch` needs. It no longer dispatches.
-- `gate-suite-implement-post` — `needs: [implement]`;
-  `if: !cancelled() && needs.implement.result == 'success' &&
-  (needs.implement.outputs.tasks-converged == 'true' ||
-  needs.implement.outputs.handoff == 'true')`; `permissions: contents: read`;
-  no App token, no `environment:` secrets; same `runs-on`/`container` as
-  `gate-suite-implement-cycle`; `timeout-minutes: 30`; composite input
-  `suite-timeout-minutes: "25"` (budget < timeout); outputs `script-exists`,
-  `ready`, `missing`.
-- `implement-dispatch` — `needs: [implement, gate-suite-implement-post]`;
-  `if: !cancelled() && needs.implement.result == 'success'`; holds the App
-  token; reads the verdict with `wing-commander-gate-verdict`
-  (`site: implement-post`, `expected-head-sha: needs.implement.outputs.head-sha`,
-  `gate-job-result`). Publishes the final `converged`.
-
-## workflow_call outputs
-
-`converged` is sourced from `jobs.implement-dispatch.outputs.converged`.
-Other outputs keep their names.
-
-## Decision rule
-
-See `data-model.md` table. Any unreadable input → not converged when the
-repository has a suite and the cycle would converge.
-
-## Stall hand-off to finalize
-
-Before dispatching finalize with `converged=false` on a `handoff=true` cycle,
-`implement-dispatch` posts one comment on the lifecycle issue starting
-`<!-- wing-commander:post-agent-verdict -->` carrying outcome, head and the
-fenced first failing gate (or "no verdict produced: <reason>"). Finalize reads
-the newest such comment and includes it in the final PR body. Finalize's
-`workflow_dispatch` inputs are unchanged.
-
-## Non-convergence rendering
-
 Lifecycle comment and step summary name "post-agent full suite" and quote the
 first failing gate in a fence, distinct from the unchecked-tasks reason.
+
+## Cycle outcome record (watchdog artifact)
+
+The implement job's "Record cycle outcome for watchdog" step writes its
+`converged` field before the post-agent job runs, so it keeps the
+**tasks-only** reading (the `tasks-converged` value). The final decision is
+the `converged` output of `implement-dispatch` (the workflow_call output) and
+the lifecycle comment it posts; the watchdog artifact's `converged` is a
+signal about the agent's own report, not the cycle's final verdict (FR-006,
+partial, by decision).
 
 ## Gate invariants
 
@@ -50,4 +18,6 @@ first failing gate in a fence, distinct from the unchecked-tasks reason.
   registered reader.
 - No `run-local-gates.py` invocation in `implement-dispatch`.
 - The dispatch step exists exactly once in `implement.yml`, in
-  `implement-dispatch`.
+  `implement-dispatch` (`verify-implement-post-verdict.py`, Gate 185, which
+  also pins the post job's `if:` and budget, the `converged` output's
+  source, finalize's inputs, the reason strings and the by-name guidance).
