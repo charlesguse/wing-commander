@@ -47,7 +47,7 @@ specs/130-board-messages-explain-line/
 ├── wc_message_parts.py              # new: renderer, schema, gap text
 ├── board-fixed-messages.json        # new: fixed-text registry
 ├── verify-board-message-parts.py    # new gate + fixtures dir
-├── board_readiness.py  board_prove.py   # truthful wording; options-follow hold
+├── board_readiness.py  board_prove.py   # truthful wording; options-follow hold (removed by owner decision, 2026-11-28)
 ├── board_backlog_lines.py           # tick record (FR-017)
 .github/workflows/board-loop.yml     # review body, first comment, PR body
 docs/reference.md                    # per its rule, if defaults/limits change

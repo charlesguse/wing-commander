@@ -44,7 +44,9 @@ settle the build choices the spec leaves to the plan.
   "Options follow" is a legal Options value; a later comment must list them
   before readiness (FR-003). Readiness is blocked deterministically by
   `board_readiness.py` when the PR's first comment says options follow and no
-  later options comment exists.
+  later options comment exists. (Readiness hold removed by owner decision,
+  2026-11-28: the later comment still lists them, and readiness does not
+  wait for it.)
 - **Alternatives**: agent posts the comment itself (rejected: IX, and it
   could omit a part).
 

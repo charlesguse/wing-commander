@@ -267,32 +267,14 @@ def derived_cases(name, fx):
 
 
 def options_roundtrip_problems():
-    """research.md D4: what the renderer posts is what readiness reads
-    back -- a follow first comment owes the options comment, the options
-    comment settles it, a given-options first comment owes nothing."""
-    bot = "bot[bot]"
+    """specs/130 FR-003 / MF008: "options follow" with no text to follow
+    renders a gap in the first comment and reads as not following, so no
+    empty "Options: not provided" comment is posted later."""
     ident = "bl-b9677278"
-    follow = {"options": {"state": "follow", "text": "A or B"}}
-    first = {"login": bot, "body": mp.render_explanation(follow, ident)}
-    later = {"login": bot, "body": mp.render_options(follow, ident)}
-    given = {"login": bot, "body": mp.render_explanation(
-        {"options": "A or B"}, ident)}
     problems = []
-    if not mp.options_comment_owed([first], bot):
-        problems.append("a follow first comment does not owe the options")
-    if mp.options_comment_owed([first, later], bot):
-        problems.append("the options comment does not settle what is owed")
-    if mp.options_comment_owed([given], bot):
-        problems.append("a given-options first comment owes the options")
-    if not mp.options_comment_owed([first, dict(later, login="x")], bot):
-        problems.append("another author's options comment settles the owed")
-    # MF008: "follow" with no text renders a gap and owes nothing, so no
-    # empty "Options: not provided" comment is posted to clear a hold.
     for empty in ({"state": "follow"}, {"state": "follow", "text": "  "}):
         parts = {"options": empty}
-        comment = {"login": bot, "body": mp.render_explanation(parts, ident)}
-        if mp.options_comment_owed([comment], bot):
-            problems.append("empty follow options owe a later comment")
+        comment = {"body": mp.render_explanation(parts, ident)}
         if mp.options_follow(parts):
             problems.append("empty follow options read as follow")
         if mp.gap_text("options", "empty") not in comment["body"]:
@@ -349,7 +331,7 @@ KNOWN_CLAIMS = ("board_merges_next_run", "board_merges_when_ready",
 # the registry fails, and so does a claim phrase in a registered source that
 # no registered variant carries (an untagged message).
 REQUIRED_IDS = ("merge-transient-fix", "prove-verify-only",
-                "readiness-next-step", "readiness-options-hold")
+                "readiness-next-step")
 CLAIM_PHRASE_RE = re.compile(
     r"next board-loop run|a maintainer may merge|board loop merges|"
     r"waits for a maintainer|nothing merges")
@@ -510,11 +492,6 @@ def wiring_problems(text):
     if m and "BOARD_LINE_ID" in m.group(1):
         problems.append("Explain the line on the PR (fix) skips issue items "
                         "(FR-001a)")
-    readiness = _step(text, "Evaluate readiness")
-    if ("/comments\" --paginate" not in readiness
-            or "pr_comments=pr_comments" not in readiness):
-        problems.append("Evaluate readiness does not pass the PR's comments "
-                        "to board_readiness (research.md D4 options hold)")
     return problems
 
 
@@ -541,11 +518,9 @@ def wiring_self_test():
         "no explain-parts output":
             ("explain-parts: ${{ steps.explain-extract", "x: ${{ steps.e"),
         "no options comment": ("render-options --in", "x --in"),
-        "no readiness options hold":
-            ("pr_comments=pr_comments, bot_login", "bot_login"),
         "explain step fails on a refused comment":
-            ("readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003).\"\n              exit 0",
-             "readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003).\"\n              exit 1"),
+            ("post the explanation and its options by hand (specs/130 FR-003).\"\n              exit 0",
+             "post the explanation and its options by hand (specs/130 FR-003).\"\n              exit 1"),
         "issue items skipped":
             ("        if: steps.push-pr.outputs.pr-url != ''\n        env:\n"
              "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"

@@ -40,17 +40,6 @@
       ]
     },
     {
-      "id": "readiness-options-hold",
-      "source": "board_readiness.py",
-      "variants": [
-        {
-          "when": {},
-          "text": "the first comment says the options follow, and no later board-loop comment on the PR lists them yet",
-          "claims": []
-        }
-      ]
-    },
-    {
       "id": "prove-verify-only",
       "source": "board_prove.py",
       "variants": [

@@ -3914,23 +3914,24 @@ jobs:
               # backstop re-check, the cross-link and the issue marker below
               # (MF003), so this warns and the step exits 0; the unexplained
               # PR is named for a human.
-              echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options are owed -- readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003)."
+              echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options were to follow -- post the explanation and its options by hand (specs/130 FR-003)."
               exit 0
             fi
             echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
             exit 0
           fi
           if [ -n "$options" ]; then
-            # Readiness holds while this comment is owed, so a transient
-            # failure is retried; if all tries fail the warning names the
-            # step to re-run.
+            # The first comment promised this one, so a transient failure
+            # is retried; if all tries fail the warning names the step to
+            # re-run. Readiness does not wait for it (owner decision,
+            # 2026-11-28).
             options_posted=0
             for attempt in 1 2 3; do
               if gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$options"; then options_posted=1; break; fi
               sleep $((attempt * 3))
             done
             [ "$options_posted" -eq 1 ] \
-              || echo "::warning::board-loop fix: the options comment the first comment promised could not be posted on PR #$PR_NUMBER after 3 tries; readiness holds until it is -- re-run 'Explain the line on the PR (fix)' or post the options by hand (specs/130 FR-003)."
+              || echo "::warning::board-loop fix: the options comment the first comment promised could not be posted on PR #$PR_NUMBER after 3 tries -- re-run 'Explain the line on the PR (fix)' or post the options by hand (specs/130 FR-003)."
           fi
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
@@ -5953,19 +5954,9 @@ jobs:
           BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
           BACKSTOP_HEAD_SHA: ${{ steps.final-diff-backstop.outputs.head-sha }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,statusCheckRollup > "$RUNNER_TEMP/board-readiness-snapshot.json"
-          # specs/130 FR-003 / research.md D4: the PR's own comments, oldest
-          # first, so board_readiness.py can hold readiness while the
-          # options the first comment promised are not posted. A failed read
-          # is passed on as "unreadable", which holds readiness too.
-          if ! gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-              --jq '.[] | {login: .user.login, body}' | jq -s '.' > "$RUNNER_TEMP/board-readiness-comments.json"; then
-            echo "::warning::board-loop readiness: PR #$PR_NUMBER's comments could not be read -- the options check holds readiness (specs/130 FR-003)."
-            echo '"unreadable"' > "$RUNNER_TEMP/board-readiness-comments.json"
-          fi
 
           python3 -I - <<'PYEOF'
           import json
@@ -5979,16 +5970,9 @@ jobs:
           with open(os.path.join(runner_temp, "board-readiness-snapshot.json"), encoding="utf-8") as fh:
               snapshot = json.load(fh)
 
-          try:
-              with open(os.path.join(runner_temp, "board-readiness-comments.json"), encoding="utf-8") as fh:
-                  pr_comments = json.load(fh)
-          except (OSError, ValueError):
-              pr_comments = "unreadable"
-
           decision = evaluate_from_snapshot(
               snapshot, 0, os.environ["BACKSTOP_HOLDS"] == "true",
-              os.environ["PAUSED"] == "true",
-              pr_comments=pr_comments, bot_login=os.environ.get("BOT_LOGIN", ""))
+              os.environ["PAUSED"] == "true")
 
           with open(os.path.join(runner_temp, "board-readiness-decision.json"), "w", encoding="utf-8") as fh:
               json.dump(decision, fh)

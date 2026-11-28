@@ -17,12 +17,11 @@ must never be read as covering a later one (FR-037).
 (there is no other runtime entry point; specs/130 MF007).
 """
 import json
-import os
 import re
 import sys
 
 CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
-              "backstop_holds", "kill_switch_clear", "options_clear")
+              "backstop_holds", "kill_switch_clear")
 
 
 GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
@@ -285,41 +284,14 @@ def _unmet_class(rollup, checks_green):
     return "self-clearing"
 
 
-# evaluate_from_snapshot()'s `pr_comments` when the caller tried to read
-# the PR's comments and could not: the options check then fails closed.
-COMMENTS_UNREADABLE = "unreadable"
-
-
-def _options_state(pr_comments, bot_login):
-    """specs/130 FR-003 / research.md D4: "clear", "owed" (the loop's first
-    comment said the options follow and no later loop options comment
-    lists them) or "unreadable". wc_message_parts owns the markers."""
-    if pr_comments is None:
-        return "clear"
-    if not isinstance(pr_comments, list):
-        return "unreadable"
-    # Without a real login every comment would be skipped and the check
-    # would fail open, so an empty or bare "[bot]" login is unreadable.
-    if (not isinstance(bot_login, str)
-            or not bot_login.replace("[bot]", "").strip()):
-        return "unreadable"
-    from wc_message_parts import options_comment_owed
-    return "owed" if options_comment_owed(pr_comments, bot_login) else "clear"
-
-
 def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
-                            kill_switch_paused, now=None, pr_comments=None,
-                            bot_login=""):
+                            kill_switch_paused, now=None):
     """snapshot: {"headRefOid": str, "statusCheckRollup": [{"state"|
     "conclusion": str, "name"|"context": str, "workflowName": str}, ...]}
     -- the `gh pr view --json headRefOid,statusCheckRollup` shape, fetched
     fresh by the caller. Returns the ReadinessDecision dict
     (data-model.md), now including "unmet_class" (specs/093-not-ready-board-release):
-    "self-clearing" | "durable" | None (when ready).
-
-    pr_comments (specs/130 FR-003): the PR's comments, oldest first, when
-    the caller holds them; COMMENTS_UNREADABLE when it could not read
-    them; None to skip the options check (a caller with no board PR)."""
+    "self-clearing" | "durable" | None (when ready)."""
     head_sha = snapshot.get("headRefOid")
     rollup = snapshot.get("statusCheckRollup") or []
 
@@ -327,11 +299,9 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     gate_suite_green = checks_green and _gate_suite_green(rollup)
     zero_open_findings = open_in_scope_findings == 0
     kill_switch_clear = not kill_switch_paused
-    options_state = _options_state(pr_comments, bot_login)
-    options_clear = options_state == "clear"
 
     ready = (checks_green and gate_suite_green and zero_open_findings
-             and backstop_holds and kill_switch_clear and options_clear)
+             and backstop_holds and kill_switch_clear)
 
     unmet_reason = None
     unmet_class = None
@@ -345,10 +315,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         aggregate_pending = checks_green and _gate_suite_pending(rollup, now)
         if aggregate_pending:
             checks_class = "self-clearing"
-        # An owed options comment is durable: nothing posts it later on its
-        # own (specs/130 FR-003).
-        other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear
-                           and options_state != "owed")
+        other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear)
         unmet_class = "durable" if other_unmet else checks_class
         if not checks_green or aggregate_pending:
             if aggregate_pending:
@@ -381,8 +348,6 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                 unmet_reason += "; the size-and-path backstop does not hold on the final diff"
             if not kill_switch_clear:
                 unmet_reason += "; the kill switch is set"
-            if not options_clear:
-                unmet_reason += "; " + _OPTIONS_REASON[options_state]
         elif not gate_suite_green:
             unmet_reason = "the lint-workflows check is not green on head_sha {0}".format(head_sha)
         elif not zero_open_findings:
@@ -391,8 +356,6 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
             unmet_reason = "the size-and-path backstop does not hold on the final diff"
         elif not kill_switch_clear:
             unmet_reason = "the kill switch is set"
-        elif not options_clear:
-            unmet_reason = _OPTIONS_REASON[options_state]
 
     return {
         "head_sha": head_sha,
@@ -403,17 +366,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         "ready": ready,
         "unmet_reason": unmet_reason,
         "unmet_class": unmet_class,
-        "options_comment": options_state,
     }
-
-
-# fixed-message: readiness-options-hold (board-fixed-messages.json)
-_OPTIONS_REASON = {
-    "owed": ("the first comment says the options follow, and no later "
-             "board-loop comment on the PR lists them yet"),
-    "unreadable": ("the PR's comments could not be read to check whether "
-                   "the options the first comment promised were posted"),
-}
 
 
 def next_step_note(auto_merge_on, kill_switch_paused):
@@ -441,9 +394,7 @@ def main():
     payload = json.load(sys.stdin)
     decision = evaluate_from_snapshot(
         payload["snapshot"], payload["open_in_scope_findings"],
-        payload["backstop_holds"], payload["kill_switch_paused"],
-        pr_comments=payload.get("pr_comments"),
-        bot_login=payload.get("bot_login", ""))
+        payload["backstop_holds"], payload["kill_switch_paused"])
     print(json.dumps(decision))
 
 
