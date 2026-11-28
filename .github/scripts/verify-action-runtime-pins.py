@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Gate 170 - no external action pin targets a deprecated Node.js runtime.
+"""Gate 170 - no external action pin targets a deprecated Node.js runtime,
+and none keeps an Actions cache.
 
 WHY THIS EXISTS
 ---------------
@@ -27,6 +28,21 @@ reusable-workflow calls are not action pins) is looked up in
   * a row or a waiver for a pin nothing uses fails as stale, and so does a
     waiver for a pin whose runtime is not deprecated;
   * a runtime outside the known set fails, so a typo cannot read as clean.
+
+THE SECOND RULE: NO ACTIONS CACHE
+---------------------------------
+No workflow or composite in this repository restores or saves an Actions
+cache (owner decision, 2026-11-27). Over the same external steps:
+
+  * a step that uses actions/cache, or its restore or save sub-action,
+    fails;
+  * a setup action (an action named setup-*) fails unless SETUP_CACHE_INPUTS
+    names it. A row names the input that turns its cache off, or None for
+    a setup action that keeps no Actions cache;
+  * a step whose setup action has such an input fails unless the step sets
+    that input to false. A missing input counts as caching on, because
+    astral-sh/setup-uv's enable-cache defaults to auto, which restores and
+    saves one; so does an expression, which this gate cannot evaluate.
 
 WHY A COMMITTED TABLE, NOT A LIVE READ
 --------------------------------------
@@ -58,6 +74,35 @@ PINS_PATH = ".github/scripts/action-runtime-pins.json"
 WAIVERS_PATH = ".github/scripts/action-runtime-waivers.json"
 DEPRECATED = ("node12", "node16", "node20")
 KNOWN = DEPRECATED + ("node24", "composite", "docker")
+# The second rule (see the docstring). owner/repo of each setup action this
+# repository may use -> the input that turns its Actions cache off, or None
+# when the action keeps no Actions cache at all.
+CACHE_ACTION = "actions/cache"
+SETUP_CACHE_INPUTS = {"astral-sh/setup-uv": "enable-cache"}
+
+
+def cache_problem(uses, with_):
+    """-> why this step restores or saves an Actions cache, or None."""
+    path = uses.split("@", 1)[0].strip()
+    owner_repo = "/".join(path.split("/")[:2])
+    if owner_repo == CACHE_ACTION:
+        return "restores or saves an Actions cache"
+    if owner_repo in SETUP_CACHE_INPUTS:
+        key = SETUP_CACHE_INPUTS[owner_repo]
+    elif path.split("/")[1].startswith("setup-"):
+        return ("is a setup action with no row in SETUP_CACHE_INPUTS; read "
+                "how it caches and add the input that turns caching off")
+    else:
+        return None
+    if key is None:
+        return None
+    value = with_.get(key) if isinstance(with_, dict) else None
+    if value is False or (isinstance(value, str)
+                          and value.strip().lower() == "false"):
+        return None
+    return ("leaves {0} at {1}, so it restores and saves an Actions cache; "
+            "set {0}: false".format(
+                key, "its default" if value is None else repr(value)))
 
 
 def _rel(root, path):
@@ -120,6 +165,12 @@ def discover(root="."):
             if is_action_pin(uses):
                 found.setdefault(uses.strip(), []).append(
                     "{0}:{1}".format(rel, job))
+                why = cache_problem(uses, step.get("with"))
+                if why:
+                    failures.append(
+                        "{0} (used at {1}:{2}) {3}. No workflow or "
+                        "composite here keeps an Actions cache.".format(
+                            uses.strip(), rel, job, why))
     return found, failures
 
 
@@ -360,6 +411,42 @@ def self_test():
          ["actions/checkout@v5"], {"actions/checkout@v5": "node24"},
          "{not json", [WAIVERS_PATH + " does not parse"])
 
+    # The second rule: no Actions cache.
+    uv = "astral-sh/setup-uv@v10.0.0"
+    uv_pins = {"actions/checkout@v5": "node24", uv: "node24"}
+
+    def uv_with(value):
+        return uv + "\n        with:\n          enable-cache: " + value
+
+    case("setup-uv with enable-cache: false passes",
+         ["actions/checkout@v5", uv_with("false")], uv_pins, [], None)
+    case("setup-uv with enable-cache: 'false' (a string) passes",
+         ["actions/checkout@v5", uv_with("'false'")], uv_pins, [], None)
+    case("setup-uv with no enable-cache fails: its default, auto, caches",
+         ["actions/checkout@v5", uv], uv_pins, [],
+         [uv, "enable-cache at its default"])
+    case("setup-uv with enable-cache: true fails",
+         ["actions/checkout@v5", uv_with("true")], uv_pins, [],
+         ["enable-cache at True"])
+    case("setup-uv with enable-cache from an expression fails",
+         ["actions/checkout@v5", uv_with("${{ inputs.cache }}")], uv_pins,
+         [], ["enable-cache at '${{ inputs.cache }}'"])
+    case("actions/cache fails",
+         ["actions/checkout@v5", "actions/cache@v4"],
+         {"actions/checkout@v5": "node24", "actions/cache@v4": "node24"}, [],
+         ["actions/cache@v4", "restores or saves an Actions cache"])
+    case("actions/cache/restore inside a composite fails",
+         ["actions/checkout@v5"],
+         {"actions/checkout@v5": "node24",
+          "actions/cache/restore@v4": "node24"}, [],
+         ["actions/cache/restore@v4", ".github/actions/c/action.yml",
+          "restores or saves an Actions cache"],
+         composite_pin="actions/cache/restore@v4")
+    case("a setup action with no row in SETUP_CACHE_INPUTS fails",
+         ["actions/checkout@v5", "actions/setup-go@v5"],
+         {"actions/checkout@v5": "node24", "actions/setup-go@v5": "node24"},
+         [], ["actions/setup-go@v5", "no row in SETUP_CACHE_INPUTS"])
+
     passed = sum(results)
     print("verify-action-runtime-pins self-test: {0}/{1} passed".format(
         passed, len(results)))
@@ -380,7 +467,8 @@ def main():
         found, failures = run(args.root)
         if not failures:
             print("Gate 170: {0} external action pin(s), each with a "
-                  "recorded runtime, none deprecated unwaived.".format(
+                  "recorded runtime, none deprecated unwaived, and none "
+                  "keeping an Actions cache.".format(
                       len(found)))
     for f in failures:
         print("::error::Gate 170: " + f)

@@ -5052,10 +5052,13 @@ jobs:
       # older unless action-runtime-waivers.json waives it with an open
       # issue. #1128 first bumped download-artifact to @v6, which still
       # declares node20; nothing read an action's runtime until this gate.
-      - name: Gate 170 — no external action pin targets a deprecated Node.js runtime unwaived
+      # Its second rule (2026-11-27): no step restores or saves an Actions
+      # cache, so actions/cache fails and a setup action must turn its
+      # cache off.
+      - name: Gate 170 — no external action pin targets a deprecated Node.js runtime unwaived or keeps an Actions cache
         if: "!cancelled()"
         run: python3 .github/scripts/verify-action-runtime-pins.py
-      - name: Gate 170 self-test — an unwaived node20 pin, a pin with no row, a stale row, stale waivers and malformed registers each fail
+      - name: Gate 170 self-test — an unwaived node20 pin, a pin with no row, a stale row, stale waivers, malformed registers and a cache step each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-action-runtime-pins.py --self-test
       # Gate 172 — this workflow's own concurrency: block. A newer push to a

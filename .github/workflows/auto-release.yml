@@ -1084,6 +1084,9 @@ jobs:
         if: steps.speckit-version.outputs.ok == 'true'
         continue-on-error: true
         uses: astral-sh/setup-uv@v10.0.0
+        # Gate 170: no Actions cache (setup-uv's default restores and saves one).
+        with:
+          enable-cache: false
 
       # Scaffolds `specify init` output at this repository's own pinned
       # version, plus the minimal wrapper set docs/adoption.md documents --
