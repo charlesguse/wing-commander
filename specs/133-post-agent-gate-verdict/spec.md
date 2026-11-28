@@ -67,7 +67,8 @@ suite having judged the head that is handed off.
 
 The owner relies on the pipeline to hand a spec to finalize only when its
 branch passes the full gate suite. When an implement cycle's agent finishes and
-the cycle would converge (every task checked), a separate job that holds no
+the cycle would converge (no implementation task left unchecked, as
+convergence counts them today), a separate job that holds no
 credential able to write to the repository runs the full suite on the exact
 head the agent pushed. Only a pass lets the cycle converge; a red or absent
 verdict makes the cycle not converged, so the next implement cycle runs instead
@@ -84,12 +85,12 @@ convergence and the hand-off to finalize.
 
 **Acceptance Scenarios**:
 
-1. **Given** a cycle whose agent pushed a head with zero unchecked tasks and a
-   passing suite, **When** the post-agent gate job finishes, **Then** the cycle
+1. **Given** a cycle whose agent pushed a head with zero outstanding
+   implementation tasks and a passing suite, **When** the post-agent gate job finishes, **Then** the cycle
    is recorded converged and the next stage (finalize) is dispatched, exactly as
    a converged cycle is today.
-2. **Given** a cycle whose agent pushed a head with zero unchecked tasks and a
-   failing gate, **When** the post-agent gate job finishes, **Then** the cycle
+2. **Given** a cycle whose agent pushed a head with zero outstanding
+   implementation tasks and a failing gate, **When** the post-agent gate job finishes, **Then** the cycle
    is recorded not converged, the lifecycle shows the first failing gate's
    text, and the next implement cycle is dispatched instead of finalize.
 3. **Given** a cycle whose agent left tasks unchecked, **When** the agent step
@@ -197,9 +198,11 @@ and quote the first failing gate.
 ### Functional Requirements
 
 - **FR-001**: When an implement cycle's agent leg completes and the cycle would
-  converge (the completed, non-truncated attempt left zero unchecked tasks at
-  its pushed head), the full local gate suite MUST run on that exact head
-  before the cycle is recorded converged.
+  converge (the completed, non-truncated attempt left zero outstanding
+  implementation tasks at its pushed head, counted exactly as convergence
+  counts them today under specs 059 and 117, so `[maintainer]` and
+  unbuildable lines do not count), the full local gate suite MUST run on that
+  exact head before the cycle is recorded converged.
 - **FR-002**: The post-agent suite MUST run in an execution context that holds
   no credential able to write to the repository, on a runner of its own,
   separate from the job holding the App token — the boundary spec 095 (FR-001,
@@ -264,7 +267,8 @@ and quote the first failing gate.
 - **Post-agent verdict**: the result of one full-suite run on a cycle's pushed
   head — pass or fail, the first failing gate's text, and the head it judged.
 - **Converging cycle**: a completed, non-truncated implement attempt whose
-  pushed head has zero unchecked tasks; the only kind of cycle whose
+  pushed head has zero outstanding implementation tasks, counted as
+  convergence counts them today (FR-001); the only kind of cycle whose
   convergence the post-agent verdict decides.
 - **Stall hand-off**: a spec 117 hand-off to finalize with `handoff=true`
   (a named blocker or the iteration cap); the post-agent suite also judges
