@@ -26,9 +26,10 @@ The derived list was necessary, not sufficient.
 THE THREE CHECKS
 ----------------
 Over every published stage (wc_published_stages.py, the derivation
-Gates 7, 31 and 48 share -- a hardcoded list is what caused #149), read
-line by line as `grep` read them. An empty derivation fails: these
-checks examining nothing must never read as a pass.
+Gates 7, 31 and 48 share -- a hardcoded list is what caused #149).
+Checks 1 and 2 read each file line by line as `grep` read them; check 3
+reads the parsed workflow. An empty derivation fails: these checks
+examining nothing must never read as a pass.
 
   1. No literal `main` as a branch ref. The word may appear in prose, so
      only the wired forms are matched: `--base main`, `ref: main`,
@@ -41,18 +42,30 @@ checks examining nothing must never read as a pass.
      -- never as a hardcoded target (FR-005).
 
   3. Every agent step carries both `--model ` and `--max-turns `
-     (constitution II). Count-based, per file: agent steps must not
-     outnumber `--model ` lines or `--max-turns ` lines. Agent steps are
-     counted on the `uses: anthropics/claude-code-action` wiring form,
-     NOT a bare mention of the action, because a comment referring to
-     the action's issue tracker (`anthropics/claude-code-action#1462`)
-     would otherwise be counted as an agent step with no model.
+     (constitution II) in its own `claude_args`. Which step is an agent
+     step is wc_agent_step.is_agent_step(), the one predicate this gate
+     shares with Gate 23 (#889): a parsed claude-code-action step that
+     can reach a model. Comments are not counted, on either side: the
+     YAML parse drops YAML comments, shell comments inside `claude_args`
+     are stripped before the flags are matched, and a comment that
+     mentions the action (`anthropics/claude-code-action#1462`) is no
+     step at all. Until #889 this check counted lines textually,
+     comments included, so agent-startup-check.yml's credential-less
+     start-up step passed only through a comment carrying both flags,
+     while Gate 23 did not count that step at all. The report stays
+     count-based, per file: agent steps must not outnumber the agent
+     steps declaring `--model ` or those declaring `--max-turns ` (the
+     trailing space is part of each pattern).
 
-The matching is deliberately textual and line-based, exactly as the
-bash it replaces: `grep -c` counts lines, the trailing space on
-`--model ` and `--max-turns ` is part of the pattern, and a comment
-line is not stripped before matching. Changing any of that changes the
-contract, and this script is the one place the contract lives.
+Checks 1 and 2 stay textual and line-based, exactly as the bash they
+replace, comment lines included: a commented-out `ref: main` is still a
+hit. Changing that changes the contract, and this script is the one
+place the contract lives.
+
+The self-test also holds the agent-step predicate to its one home: a
+second copy of the `--max-turns`-in-`claude_args` test, or a second
+`def is_agent_step`, in any other script under .github/scripts/ fails
+it (CLAUDE.md "Shared logic has exactly one home").
 
 USAGE
 -----
@@ -64,7 +77,10 @@ import re
 import sys
 import tempfile
 
+import yaml
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_agent_step import claude_args_text, is_agent_step  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 
@@ -76,9 +92,8 @@ MAIN_REF_RE = re.compile(r"""(--base main|ref: main|origin/main[^_]|'main'|"main
 PUBLISHER = "charlesguse/wing-commander"
 PUBLISHER_ALLOWED = "default: charlesguse/wing-commander"
 
-# Check 3: the wiring form of an agent step, and the two declarations
-# every one of them must carry. Trailing spaces are part of the pattern.
-AGENT_USES = "uses: anthropics/claude-code-action"
+# Check 3: the two declarations every agent step must carry. Which step
+# is one is wc_agent_step's call. Trailing spaces are part of the pattern.
 MODEL_FLAG = "--model "
 TURNS_FLAG = "--max-turns "
 
@@ -117,14 +132,27 @@ def publisher_errors(stages):
         "pipeline-repo input default (FR-005)."]
 
 
+def _agent_steps(path):
+    """Every agent step in the workflow at `path`, parsed. The file
+    already parsed once, in published_stages(), to be derived at all."""
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    found = []
+    for job in (doc.get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        found.extend(s for s in job.get("steps") or [] if is_agent_step(s))
+    return found
+
+
 def agent_flag_errors(stages):
     """Check 3 -> one ::error sentence per offending file, or []."""
     errors = []
     for f in stages:
-        lines = _lines(f)
-        agents = sum(AGENT_USES in l for l in lines)
-        models = sum(MODEL_FLAG in l for l in lines)
-        turns = sum(TURNS_FLAG in l for l in lines)
+        steps = _agent_steps(f)
+        agents = len(steps)
+        models = sum(MODEL_FLAG in claude_args_text(s) for s in steps)
+        turns = sum(TURNS_FLAG in claude_args_text(s) for s in steps)
         if agents > models or agents > turns:
             errors.append(
                 f"::error::{f}: {agents} agent step(s) but only {models} "
@@ -184,7 +212,47 @@ CLEAN_STAGE = (
     "      - run: git fetch origin origin/main_archive\n"
     "      - uses: anthropics/claude-code-action@v1\n"
     "        with:\n"
+    "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}\n"
     "          claude_args: --model x --max-turns 5\n")
+
+# agent-startup-check.yml's shape (#889): claude-code-action with no model
+# credential, so it reaches no model and is not an agent step. Its only
+# `--max-turns` is in comments, a YAML one and a shell one in claude_args.
+CREDENTIAL_LESS_STEP = (
+    "      - uses: anthropics/claude-code-action@v1\n"
+    "        with:\n"
+    "          github_token: ${{ github.token }}\n"
+    "          # met by this note: --model x --max-turns 1\n"
+    "          claude_args: |\n"
+    "            --model x\n"
+    "            # --max-turns 1\n")
+
+# The one home of the agent-step predicate, and the two shapes a second
+# copy of it takes: its definition, or its `--max-turns`-in-`claude_args`
+# test (the line verify-gate-23.py carried until #889).
+PREDICATE_HOME = "wc_agent_step.py"
+PREDICATE_COPY_RES = (
+    re.compile(r"^\s*def is_agent_step\b"),
+    re.compile(r"""["']--max-turns ?["']\s+in\b.*claude_args"""),
+)
+
+
+def predicate_copies(root):
+    """Every line outside PREDICATE_HOME, in a .py file under root/.github,
+    that defines or re-implements the agent-step predicate."""
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, ".github")):
+        dirnames.sort()
+        for name in sorted(filenames):
+            if not name.endswith(".py") or name == PREDICATE_HOME:
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for n, line in enumerate(fh, 1):
+                    if any(r.search(line) for r in PREDICATE_COPY_RES):
+                        hits.append(f"{os.path.relpath(path, root)}:{n}")
+    return hits
+
 
 DISPATCH_ONLY = ("on: workflow_dispatch\njobs:\n  a:\n"
                  "    runs-on: ubuntu-latest\n    steps:\n"
@@ -280,6 +348,67 @@ def self_test():
         check("check 3: a comment mentioning the action is not an agent "
               "step (anchored on the uses: wiring form)",
               not out, f"got {out!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        stages = fixture(td, lambda t: t.replace(
+            "--model x --max-turns 5",
+            "--model x # --max-turns 5"))
+        out = contract_errors(stages)
+        check("check 3: a credentialed agent step whose only --max-turns "
+              "is a shell comment in claude_args fails (#889: comments "
+              "are not counted)",
+              len(out) == 1 and "s2.yml: 1 agent step(s) but only 1 --model "
+              "/ 0 --max-turns" in out[0], f"got {out!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        stages = fixture(td, lambda t: t.replace(
+            "          claude_args: --model x --max-turns 5\n",
+            "          # --max-turns 5 is declared in this note\n"
+            "          claude_args: --model x\n"))
+        out = contract_errors(stages)
+        check("check 3: a credentialed agent step whose only --max-turns "
+              "is a YAML comment fails (#889: comments are not counted)",
+              len(out) == 1 and "/ 0 --max-turns" in out[0], f"got {out!r}")
+
+    with tempfile.TemporaryDirectory() as td:
+        stages = fixture(td, lambda t: t + CREDENTIAL_LESS_STEP.replace(
+            "            # --max-turns 1\n", "").replace(
+            "          # met by this note: --model x --max-turns 1\n", ""))
+        out = contract_errors(stages)
+        check("check 3: a credential-less claude-code-action step is not "
+              "an agent step and needs no note to pass (#889)",
+              not out, f"got {out!r}")
+
+    import yaml as _yaml
+    startup = _yaml.safe_load("steps:\n" + CREDENTIAL_LESS_STEP)["steps"][0]
+    real = _yaml.safe_load(CLEAN_STAGE)["jobs"]["a"]["steps"][1]
+    check("predicate: a credential-less step whose only --max-turns is in "
+          "a comment is not an agent step -- for Gate 50 and Gate 23 alike, "
+          "which both call wc_agent_step.is_agent_step",
+          is_agent_step(startup) is False)
+    check("predicate: a real agent step is one, for both gates",
+          is_agent_step(real) is True)
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    copies = predicate_copies(root)
+    check("single home: no script outside wc_agent_step.py defines or "
+          "re-implements the agent-step predicate", not copies,
+          f"got {copies!r}")
+    with tempfile.TemporaryDirectory() as td:
+        _write(os.path.join(td, ".github", "scripts", "verify-x.py"),
+               "def is_agent_step(step):\n    return True\n")
+        _write(os.path.join(td, ".github", "scripts", "verify-y.py"),
+               # Split so this fixture line is not itself a copy.
+               'ok = "--max-turns"' + ' in str(w.get("claude_args"))\n')
+        _write(os.path.join(td, ".github", "scripts", PREDICATE_HOME),
+               "def is_agent_step(step):\n    return True\n")
+        copies = predicate_copies(td)
+        check("single home: a planted second copy fails, in both shapes, "
+              "and the home itself does not",
+              copies == [os.path.join(".github", "scripts", "verify-x.py") + ":1",
+                         os.path.join(".github", "scripts", "verify-y.py") + ":1"],
+              f"got {copies!r}")
 
     with tempfile.TemporaryDirectory() as td:
         _write(os.path.join(td, ".github", "workflows", "dispatch.yml"),
