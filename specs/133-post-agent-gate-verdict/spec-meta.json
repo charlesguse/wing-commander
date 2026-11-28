@@ -1,3 +1,11 @@
-{"issue": 1180, "spec_dir": "specs/133-post-agent-gate-verdict",
- "feature_num": "133", "stage": "implement", "iteration": 1,
- "spec_branch": "spec/133-post-agent-gate-verdict"}
+{
+  "issue": 1180,
+  "spec_dir": "specs/133-post-agent-gate-verdict",
+  "feature_num": "133",
+  "stage": "implement",
+  "iteration": 1,
+  "spec_branch": "spec/133-post-agent-gate-verdict",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true
+}
