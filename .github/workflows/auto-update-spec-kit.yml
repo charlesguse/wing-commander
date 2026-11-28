@@ -1581,6 +1581,9 @@ jobs:
       # version deliberately; do not "normalise" it back to `@v10`.
       - name: Install uv (provides uvx for the Spec Kit CLI)
         uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        # Gate 170: no Actions cache (setup-uv's default restores and saves one).
+        with:
+          enable-cache: false
 
       - name: Write version-bump diff
         id: diff
@@ -1938,6 +1941,9 @@ jobs:
       # `prepare`'s copy: there is no floating `@v10` tag to resolve.
       - name: Install uv (provides uvx for the Spec Kit CLI)
         uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        # Gate 170: no Actions cache (setup-uv's default restores and saves one).
+        with:
+          enable-cache: false
 
       # specs/049-single-home-release-idioms: the detach-through-push
       # portion of this step (through the first empty commit) is now the

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Gate 170 - no external action pin targets a deprecated Node.js runtime.
+"""Gate 170 - no external action pin targets a deprecated Node.js runtime,
+and none keeps an Actions cache.
 
 WHY THIS EXISTS
 ---------------
@@ -27,6 +28,31 @@ reusable-workflow calls are not action pins) is looked up in
   * a row or a waiver for a pin nothing uses fails as stale, and so does a
     waiver for a pin whose runtime is not deprecated;
   * a runtime outside the known set fails, so a typo cannot read as clean.
+
+THE SECOND RULE: NO ACTIONS CACHE
+---------------------------------
+No workflow or composite in this repository restores or saves an Actions
+cache (owner decision, 2026-11-27). Over the same external steps, with
+action names compared case-insensitively:
+
+  * a step that uses actions/cache, or its restore or save sub-action,
+    fails;
+  * a step with a `with:` value that names the Actions cache backend
+    (type=gha, the cache-from / cache-to backend of buildx-based actions
+    such as docker/build-push-action) fails, and so does a cache-from or
+    cache-to value built from an expression, which this gate cannot read;
+  * a setup action (an action whose repository, or a sub-path under it,
+    is named setup-*) fails unless SETUP_CACHE_INPUTS names its path. A row
+    names the input that turns its cache off, or None for a setup action
+    that keeps no Actions cache;
+  * a step whose setup action has such an input fails unless the step sets
+    that input to false. A missing input counts as caching on, because
+    astral-sh/setup-uv's enable-cache defaults to auto, which restores and
+    saves one; so does an expression, which this gate cannot evaluate.
+
+The rule reads the `uses:` and `with:` of steps in this repository's own
+files. It does not read `run:` steps, or the steps inside an external
+composite action.
 
 WHY A COMMITTED TABLE, NOT A LIVE READ
 --------------------------------------
@@ -58,6 +84,52 @@ PINS_PATH = ".github/scripts/action-runtime-pins.json"
 WAIVERS_PATH = ".github/scripts/action-runtime-waivers.json"
 DEPRECATED = ("node12", "node16", "node20")
 KNOWN = DEPRECATED + ("node24", "composite", "docker")
+# The second rule (see the docstring). The path of each setup action this
+# repository may use (owner/repo, or owner/repo/sub-path for an action in a
+# sub-path), in lower case -> the input that turns its Actions cache off, or
+# None when the action keeps no Actions cache at all.
+CACHE_ACTION = "actions/cache"
+SETUP_CACHE_INPUTS = {"astral-sh/setup-uv": "enable-cache"}
+GHA_CACHE_BACKEND = "type=gha"
+BUILDX_CACHE_INPUTS = ("cache-from", "cache-to")
+
+
+def cache_problem(uses, with_):
+    """-> why this step restores or saves an Actions cache, or None."""
+    # Names compare case-insensitively; SETUP_CACHE_INPUTS keys are lower
+    # case.
+    path = uses.split("@", 1)[0].strip().lower()
+    parts = path.split("/")
+    with_ = with_ if isinstance(with_, dict) else {}
+    if "/".join(parts[:2]) == CACHE_ACTION:
+        return "restores or saves an Actions cache"
+    for name, value in sorted(with_.items(), key=lambda kv: str(kv[0])):
+        if not isinstance(value, str):
+            continue
+        if GHA_CACHE_BACKEND in value.lower():
+            return ("sets {0} to the Actions cache backend ({1}), which "
+                    "restores or saves an Actions cache".format(
+                        name, GHA_CACHE_BACKEND))
+        if str(name).lower() in BUILDX_CACHE_INPUTS and "${{" in value:
+            return ("sets {0} from an expression, which this gate cannot "
+                    "read for the Actions cache backend ({1})".format(
+                        name, GHA_CACHE_BACKEND))
+    if path in SETUP_CACHE_INPUTS:
+        key = SETUP_CACHE_INPUTS[path]
+    elif any(p.startswith("setup-") for p in parts[1:]):
+        return ("is a setup action with no row in SETUP_CACHE_INPUTS; read "
+                "how it caches and add the input that turns caching off")
+    else:
+        return None
+    if key is None:
+        return None
+    value = with_.get(key)
+    if value is False or (isinstance(value, str)
+                          and value.strip().lower() == "false"):
+        return None
+    return ("leaves {0} at {1}, so it restores and saves an Actions cache; "
+            "set {0}: false".format(
+                key, "its default" if value is None else repr(value)))
 
 
 def _rel(root, path):
@@ -120,6 +192,12 @@ def discover(root="."):
             if is_action_pin(uses):
                 found.setdefault(uses.strip(), []).append(
                     "{0}:{1}".format(rel, job))
+                why = cache_problem(uses, step.get("with"))
+                if why:
+                    failures.append(
+                        "{0} (used at {1}:{2}) {3}. No workflow or "
+                        "composite here keeps an Actions cache.".format(
+                            uses.strip(), rel, job, why))
     return found, failures
 
 
@@ -375,6 +453,92 @@ def self_test():
          ["actions/checkout@v5"], {"actions/checkout@v5": "node24"},
          "{not json", [WAIVERS_PATH + " does not parse"])
 
+    # The second rule: no Actions cache.
+    uv = "astral-sh/setup-uv@v10.0.0"
+    uv_pins = {"actions/checkout@v5": "node24", uv: "node24"}
+
+    def uv_with(value):
+        return uv + "\n        with:\n          enable-cache: " + value
+
+    case("setup-uv with enable-cache: false passes",
+         ["actions/checkout@v5", uv_with("false")], uv_pins, [], None)
+    case("setup-uv with enable-cache: 'false' (a string) passes",
+         ["actions/checkout@v5", uv_with("'false'")], uv_pins, [], None)
+    case("setup-uv with no enable-cache fails: its default, auto, caches",
+         ["actions/checkout@v5", uv], uv_pins, [],
+         [uv, "enable-cache at its default"])
+    case("setup-uv with enable-cache: true fails",
+         ["actions/checkout@v5", uv_with("true")], uv_pins, [],
+         ["enable-cache at True"])
+    case("setup-uv with enable-cache from an expression fails",
+         ["actions/checkout@v5", uv_with("${{ inputs.cache }}")], uv_pins,
+         [], ["enable-cache at '${{ inputs.cache }}'"])
+    case("actions/cache fails",
+         ["actions/checkout@v5", "actions/cache@v4"],
+         {"actions/checkout@v5": "node24", "actions/cache@v4": "node24"}, [],
+         ["actions/cache@v4", "restores or saves an Actions cache"])
+    case("actions/cache/restore inside a composite fails",
+         ["actions/checkout@v5"],
+         {"actions/checkout@v5": "node24",
+          "actions/cache/restore@v4": "node24"}, [],
+         ["actions/cache/restore@v4", ".github/actions/c/action.yml",
+          "restores or saves an Actions cache"],
+         composite_pin="actions/cache/restore@v4")
+    case("a setup action with no row in SETUP_CACHE_INPUTS fails",
+         ["actions/checkout@v5", "actions/setup-go@v5"],
+         {"actions/checkout@v5": "node24", "actions/setup-go@v5": "node24"},
+         [], ["actions/setup-go@v5", "no row in SETUP_CACHE_INPUTS"])
+
+    def with_lines(pin, **inputs):
+        return pin + "\n        with:" + "".join(
+            "\n          {0}: {1}".format(k.replace("_", "-"), v)
+            for k, v in inputs.items())
+
+    # Names compare case-insensitively.
+    case("actions/cache spelled in mixed case fails",
+         ["actions/checkout@v5", "Actions/Cache@v4"],
+         {"actions/checkout@v5": "node24", "Actions/Cache@v4": "node24"}, [],
+         ["Actions/Cache@v4", "restores or saves an Actions cache"])
+    mixed_uv = "Astral-SH/setup-uv@v10.0.0"
+    case("setup-uv spelled in mixed case with enable-cache: false passes",
+         ["actions/checkout@v5", with_lines(mixed_uv, enable_cache="false")],
+         {"actions/checkout@v5": "node24", mixed_uv: "node24"}, [], None)
+    case("a setup action spelled Setup-* with no row fails",
+         ["actions/checkout@v5", "Owner/Setup-Thing@v1"],
+         {"actions/checkout@v5": "node24", "Owner/Setup-Thing@v1": "node24"},
+         [], ["Owner/Setup-Thing@v1", "no row in SETUP_CACHE_INPUTS"])
+    # A setup action in a sub-path is a setup action too.
+    gradle = "gradle/actions/setup-gradle@v4"
+    case("a setup action in a sub-path with no row fails",
+         ["actions/checkout@v5", gradle],
+         {"actions/checkout@v5": "node24", gradle: "node24"}, [],
+         [gradle, "no row in SETUP_CACHE_INPUTS"])
+    # The Actions cache backend of buildx-based actions.
+    bpa = "docker/build-push-action@v6"
+    bpa_pins = {"actions/checkout@v5": "node24", bpa: "node20"}
+    bpa_waiver = [{"uses": bpa, "issue": "#889", "reason": "r"}]
+    case("build-push-action with cache-to: type=gha fails",
+         ["actions/checkout@v5",
+          with_lines(bpa, push="true", cache_to="type=gha,mode=max")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-to to the Actions cache backend"])
+    case("build-push-action with cache-from: type=gha fails",
+         ["actions/checkout@v5", with_lines(bpa, cache_from="type=gha")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-from to the Actions cache backend"])
+    case("build-push-action with cache-from from an expression fails",
+         ["actions/checkout@v5",
+          with_lines(bpa, cache_from="${{ inputs.cache }}")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-from from an expression"])
+    case("build-push-action with no cache input passes",
+         ["actions/checkout@v5", with_lines(bpa, push="true")],
+         bpa_pins, bpa_waiver, None)
+    case("build-push-action with a registry cache passes",
+         ["actions/checkout@v5",
+          with_lines(bpa, cache_from="type=registry,ref=r/c:cache")],
+         bpa_pins, bpa_waiver, None)
+
     # SC-010 / FR-017a: the update automation's rewrite (wc_action_pins.py,
     # the one home of that rewrite) applied to a copy of the shipped tree --
     # one pin moved to another SHA and comment with its rows passes, the
@@ -407,7 +571,8 @@ def main():
         found, failures = run(args.root)
         if not failures:
             print("Gate 170: {0} external action pin(s), each with a "
-                  "recorded runtime, none deprecated unwaived.".format(
+                  "recorded runtime, none deprecated unwaived, and none "
+                  "keeping an Actions cache.".format(
                       len(found)))
     for f in failures:
         print("::error::Gate 170: " + f)
