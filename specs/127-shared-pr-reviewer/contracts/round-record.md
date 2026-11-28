@@ -10,7 +10,7 @@ Posted once per round by the `record` job as an issue comment on the PR, authore
 
     <!-- wing-commander-shared-review-round: {json} -->
 
-Readers take only the last opener in a bot-authored body. A hand-off uses the same marker with `"kind": "handoff"` and no `verdict`. Fields: see data-model.md. A reader MUST ignore a record whose `run_id` fails confirmation (run id equals; path is the wrapper; default branch; completed success; calls this repository's `shared-pr-reviewer.yml`; artifact `shared-review-<head_sha>` exists).
+Readers take only the last opener in a bot-authored body. A hand-off uses the same marker with `"kind": "handoff"` and no `verdict`. Fields: see data-model.md. A reader MUST ignore a record whose `run_id` fails confirmation (run id equals; path is the wrapper; default branch; completed success; calls this repository's `shared-pr-reviewer.yml`; artifact `shared-review-<head_sha>` exists), and one whose `verdict` differs from the verdict of the record inside that artifact (`record-<head_sha>.md`, which the `record` job writes from the same file it posts). An artifact whose record cannot be read has no verdict, so its record does not confirm. When the artifact is gone (listed as expired, past its 90 days, deleted, or a 404/410 on download), every reader drops the record as unconfirmed. When the download fails any other way, the reader stops rather than counting the record: the reviewer's `state` step exits non-zero and the round posts nothing, and the merge-evidence watch reports `review_round_record` as not-read. Neither reader ever counts an unread artifact as a match.
 
 ## Refusal / stop
 Written only to the run summary: `refused: <reason>` or `paused`. Never a record.

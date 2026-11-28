@@ -137,6 +137,9 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
+      # Gate 168 checks that spec 123's live contract's Migration section
+      # names every migrate workflow input and decide verdict.
+      - "specs/123-implement-task-completion/contracts/buildable-classification.md"
       # Gate 180 (i) and (l) read these live contracts (and docs/**, above):
       # none may describe a comment admitted by its author's identity.
       - "specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md"

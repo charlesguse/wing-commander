@@ -30,4 +30,10 @@ Read `buildable-unchecked-count` from the composite at the spec-branch tip / PR 
 
 ## Migration
 
-`migrate-stranded-review-lifecycles.sh`: inputs `repo`, optional `dry-run`; idempotent; touches only open lifecycle issues whose spec-meta stage is `review` and `buildable-unchecked-count` > 0.
+One lifecycle per run. `migrate-stranded-review-lifecycles.yml` is dispatched by hand with inputs `issue` (the lifecycle issue number), `branch` (its `spec/*` branch; anything else stops the run before any read or write), `spec-dir` (its `specs/NNN-slug` directory) and `dry-run` (default `true`: report the verdict, change nothing). The decision has one home, `.github/actions/_shared/migrate-stranded-review-lifecycles.sh decide <issue-state> <spec-meta-stage> <handoff-marker-present> <buildable-unchecked-count>`, which prints one of:
+
+- `decision=migrate`: the issue is open, no hand-off marker comment exists, spec-meta's stage is `review` and `buildable-unchecked-count` > 0. The workflow sets spec-meta's stage to `stalled`, moves the label from `stage:review` to `stage:stalled` and posts the marker comment last.
+- `decision=comment-only`: stage is already `stalled` but the marker comment is missing (a partial earlier run); only the label move and the comment are redone.
+- `decision=skip reason=<why>`: `issue-not-open`, `already-migrated` (the marker comment exists), `not-at-review`, `count-unreadable` or `no-buildable-left`.
+
+Idempotent: the marker comment is the last write, so a finished hand-off is never repeated. A spec-meta.json that fails the self-identity check decides nothing.
