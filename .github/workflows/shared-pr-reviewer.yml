@@ -122,7 +122,7 @@ jobs:
       bot-login: ${{ steps.app.outputs.app-slug }}
     steps:
       - name: Checkout the default branch (scripts and prompts)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -261,14 +261,14 @@ jobs:
           jq '{prior: .prior}' input/state.json > input/memory.json
 
       - name: Upload the review inputs
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-input
           path: input/
           retention-days: 7
 
       - name: Upload the PR tree and the reviewer tree
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-trees
           include-hidden-files: true
@@ -303,12 +303,12 @@ jobs:
     timeout-minutes: 48
     steps:
       - name: Download the trees
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-trees
           path: trees
       - name: Download the review inputs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-input
           path: input
@@ -333,7 +333,7 @@ jobs:
             --origin-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
             || echo '{"status":"missing"}' > out/code-run.json
       - name: Upload the staged result
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-code-run
           path: out/code-run.json
@@ -355,12 +355,12 @@ jobs:
       ok: ${{ steps.upload.outcome == 'success' }}
     steps:
       - name: Checkout the default branch (prompts and composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download the review inputs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-input
           path: input
@@ -369,7 +369,7 @@ jobs:
       # settings; anything an agent could still load from them is
       # renamed to a .as-data name first, at every depth (P1).
       - name: Download the PR tree
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-trees
           path: ${{ runner.temp }}/shared-review-trees
@@ -380,7 +380,7 @@ jobs:
         run: python3 -I .github/scripts/wc_shared_review.py defuse-agent-config --root "$TREES"
       - name: Download the staged code-run result
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-code-run
           path: input
@@ -429,7 +429,7 @@ jobs:
       - name: Upload the agent execution log (find)
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-find
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -475,7 +475,7 @@ jobs:
         id: upload
         if: "!cancelled() && steps.stage.outputs.ok == 'true'"
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-find
           path: out/find.json
@@ -494,12 +494,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout the default branch (prompts and composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download the review inputs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-input
           path: input
@@ -508,7 +508,7 @@ jobs:
       # settings; anything an agent could still load from them is
       # renamed to a .as-data name first, at every depth (P1).
       - name: Download the PR tree
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-trees
           path: ${{ runner.temp }}/shared-review-trees
@@ -518,13 +518,13 @@ jobs:
           TREES: ${{ runner.temp }}/shared-review-trees
         run: python3 -I .github/scripts/wc_shared_review.py defuse-agent-config --root "$TREES"
       - name: Download the find output
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-find
           path: input
       - name: Download the staged code-run result
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-code-run
           path: input
@@ -574,7 +574,7 @@ jobs:
       - name: Upload the agent execution log (check)
         if: always() && steps.agent.outcome != 'skipped'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-check
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -620,7 +620,7 @@ jobs:
         id: upload
         if: "!cancelled() && steps.stage.outputs.ok == 'true'"
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-check
           path: out/check.json
@@ -638,18 +638,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout the default branch (scripts)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download the review inputs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: shared-review-input
           path: input
       - name: Download the staged results
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: shared-review-{code-run,find,check}
           path: input
@@ -695,7 +695,7 @@ jobs:
           mkdir -p artifact
           cp record.md "artifact/record-${HEAD_SHA}.md"
       - name: Upload the confirmation artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: shared-review-${{ needs.prepare.outputs.head-sha }}
           path: artifact/

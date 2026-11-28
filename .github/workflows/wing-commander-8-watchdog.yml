@@ -112,7 +112,7 @@ jobs:
       - name: Checkout the trial-bound composite
         continue-on-error: true
         timeout-minutes: 3
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           sparse-checkout: .github/actions
@@ -125,7 +125,7 @@ jobs:
         id: metrics
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
           path: .wing-commander-metrics

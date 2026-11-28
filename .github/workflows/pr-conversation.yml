@@ -577,7 +577,7 @@ jobs:
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -605,7 +605,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -878,7 +878,7 @@ jobs:
       # plausible?) — read-only, the default token is sufficient.
       - name: Checkout implementation branch (read-only)
         if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-identity.outputs.slug }}
           persist-credentials: false
@@ -1088,7 +1088,7 @@ jobs:
       # denied-tool detection is blind to this stage.
       - name: Upload Claude execution log
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-classify
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1155,7 +1155,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (classify)
         if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true' && steps.actor-gate.outputs.authorized == 'true' && always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-classify
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -1458,7 +1458,7 @@ jobs:
       # same attempt.
       - name: Upload classification bodies
         if: steps.confirm.outputs.legs != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications.json
@@ -1630,7 +1630,7 @@ jobs:
       round: ${{ steps.admit.outputs.round }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1657,7 +1657,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1850,7 +1850,7 @@ jobs:
       deployment: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1875,7 +1875,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1930,7 +1930,7 @@ jobs:
       # above in this file. A missing artifact fails this leg here, before
       # anything is mutated, rather than acting on an empty body.
       - name: Download classification bodies
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications
@@ -2200,7 +2200,7 @@ jobs:
 
       - name: Checkout working tree for this leg
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.route.outputs.checkout-ref }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -2484,7 +2484,7 @@ jobs:
 
       - name: Re-checkout pipeline repository (post-agent)
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2571,7 +2571,7 @@ jobs:
       # and artifact names must be unique within a run.
       - name: Upload Claude execution log (act)
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-act-${{ strategy.job-index }}
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -2728,7 +2728,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (act)
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.agent-needed == 'true' && always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-act-${{ strategy.job-index }}
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -3199,7 +3199,7 @@ jobs:
       implement-token: ${{ steps.claim.outputs.implement-token }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3226,7 +3226,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3265,7 +3265,7 @@ jobs:
 
       - name: Checkout spec branch at its current tip
         if: steps.tip.outputs.sha != needs.classify-and-announce.outputs.base-sha && steps.tip.outputs.sha != ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -3443,7 +3443,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3468,7 +3468,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3776,7 +3776,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3801,7 +3801,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3822,7 +3822,7 @@ jobs:
       # variable it always did -- see the classify-and-announce outputs:
       # block above in this file.
       - name: Download classification bodies
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications
@@ -3848,7 +3848,7 @@ jobs:
 
       - name: Checkout spec branch at its current tip
         if: steps.tip.outputs.sha != ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -4104,7 +4104,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4131,7 +4131,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -4256,7 +4256,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4283,7 +4283,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: needs.classify-and-announce.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

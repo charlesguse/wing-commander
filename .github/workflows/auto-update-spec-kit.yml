@@ -350,7 +350,7 @@ jobs:
       default-branch: ${{ steps.defbranch.outputs.name }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -375,7 +375,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -652,7 +652,7 @@ jobs:
       issue-number: ${{ steps.state.outputs.issue-number }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -675,7 +675,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -890,7 +890,7 @@ jobs:
       pinned-version: ${{ steps.entry.outputs.pinned-version }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -913,7 +913,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1192,7 +1192,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.decide.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-evaluate-path
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1518,7 +1518,7 @@ jobs:
       issue-number: ${{ needs.evaluate-path.outputs.issue-number }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -1542,7 +1542,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1580,7 +1580,7 @@ jobs:
       # all required actions", before any step runs. Bump this to the next full
       # version deliberately; do not "normalise" it back to `@v10`.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       - name: Write version-bump diff
         id: diff
@@ -1710,7 +1710,7 @@ jobs:
           echo "prepare: bumped Spec Kit to v$CANDIDATE on $branch (bundled for verify/act)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload prepared branch bundle
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare.bundle
@@ -1774,7 +1774,7 @@ jobs:
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1797,7 +1797,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1937,7 +1937,7 @@ jobs:
       # on run 31658562063. Pinned to a full version for the same reason as
       # `prepare`'s copy: there is no floating `@v10` tag to resolve.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       # specs/049-single-home-release-idioms: the detach-through-push
       # portion of this step (through the first empty commit) is now the
@@ -2253,7 +2253,7 @@ jobs:
       # only route to the cause.
       - name: Upload Claude execution log
         if: always() && steps.decide.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-e2e-stage
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -2322,7 +2322,7 @@ jobs:
       - name: Upload e2e-stage diagnostics
         if: steps.readback.outputs.passed == 'false'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-stage-diagnostics
           path: ${{ runner.temp }}/e2e-stage-diagnostics.json
@@ -2412,7 +2412,7 @@ jobs:
       diagnostics-attempt: ${{ github.run_attempt }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2435,7 +2435,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2451,7 +2451,7 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Download prepared branch bundle
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
@@ -2632,7 +2632,7 @@ jobs:
       - name: Download e2e-stage diagnostics
         if: needs.e2e-stage.outputs.passed == 'false'
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: e2e-stage-diagnostics
           path: ${{ runner.temp }}/e2e-stage-diagnostics
@@ -2802,7 +2802,7 @@ jobs:
       - name: Upload verify diagnostics
         if: always() && steps.result.outcome == 'success'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: verify-diagnostics
           path: ${{ runner.temp }}/verify-diagnostics.json
@@ -2851,7 +2851,7 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -2875,7 +2875,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3017,7 +3017,7 @@ jobs:
       # verify verdict to report.
       - name: Download prepared branch bundle
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
@@ -3031,7 +3031,7 @@ jobs:
       - name: Download verify diagnostics
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: verify-diagnostics
           path: ${{ runner.temp }}/verify-diagnostics
@@ -3252,7 +3252,7 @@ jobs:
       # a human merge, as for any unconfirmed record.
       - name: Record the verified head on the run
         if: steps.open-pr.outputs.verified-head != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wc-bump-verification-${{ steps.open-pr.outputs.verified-head }}
           path: ${{ runner.temp }}/wc-bump-verification.md
@@ -3375,7 +3375,7 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3398,7 +3398,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3537,7 +3537,7 @@ jobs:
       issue-number: ${{ inputs.issue-number }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3560,7 +3560,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3817,7 +3817,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.interpret.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-comment-reply
           path: ${{ runner.temp }}/claude-execution-output.json

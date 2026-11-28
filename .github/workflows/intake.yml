@@ -389,7 +389,7 @@ jobs:
       claim-label: ${{ steps.rerun.outputs.claim-label }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -413,7 +413,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -553,7 +553,7 @@ jobs:
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -577,7 +577,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -675,7 +675,7 @@ jobs:
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Re-checkout default branch as wing-commander-bot
         if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.defbranch.outputs.name }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1075,7 +1075,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent)
         id: pipeline-recheckout
         if: always() && steps.agent.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1364,7 +1364,7 @@ jobs:
       # the agent step completes, so nothing is lost reading it this early.
       - name: Upload Claude execution log
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1396,7 +1396,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record
         if: steps.lifecycle-gate.outputs.is-open == 'true' && always() && steps.agent.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -2048,7 +2048,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: needs.intake.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2073,7 +2073,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: needs.intake.outputs.refusal-reason == ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

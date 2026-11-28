@@ -74,7 +74,7 @@ jobs:
     steps:
       # The workflow_run payload carries the inspected run's identity
       # directly; no resolve job needed.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 

@@ -88,7 +88,7 @@ jobs:
       review-gate-head-sha: ${{ steps.select.outputs.review-gate-head-sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -99,7 +99,7 @@ jobs:
       # "every job, no exceptions" convention (its own `select` job, which
       # is equally always-trusted, does the same).
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -382,7 +382,7 @@ jobs:
       ready: ${{ steps.decide.outputs.ready }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -390,7 +390,7 @@ jobs:
       # file-wide uniformity with every other job (see `select`'s own
       # identical note).
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -562,7 +562,7 @@ jobs:
       # that exact commit is not reachable, rather than silently resolving
       # a moved branch tip.
       - name: Checkout the PR's head commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.select.outputs.head-sha }}
           fetch-depth: 0
@@ -593,7 +593,7 @@ jobs:
       # supply the code (e.g. wing-commander-context, which mints the App's
       # private key) that reviews it.
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -838,7 +838,7 @@ jobs:
       - name: Upload metrics record (reviewer)
         if: always() && steps.reviewer.outcome != 'skipped'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -960,7 +960,7 @@ jobs:
       # can consume it without redoing extraction.
       - name: Upload the round's extracted findings
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lifecycle-review-findings
           path: ${{ runner.temp }}/lifecycle-review-findings.json
@@ -1151,7 +1151,7 @@ jobs:
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the PR's head ref
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.pr.outputs.branch }}
           fetch-depth: 0
@@ -1167,7 +1167,7 @@ jobs:
       # ".wc-pristine-repo" idiom, byte-for-byte), left untouched by
       # anything that happens to the workspace root after this point.
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -1282,7 +1282,7 @@ jobs:
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true'
           && (needs.review.outputs.in-scope-count != '0' || needs.review.outputs.out-of-scope-count != '0')
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: lifecycle-review-findings
           path: ${{ runner.temp }}/lifecycle-review-findings-artifact
@@ -1669,12 +1669,12 @@ jobs:
       # have to special-case), even though the workspace root here is
       # already trusted on its own.
       - name: Checkout (trusted, default branch)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -1892,12 +1892,12 @@ jobs:
       # gives it the same trusted-copy layout every other job in this file
       # uses, matching `report`'s own reasoning.
       - name: Checkout (trusted, default branch)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
