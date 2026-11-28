@@ -43,6 +43,12 @@ CADENCES = ("schedule", "event")  # data-model.md "Workflow ref"
 # Reference rows that are not a feature of their own (Gate 124 reads `issue=`).
 EXEMPT_UNREGISTERED = {
     "housekeeping": Exemption(reason="a group row; its members are registered one by one", issue=(889,)),
+    ".github/dependabot.yml (dependabot, github-actions only)": Exemption(
+        reason="Dependabot runs as GitHub's service, not as a workflow here, so "
+               "there is no run history for a health state (specs/132 FR-009b)",
+        issue=(), permanent=True,
+        permanent_reason="Not a workflow of this repository; its bump PRs pass through the gate suite like any PR.",
+        decided_by=(890,)),
 }
 # Emptied by T030: the corpus and its key are captured (fixtures/feature-health/sc001).
 EXEMPT_SC001_PENDING = {}

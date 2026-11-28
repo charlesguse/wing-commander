@@ -1,3 +1,12 @@
-{"issue": 1188, "spec_dir": "specs/132-workflow-trigger-security",
- "feature_num": "132", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 1188,
+  "spec_dir": "specs/132-workflow-trigger-security",
+  "feature_num": "132",
+  "stage": "review",
+  "iteration": 8,
+  "spec_branch": "spec/132-workflow-trigger-security",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true,
+  "pending_re_review_from": []
+}
