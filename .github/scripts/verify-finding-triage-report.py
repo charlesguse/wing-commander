@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 177 -- review-finding triage reports every drop and reject (specs/128).
+"""Gate 183 -- review-finding triage reports every drop and reject (specs/128).
 
 Drives wc_finding_triage over the checked-in corpus and checks:
 
