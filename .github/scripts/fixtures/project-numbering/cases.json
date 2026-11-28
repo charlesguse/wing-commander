@@ -25,6 +25,27 @@
     {"name": "nested: a/b and c/b share a last segment but not a sequence", "project": "c/b",
      "dirs": ["a/b/specs/009-inner"], "branches": ["spec/a/b/012-x"], "want": "001"}
   ],
+  "reserve": [
+    {"name": "a free number is reserved and held", "project": "",
+     "dirs": ["specs/004-a"], "branches": [], "want": ["005"], "left": ["spec-number:005"]},
+    {"name": "a number another intake holds moves on to the next", "project": "",
+     "dirs": ["specs/004-a"], "branches": [], "labels": ["spec-number:005", "spec-number:006"],
+     "want": ["007"], "left": ["spec-number:005", "spec-number:006", "spec-number:007"]},
+    {"name": "a project reserves in its own namespace", "project": "ideas/alpha",
+     "dirs": ["ideas/alpha/specs/002-x"], "branches": [], "labels": ["spec-number:003"],
+     "want": ["003"], "left": ["spec-number:003", "spec-number:ideas/alpha/003"]},
+    {"name": "a number a branch took while it was reserved is given back", "project": "",
+     "dirs": ["specs/004-a"], "branches": [], "env": {"FAKE_RACE_NUM": "005"},
+     "want": ["006"], "left": ["spec-number:006"]},
+    {"name": "any other API error fails holding nothing", "project": "",
+     "dirs": ["specs/004-a"], "branches": [], "env": {"FAKE_FAIL": "1"}, "want": null},
+    {"name": "three intakes at once win three numbers", "project": "",
+     "dirs": ["specs/004-a"], "branches": ["spec-draft/005-b"], "parallel": 3,
+     "want": ["006", "007", "008"], "left": ["spec-number:006", "spec-number:007", "spec-number:008"]},
+    {"name": "release-number gives every reservation back, and only a reservation", "project": "",
+     "dirs": [], "branches": [], "parallel": 3, "release": true, "labels": ["spec:001-not-a-reservation"],
+     "want": ["001", "002", "003"], "left": ["spec:001-not-a-reservation"]}
+  ],
   "collision": [
     {"name": "another project's 004 is not a claimant", "slug": "ideas/alpha/004-login",
      "prs": [[1, "spec-draft/ideas/alpha/004-login"], [2, "spec-draft/ideas/beta/004-other"], [3, "spec-draft/004-root"]],

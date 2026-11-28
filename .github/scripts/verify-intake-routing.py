@@ -11,11 +11,13 @@ fixtures/project-intake-routing/cases.json:
   * intake.yml's re-run refusal step (`rerun`, in the routing-gate job): with
     routing on, any `spec:` label refuses, with or without a routing label;
     the step and its refusal steps are skipped when routing is off;
-  * intake.yml's concurrency (research D8, FR-012), evaluated from the shipped
-    expressions: the routing gate holds a per-issue group, the numbering job
-    a per-project group (`wing-commander-intake` at the root, unchanged), so
-    two intakes routed to different projects never share a numbering group
-    while the same issue routed twice shares its gate group;
+  * intake.yml's concurrency, evaluated from the shipped expressions: the
+    routing gate holds a per-issue group, and the intake job a per-issue
+    group of its own (owner decision 2026-11-28, #889), keyed on the issue
+    alone, so intakes for different issues never share a group and the same
+    issue routed twice shares both; feature numbers are reserved by
+    wing-commander-project's allocate step, released by an always() step after
+    every push;
   * intake.yml's project guidance (`project-guidance`): the pipeline labels
     before it publishes, the agent hands over the push, label and PR, and the
     root prompt gains nothing;
@@ -32,7 +34,7 @@ fixtures/project-intake-routing/cases.json:
     subfolder slug over the label budget fails, the root has no budget;
   * root compatibility (FR-016, fixtures/project-root-compat/cases.json):
     with routing off, a `node:` label routes nothing, the routing gate is
-    skipped and the numbering group is still `wing-commander-intake`;
+    skipped and the intake group is the per-issue one;
   * the interface delta (FR-017, fixtures/project-root-compat/interface.json):
     no input, secret or output of a published stage was removed or renamed,
     and every new input is optional with its root-reproducing default.
@@ -829,17 +831,26 @@ def resolve_project(labels, bindir):
 
 
 def check_concurrency(doc, bindir, errors):
-    """Research D8 / FR-012: per-issue gate group, per-project numbering group."""
+    """Per-issue intake (owner decision 2026-11-28, #889): the intake job's
+    group is keyed on the issue alone, never shared across issues (GitHub
+    keeps one pending run per group, so a shared group cancelled the third of
+    three near-simultaneous intakes, #992); it is not the routing gate's
+    per-issue group; feature numbers are kept unique by the reservation that
+    check_number_reservation holds, not by a group."""
     jobs = doc["jobs"]
     gate, intake, stalled = jobs["routing-gate"], jobs["intake"], jobs["stalled"]
     gate_group = gate["concurrency"]["group"]
-    intake_group = intake["concurrency"]["group"]
+    intake_group = str(intake["concurrency"]["group"])
     if stalled["concurrency"]["group"] != intake_group:
-        errors.append("concurrency: the stalled job does not share the intake job's numbering group")
-    if gate["concurrency"].get("cancel-in-progress") is not False:
-        errors.append("concurrency: the routing gate's per-issue group may cancel a queued intake")
+        errors.append("concurrency: the stalled job does not share the intake job's per-issue group")
+    for name, job in (("routing gate", gate), ("intake job", intake), ("stalled job", stalled)):
+        if job["concurrency"].get("cancel-in-progress") is not False:
+            errors.append(f"concurrency: the {name}'s group may cancel a running run")
     if "routing-gate" not in (intake.get("needs") or []):
-        errors.append("concurrency: the numbering job does not `needs:` the routing gate")
+        errors.append("concurrency: the intake job does not `needs:` the routing gate")
+    if "inputs.issue-number" not in intake_group or "needs." in intake_group:
+        errors.append(f"concurrency: the intake job's group {intake_group!r} is not keyed on the issue "
+                      "alone -- a group shared across issues drops the third of three queued intakes")
 
     def groups(prefix, issue, labels):
         ctx = {"inputs.routing-label-prefix": prefix, "inputs.issue-number": issue,
@@ -853,19 +864,24 @@ def check_concurrency(doc, bindir, errors):
         return (interpolate(gate_group, ctx) if gate_runs else None), interpolate(intake_group, ctx)
 
     root_gate, root_num = groups("", "7", ["node:ideas/alpha"])
-    if root_gate is not None or root_num != "wing-commander-intake":
-        errors.append(f"concurrency: routing off changed intake (gate={root_gate!r}, group={root_num!r})")
+    if root_gate is not None:
+        errors.append(f"concurrency: routing off runs the routing gate (gate={root_gate!r})")
+    _, root8 = groups("", "8", ["spec-request"])
     a_gate, a_num = groups("node:", "7", ["node:ideas/alpha"])
     b_gate, b_num = groups("node:", "8", ["node:ideas/beta"])
     c_gate, c_num = groups("node:", "9", ["spec-request"])
-    if (a_num, b_num, c_num) != ("wing-commander-intake/ideas/alpha", "wing-commander-intake/ideas/beta",
-                                 "wing-commander-intake"):
-        errors.append(f"concurrency: numbering groups {a_num!r}, {b_num!r}, {c_num!r} are not per project")
+    d_gate, d_num = groups("node:", "10", ["node:ideas/alpha"])
+    if len({root_num, root8}) != 2 or len({a_num, b_num, c_num, d_num}) != 4:
+        errors.append(f"concurrency: two issues share one intake group ({root_num!r}, {root8!r}, "
+                      f"{a_num!r}, {b_num!r}, {c_num!r}, {d_num!r})")
     if a_gate == b_gate:
         errors.append("concurrency: two issues share one per-issue gate group")
+    if a_gate == a_num:
+        errors.append("concurrency: the intake job holds the routing gate's group, so a gate queued "
+                      "behind it can supersede a pending intake")
     a2_gate, a2_num = groups("node:", "7", ["node:ideas/beta"])
-    if a2_gate != a_gate or a2_num == a_num:
-        errors.append("concurrency: the same issue routed to two projects is not serialized by its gate group")
+    if a2_gate != a_gate or a2_num != a_num or root_num != a_num:
+        errors.append("concurrency: the same issue does not keep one intake group across routing and projects")
     ctx = {"inputs.routing-label-prefix": "node:", "needs.verify-image-prerequisites.result": "success",
            "cancelled()": False, "needs.routing-gate.result": "failure"}
     if evaluate_if(intake["if"], ctx):
@@ -877,6 +893,40 @@ def check_concurrency(doc, bindir, errors):
     ctx["needs.routing-gate.outputs.refused"] = ""
     if not evaluate_if(stalled["if"], ctx):
         errors.append("concurrency: a routing gate that died unrefused is not reported as a stall")
+
+
+def check_number_reservation(doc, errors):
+    """With no numbering group, the number intake allocates is reserved: the
+    composite's allocate step reserves it with a `spec-number:` label (whose
+    atomic-label behaviour verify-project-numbering.py drives), and the
+    intake job releases the reservation in an always() step after every push."""
+    steps = doc["jobs"]["intake"]["steps"]
+    num = step_by_id(steps, "num")
+    w = num.get("with") or {}
+    if not str(num.get("uses", "")).endswith("/wing-commander-project") or str(w.get("allocate-number")) != "true":
+        errors.append("reservation: 'Allocate feature number' no longer allocates through wing-commander-project")
+    with open(os.path.join(PROJECT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    number = next((s for s in action["runs"]["steps"] if s.get("id") == "number"), {})
+    if "repos/$GH_REPO/labels" not in str(number.get("run", "")):
+        errors.append("reservation: the composite's allocate step does not reserve its number with a label")
+    if "steps.number.outputs.reservation" not in str(action["outputs"].get("number-reservation", {}).get("value", "")):
+        errors.append("reservation: the composite does not output number-reservation")
+    rel = [s for s in steps if "release-number" in (s.get("with") or {})]
+    if len(rel) != 1:
+        errors.append(f"reservation: the intake job has {len(rel)} release-number step(s), want 1")
+        return
+    rel = rel[0]
+    after = [step_by_id(steps, sid) for sid in ("agent", "publish-stranded", "open-pr")]
+    if any(steps.index(rel) < steps.index(s) for s in after):
+        errors.append("reservation: the reservation is released before the spec-draft branch is pushed")
+    cond = " ".join(str(rel.get("if", "")).split())
+    if not cond.startswith("always()") or "steps.num.outputs.number-reservation" not in cond \
+            or rel.get("continue-on-error") is not True \
+            or str((rel.get("with") or {}).get("release-number")) != "${{ steps.num.outputs.number-reservation }}" \
+            or not str(rel.get("uses", "")).endswith("/wing-commander-project"):
+        errors.append(f"reservation: the release step is not an always(), continue-on-error "
+                      f"wing-commander-project call fed by steps.num.outputs.number-reservation (if={cond!r})")
 
 
 def stage_interface():
@@ -947,7 +997,7 @@ def check_interface(errors):
 
 
 def check_root_compat(bindir, errors):
-    """FR-016: with routing off, intake routes nothing and keeps its old numbering group."""
+    """FR-016: with routing off, intake routes nothing; its group is the per-issue one (#889)."""
     with open(ROOT_COMPAT, encoding="utf-8") as fh:
         off = json.load(fh)["routing_off"]
     project = None
@@ -966,8 +1016,8 @@ def check_root_compat(bindir, errors):
         errors.append("root-compat: the routing gate runs with routing off")
     ctx.update({"needs.routing-gate.result": "skipped", "needs.routing-gate.outputs.project": ""})
     group = interpolate(doc["jobs"]["intake"]["concurrency"]["group"], ctx)
-    if group != off["numbering_group"]:
-        errors.append(f"root-compat: routing-off numbering group {group!r}, want {off['numbering_group']!r}")
+    if group != off["intake_group"]:
+        errors.append(f"root-compat: routing-off intake group {group!r}, want {off['intake_group']!r}")
     # The routing gate is skipped, so no claim was taken: release-claim stays
     # off for every intake result, or it runs `--remove-label ""` (FR-016).
     rc_if = " ".join(str(doc["jobs"]["release-claim"].get("if", "")).split())
@@ -1078,6 +1128,7 @@ def main():
         check_open_pr(doc, bindir, errors)
         check_spec_pr_lookup(steps, bindir, errors)
         check_concurrency(doc, bindir, errors)
+        check_number_reservation(doc, errors)
         check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:
             write_exec(os.path.join(gitbin, "git"), FAKE_GIT)

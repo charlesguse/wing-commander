@@ -67,7 +67,7 @@ Limits and rules:
 | Hard turn stop | every agent step's `--max-turns` is 2.5 × its turn budget, rounded up | fixed (`wing-commander-turn-ceiling`) |
 | Paths the implement agent may not write | `.claude/`, `.git/` | `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS` |
 | Defects a stage files while working | implement and finalize file them, intake, clarify, plan and tasks do not; only a defect that can fail silently is filed, a loud or no-effect one is dropped and listed with its reason in the run summary; at most 3 per run after the drops, labelled `found-by:<stage>` | `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED`, `WING_COMMANDER_FINDINGS_CAP`, `WING_COMMANDER_FINDINGS_LABEL_PREFIX` |
-| Concurrency | one spec's stages run one at a time; different specs run in parallel; intake runs one at a time | fixed |
+| Concurrency | one spec's stages run one at a time; different specs run in parallel; intake runs one at a time per issue, intakes for different issues run in parallel, and each reserves its feature number with a `spec-number:[P/]NNN` label for the length of the run | fixed |
 | Lifecycles in implement at once | three, by convention only ([CLAUDE.md](../CLAUDE.md)); no code enforces it | none |
 | Runner and container | `ubuntu-latest`, no container | `WING_COMMANDER_RUNNER`, `WING_COMMANDER_CONTAINER_IMAGE` |
 | Project in a subfolder | off; a maintainer routes a lifecycle to a project folder | [adoption.md](adoption.md#multiple-projects-in-one-repository) |
@@ -336,6 +336,7 @@ The pipeline also creates these as it needs them:
 | Label | Written by | Means |
 |---|---|---|
 | `spec:NNN-slug` | intake | ties an issue to its spec directory |
+| `spec-number:[P/]NNN` | intake | a repository label (on no issue) reserving a feature number while an intake runs; removed at the end of the run, and one left behind only skips that number |
 | `stage:stalled` | tasks, implement, finalize, cleanup | a stage could not finish; the comment beside it says how to resume |
 | `pipeline-defect`, `🐕 · <class>` | watchdog | a finding and its class |
 | `found-by:<stage>` | a stage's filing step | a defect a stage met during its own work |

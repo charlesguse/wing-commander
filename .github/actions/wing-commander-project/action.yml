@@ -69,9 +69,17 @@ inputs:
       Intake only. `true` to also allocate the next feature number for the
       resolved project (`project-name.sh next-number`): the highest of the
       project's `specs/` and the anchored spec-draft and spec branches, plus
-      one. Empty `project` allocates for the repository root.
+      one, reserved with a `spec-number:` label (needs `token` with
+      issues: write). Empty `project` allocates for the repository root.
     required: false
     default: 'false'
+  release-number:
+    description: >-
+      Intake only. A `spec-number:[P/]NNN` reservation label an earlier
+      allocate-number call output (`number-reservation`), to delete. Needs
+      `token` with issues: write.
+    required: false
+    default: ''
   spec-draft-prefix:
     description: Branch prefix of spec drafts; used only by allocate-number.
     required: false
@@ -84,6 +92,12 @@ outputs:
   num:
     description: The allocated feature number (allocate-number only).
     value: ${{ steps.number.outputs.num }}
+  number-reservation:
+    description: >-
+      The `spec-number:[P/]NNN` label reserving `num` (allocate-number only).
+      The caller releases it (`release-number`) once the
+      spec-draft branch holds the number, or the run gave the number up.
+    value: ${{ steps.number.outputs.reservation }}
   project:
     description: The project path, empty for the repository root.
     value: ${{ steps.resolve.outputs.project }}
@@ -239,6 +253,20 @@ runs:
 
     # Per-project feature numbering (FR-009, FR-010). The root reproduces the
     # numbers intake allocated before this composite existed.
+    #
+    # The number is reserved, not only computed, without relying on a
+    # concurrency queue: intakes for different issues run at once (each
+    # holds only its own issue's group), and GitHub keeps one pending run per
+    # group, so a repository-wide numbering group would drop the third of
+    # three near-simultaneous intakes (#889). The reservation is a repository
+    # label `spec-number:[P/]NNN`, which GitHub creates atomically: a second
+    # create of one name fails `already_exists`, so two intakes never hold
+    # one number, and a taken number moves on to the next. Once a
+    # reservation is won the scan is read again, and a number a spec or
+    # branch took meanwhile (its intake had already released its
+    # reservation) is given back and the next one tried. The caller releases
+    # the label through `release-number` once the spec-draft branch holds
+    # the number.
     - name: Allocate feature number
       id: number
       if: inputs.allocate-number == 'true'
@@ -247,7 +275,49 @@ runs:
         PROJECT: ${{ steps.resolve.outputs.project }}
         SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
       run: |
-        num="$(bash "$GITHUB_ACTION_PATH/../_shared/project-name.sh" next-number "$PROJECT")" || exit 1
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        release() { gh api -X DELETE "repos/$GH_REPO/labels/$(jq -rn --arg s "$1" '$s | @uri')" >/dev/null; }
+        num="$(bash "$lib" next-number "$PROJECT")" || exit 1
+        label=""
+        desc="Wing Commander: feature number reserved by a running intake"
+        for (( i = 0; i < 25; i++ )); do
+          try="spec-number:${PROJECT:+$PROJECT/}$num"
+          # gh prints the response body (its `already_exists` code) on
+          # stdout and only the HTTP status on stderr, so both are read.
+          if err="$(gh api -X POST "repos/$GH_REPO/labels" -f name="$try" -f color=EDEDED -f description="$desc" 2>&1)"; then  # wc-gh-api-error-exempt: the body carries the already_exists code this loop branches on
+            fresh="$(bash "$lib" next-number "$PROJECT")" || { release "$try" || true; exit 1; }
+            if (( 10#$fresh <= 10#$num )); then label="$try"; break; fi
+            echo "Feature number $num was taken while it was being reserved; trying $fresh."
+            release "$try" || { echo "::error::wing-commander-project: could not release the reservation $try"; exit 1; }
+            num="$fresh"
+          else
+            case "$err" in
+              *already_exists*|*"already exists"*) num="$(printf '%03d' $(( 10#$num + 1 )))" ;;
+              *) echo "::error::wing-commander-project: could not reserve feature number $num ($try): $err"; exit 1 ;;
+            esac
+          fi
+        done
+        [ -n "$label" ] || { echo "::error::wing-commander-project: no free feature number after 25 reservation attempts"; exit 1; }
         echo "num=$num" >> "$GITHUB_OUTPUT"
+        echo "reservation=$label" >> "$GITHUB_OUTPUT"
         echo "Allocated feature number $num${PROJECT:+ for project $PROJECT}." >> "$GITHUB_STEP_SUMMARY"
+
+    # Give back a reservation the allocate step took -- see "Allocate
+    # feature number". Only a `spec-number:` label is ever deleted.
+    - name: Release feature-number reservation
+      id: release
+      if: inputs.release-number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        LABEL: ${{ inputs.release-number }}
+      run: |
+        case "$LABEL" in
+          spec-number:*) ;;
+          *) echo "::error::wing-commander-project: '$LABEL' is not a spec-number: reservation"; exit 1 ;;
+        esac
+        gh api -X DELETE "repos/$GH_REPO/labels/$(jq -rn --arg s "$LABEL" '$s | @uri')" >/dev/null
