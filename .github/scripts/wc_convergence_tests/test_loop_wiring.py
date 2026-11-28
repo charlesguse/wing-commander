@@ -28,7 +28,7 @@ BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
            "board_spec_request_body.py", "wc_lifecycle_review_marker.py",
            "lifecycle_readiness.py", "board_readiness.py", "wc_finding_triage.py",
-           "wc_message_parts.py")
+           "wc_message_parts.py", "board_backlog_lines.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()

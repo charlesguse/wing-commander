@@ -113,7 +113,8 @@ LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
                   "wc_schema_pattern.py", "board_spec_request_body.py",
                   "wc_convergence.py", "wc_review_finding_fingerprint.py",
-                  "wc_finding_triage.py", "wc_message_parts.py")
+                  "wc_finding_triage.py", "wc_message_parts.py",
+                  "board_backlog_lines.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
