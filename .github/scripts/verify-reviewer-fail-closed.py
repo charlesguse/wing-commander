@@ -733,10 +733,10 @@ def check_review_body_cap(compose_script, tmproot):
 def check_review_body_cap_mutation(compose_script, tmproot):
     """The pre-cap compose (every finding shown, max(2000, 60000 // n)
     each) must fail check_review_body_cap()."""
-    old_cap, old_budget = "MAX_SHOWN = 25\n", TAIL_BUDGET
-    if compose_script.count(old_cap) != 1 or compose_script.count(old_budget) != 1:
+    old_cap, old_budget = "MAX_SHOWN = 25\n", _budget_anchor(compose_script)
+    if compose_script.count(old_cap) != 1 or old_budget is None:
         return ["review body cap mutation: the compose step no longer has "
-                "one {0!r} and one {1!r}; update this harness".format(old_cap, old_budget)]
+                "one {0!r} and one of {1!r}; update this harness".format(old_cap, BUDGET_ANCHORS)]
     mutated = compose_script.replace(old_cap, "MAX_SHOWN = 10 ** 9\n", 1).replace(
         old_budget, "budget = max(2000, 60000 // max(1, len(shown)))\n", 1)
     import contextlib
@@ -758,6 +758,19 @@ def check_review_body_cap_mutation(compose_script, tmproot):
 # comes out of the findings' 57000, so a full round still posts.
 
 TAIL_BUDGET = 'budget = (57000 - utf16_len("\\n".join(tail))) // max(1, len(shown))\n'
+# The board loop's compose step reserves the head and the tail through
+# wc_message_parts.review_findings_budget() (spec 130); lifecycle-review-gate
+# still spells the sum inline. Each compose step must carry exactly one.
+BOARD_BUDGET = 'budget = review_findings_budget("\\n".join(lines), "\\n".join(tail), len(shown))\n'
+BUDGET_ANCHORS = (TAIL_BUDGET, BOARD_BUDGET)
+
+
+def _budget_anchor(script):
+    """The one budget line a compose step carries, or None."""
+    counts = [script.count(a) for a in BUDGET_ANCHORS]
+    if sorted(counts) != [0, 1]:
+        return None
+    return BUDGET_ANCHORS[counts.index(1)]
 UNRESERVED_BUDGET = "budget = 57000 // max(1, len(shown))\n"
 
 
@@ -826,11 +839,11 @@ def check_review_body_cap_with_tail_mutation(compose_scripts, tmproot):
     check_review_body_cap_with_tail() on every compose step."""
     failures = []
     for label, script, stem, env in compose_scripts:
-        if script.count(TAIL_BUDGET) != 1:
-            failures.append("{0}: no one {1!r}; update this harness".format(label, TAIL_BUDGET))
+        if _budget_anchor(script) is None:
+            failures.append("{0}: no one of {1!r}; update this harness".format(label, BUDGET_ANCHORS))
     if failures:
         return failures
-    mutated = [(label, script.replace(TAIL_BUDGET, UNRESERVED_BUDGET, 1), stem, env)
+    mutated = [(label, script.replace(_budget_anchor(script), UNRESERVED_BUDGET, 1), stem, env)
                for label, script, stem, env in compose_scripts]
     import contextlib
     import io

@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from board_spec_request_body import fenced_section, utf16_len  # noqa: E402
+import board_backlog_lines  # noqa: E402  (the closing-keyword pattern's one home)
 
 TOTAL_BUDGET = 57000
 LEAD_PART_BUDGET = 1500
@@ -46,11 +47,6 @@ REVIEW_PARTS = (
 )
 
 IDENTIFIER_RE = re.compile(r"^(bl-[0-9a-f]{4,64}|#[0-9]{1,9})$")
-CLOSING_RE = re.compile(
-    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:]*"
-    r"(?:(?:the|this|that|issue|bug|pr|pull request|ticket)\b[\s:]*)*"
-    r"(?:[\w.-]+/[\w.-]+)?(?:#\d+|GH-\d+|https?://\S+/(?:issues|pull)/\d+)",
-    re.IGNORECASE)
 
 
 # The fenced block the board loop's fixer ends its final message with
@@ -269,10 +265,10 @@ def render_summary(issue, pr, identifier, first_comment="", pr_is_title=False):
     the title is already on the PR, so it is exempt here."""
     _check_identifier(identifier)
     for text in ((issue,) if pr_is_title else (issue, pr)):
-        match = CLOSING_RE.search(text if isinstance(text, str) else "")
-        if match:
-            raise Refusal("closing keyword in summary: {0!r}".format(
-                match.group(1)))
+        hits = board_backlog_lines.closing_keyword_hits(
+            text if isinstance(text, str) else "", "", [])
+        if hits:
+            raise Refusal("closing keyword in summary: {0!r}".format(hits[0][1]))
     issue_state, issue_text, issue_kind = normalize_part(issue)
     pr_state, pr_text, pr_kind = normalize_part(pr)
     out = []

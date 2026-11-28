@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 177 (spec 130, FR-008): the board loop's message renderer.
+"""Gate 184 (spec 130, FR-008): the board loop's message renderer.
 
 Mode 1 renders every checked-in fixture in
 fixtures/board-message-parts/ -- plus a derived "one part missing" variant
@@ -168,16 +168,25 @@ def part_text_problems(mode, body, data):
     return problems
 
 
+# The forms GitHub closes an issue on; a pull URL closes nothing.
 CLOSING_FORMS = ("Closes #5", "Fixes GH-5", "Resolves o/r#5",
-                 "Closes https://github.com/o/r/issues/5",
-                 "Fixed https://github.com/o/r/pull/5")
+                 "Closes https://github.com/o/r/issues/5")
 
 
-def closing_forms_problems(pattern=None):
-    """MF004: every closing form the summary must refuse is matched."""
-    pattern = pattern or mp.CLOSING_RE
+def _refuses(text):
+    """Whether the summary renderer refuses `text` for a closing keyword."""
+    try:
+        mp.render_summary(text, "pr", "#7")
+    except mp.Refusal as exc:
+        return str(exc).startswith("closing keyword")
+    return False
+
+
+def closing_forms_problems(matcher=None):
+    """MF004: every closing form the summary must refuse is refused."""
+    matcher = matcher or _refuses
     return ["closing form {0!r} not matched".format(form)
-            for form in CLOSING_FORMS if not pattern.search(form)]
+            for form in CLOSING_FORMS if not matcher(form)]
 
 
 def _texts(data):
@@ -638,9 +647,8 @@ def self_test():
             failed.append(label)
     if check_body("render-explanation", ident, gap_body, gap_data):
         failed.append("sound explanation flagged")
-    if not closing_forms_problems(re.compile(
-            r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:]*#\d+", re.I)):
-        failed.append("CLOSING_RE without its GH-N and URL forms")
+    if not closing_forms_problems(lambda form: bool(re.search(r"#\d+", form))):
+        failed.append("a closing matcher without its GH-N and URL forms")
     swapped = {"messages": [{
         "id": "m", "source": "s", "reachable": {"auto_merge": True,
                                                  "kill_switch": False},
