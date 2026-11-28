@@ -214,9 +214,8 @@ jobs:
           prompt: "Start-up check: no model credential is supplied, so this prompt is never sent."
           allowed_bots: github-actions
           # No model call is reachable without a credential, so there is no
-          # turn ceiling to derive and no verdict to read (Gate 23 scopes on
-          # --max-turns in claude_args); constitution II's counts (Gate 50)
-          # are met by this note: --model claude-haiku-5-5 --max-turns 1
+          # turn ceiling to derive and no verdict to read: this is not an
+          # agent step for Gate 23 or Gate 50 (wc_agent_step.py, #889).
           claude_args: --model claude-haiku-5-5
       # Gate 16: every agent step's execution log survives its failure.
       # The credential-less run writes none, so this uploads nothing today.

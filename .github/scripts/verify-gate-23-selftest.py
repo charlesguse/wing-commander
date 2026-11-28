@@ -137,6 +137,49 @@ MULTIPLIER_EXPRESSION_IS_NOT_STATICALLY_KNOWABLE = replace_once(
     GOOD_JOB, CEILING_WITH,
     CEILING_WITH + "          multiplier: ${{ inputs.ceiling-multiplier }}\n")
 
+# #889: Gates 23 and 50 share one agent-step predicate
+# (wc_agent_step.py). agent-startup-check.yml's shape: claude-code-action
+# with no model credential, whose only `--max-turns` is in a comment -- a
+# YAML comment and a shell comment inside claude_args. Not an agent step,
+# so it needs none of the four pieces; checked beside a compliant site so
+# the zero-in-scope guard cannot be what decides the verdict.
+CREDENTIAL_LESS_COMMENT_ONLY_MAX_TURNS = {
+    "stage.yml": GOOD_JOB,
+    "startup.yml": """\
+name: startup
+on:
+  workflow_call:
+jobs:
+  startup-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - id: agent
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          # constitution II's note: --model claude-haiku-5-5 --max-turns 1
+          claude_args: |
+            --model claude-haiku-5-5
+            # --max-turns 1
+""",
+}
+
+# The other side of the same predicate: a step that can reach a model is an
+# agent step even when it lost its --max-turns, so it fails here instead of
+# leaving the gate's scope (the case Gate 50's old count caught).
+CREDENTIALED_WITHOUT_MAX_TURNS = replace_once(
+    GOOD_JOB,
+    "        with:\n"
+    "          claude_args: |\n"
+    "            --model claude-sonnet-5\n"
+    "            --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}\n",
+    "        with:\n"
+    "          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}\n"
+    "          claude_args: |\n"
+    "            --model claude-sonnet-5\n"
+    "            # --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}\n")
+
 UNPARSEABLE_ALONGSIDE_A_GOOD_SITE = {
     "stage.yml": GOOD_JOB,
     "broken.yml": "name: broken\njobs:\n   - [unclosed\n  bad: : :\n",
@@ -184,6 +227,12 @@ CASES = [
     ("a multiplier given as an expression passes — not statically knowable "
      "here, and the action validates it at runtime",
      MULTIPLIER_EXPRESSION_IS_NOT_STATICALLY_KNOWABLE, False, ()),
+    ("a credential-less claude-code-action step whose only --max-turns "
+     "is in a comment is not an agent step (#889, shared predicate)",
+     CREDENTIAL_LESS_COMMENT_ONLY_MAX_TURNS, False, ()),
+    ("a credentialed step whose --max-turns is only in a comment is still "
+     "an agent step, and fails, named (#889, shared predicate)",
+     CREDENTIALED_WITHOUT_MAX_TURNS, True, ("agent", "does not resolve")),
     ("a workflow that does not parse as YAML fails the gate rather than "
      "dropping out of coverage — checked alongside a compliant workflow so "
      "the zero-in-scope-sites guard cannot be what fails the run",
