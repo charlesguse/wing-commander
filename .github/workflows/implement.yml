@@ -2113,7 +2113,7 @@ jobs:
             exit 1
           fi
 
-      # FR-009a: mirrors "Preflight: gate-suite prerequisites (cycle)" (in
+      # FR-009a: mirrors "Prepare the gate suite (cycle)" (in
       # gate-suite-implement-cycle, spec 095) -- here actionlint comes from
       # this job's own "Install actionlint for the agent" above.
       - name: "Preflight: gate-suite prerequisites (retry)"
@@ -4255,9 +4255,10 @@ jobs:
   # The verdict is read, fail-closed and bound to the head, by
   # implement-dispatch -- never here.
   gate-suite-implement-post:
-    needs: [implement]
+    needs: [verify-image-prerequisites, implement]
     if: >-
       !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
       needs.implement.result == 'success' &&
       (needs.implement.outputs.tasks-converged == 'true' ||
       needs.implement.outputs.handoff == 'true')

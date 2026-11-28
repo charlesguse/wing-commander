@@ -3,7 +3,7 @@
   "spec_dir": "specs/133-post-agent-gate-verdict",
   "feature_num": "133",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/133-post-agent-gate-verdict",
   "truncated_count": 0,
   "truncated_tier": null,
