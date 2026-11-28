@@ -655,6 +655,16 @@ class ArtifactVerdict(unittest.TestCase):
         self.assertEqual(seen, ["repos/o/r/actions/artifacts/5/zip"])
         self.assertEqual(run["artifact_verdicts"], {self.NAME: "findings"})
 
+    def test_a_reruns_newest_artifact_wins(self):
+        # The API lists newest first; the re-run attempt's artifact decides.
+        zips = {"5": artifact_zip(sr.build_record(rec(verdict="findings"))),
+                "8": artifact_zip(sr.build_record(rec(verdict="clean")))}
+        run = sr.fetch_run_facts("o/r", "10", self.runs([
+            {"id": 8, "name": self.NAME, "created_at": "2026-01-02T00:00:00Z"},
+            {"id": 5, "name": self.NAME, "created_at": "2026-01-01T00:00:00Z"}]),
+            lambda args: zips[args[0].split("/")[-2]])
+        self.assertEqual(run["artifact_verdicts"], {self.NAME: "clean"})
+
     def test_a_gone_artifact_has_no_verdict(self):
         # Expired (listed as such, or 404/410 on download) or no zip reader:
         # the record it backs is unconfirmed, never a read failure.

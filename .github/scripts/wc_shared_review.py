@@ -1233,8 +1233,14 @@ def fetch_run_facts(repository, run_id, gh_runs, gh_zip=None):
     run["repository"] = (run.get("repository") or {}).get("full_name") or repository
     listed = [a for a in (arts or {}).get("artifacts", []) if isinstance(a, dict)]
     run["artifacts"] = [a.get("name") for a in listed]
-    run["artifact_verdicts"] = {a["name"]: _read_artifact_verdict(repository, a, gh_zip)
-                                for a in listed if HEAD_ARTIFACT_RE.match(str(a.get("name") or ""))}
+    # Oldest first, so of two same-named artifacts (a re-run's attempts)
+    # the newest one's verdict is kept: the re-run's record is the one
+    # latest_round prefers.
+    heads = sorted((a for a in listed if HEAD_ARTIFACT_RE.match(str(a.get("name") or ""))),
+                   key=lambda a: (str(a.get("created_at") or ""), int(a["id"]) if str(a.get("id")).isdigit() else 0))
+    run["artifact_verdicts"] = {}
+    for art in heads:
+        run["artifact_verdicts"][art["name"]] = _read_artifact_verdict(repository, art, gh_zip)
     run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
     return run
 
