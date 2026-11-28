@@ -33,6 +33,13 @@ WHAT IT CHECKS (watchdog.yml unless named)
    Gate 23 requires of the verdict and fail-loud steps) is allowed only
    beside `steps.diagnose-shadow.outcome != 'skipped'`, so it can only
    admit a run on which the shadow agent itself ran.
+3b. The family removes and re-checks out the pipeline checkout after the
+   shadow agent (spec 114 MF-46). Being continue-on-error, that pair's
+   failure skips nothing by itself, so every later family step with no
+   status function tests that neither pair step failed, directly or
+   through a family step that does. The re-checkout's token is exactly
+   `${{ github.token }}` and it leaves no credential behind
+   (`persist-credentials: false`).
 4. The agent step: `timeout-minutes` <= 5, and the Diagnose step's own
    timeout plus the shadow's plus OTHER_STEPS_MINUTES for every other step
    fits the job's backstop (a job timeout would cancel the job, and with
@@ -102,9 +109,20 @@ BAD_IF = re.compile(r"\|\||failure\(\)|success\(\)")
 STATUS_IF = re.compile(r"always\(\)|cancelled\(\)")
 AGENT_RAN = "steps.diagnose-shadow.outcome != 'skipped'"
 CLAUDE_SECRETS = {"claude-code-oauth-token", "anthropic-api-key"}
+PIPELINE_DIR = ".wing-commander-pipeline"
 
 
 _grants_gh = grants_gh  # the one detector, shared with Gate 93 check 4b
+
+
+def is_pipeline_removal(step):
+    return str((step or {}).get("run", "")).strip() == f"rm -rf -- {PIPELINE_DIR}"
+
+
+def is_pipeline_recheckout(step):
+    w = (step or {}).get("with") or {}
+    return (str((step or {}).get("uses", "")).startswith("actions/checkout@")
+            and str(w.get("path", "")) == PIPELINE_DIR)
 
 
 def load(path):
@@ -224,6 +242,40 @@ def check(watchdog, wrapper):
                  "or through a family step that is")
     if family and ENABLED not in str(family[0].get("if") or ""):
         fail(f"the first shadow step must test {ENABLED} itself")
+
+    # 3b. The shadow's pipeline removal/re-checkout pair (spec 114 MF-46) is
+    # continue-on-error like every family step, so a failure of it no longer
+    # skips the steps that carry no status function: each of those after the
+    # pair must test that neither pair step failed, directly or through a
+    # family step that does.
+    rm_at = next((k for k, s in enumerate(family) if is_pipeline_removal(s)), None)
+    co_at = next((k for k, s in enumerate(family) if is_pipeline_recheckout(s)), None)
+    if rm_at is None or co_at is None:
+        fail("the shadow family must remove and re-checkout the pipeline "
+             "checkout after the shadow agent (spec 114 MF-46)")
+    else:
+        cwith = family[co_at].get("with") or {}
+        if cwith.get("token") != GITHUB_TOKEN:
+            fail("the shadow's pipeline re-checkout token must be exactly "
+                 f"{GITHUB_TOKEN}, got {cwith.get('token')!r}")
+        if cwith.get("persist-credentials") is not False:
+            fail("the shadow's pipeline re-checkout must set "
+                 "persist-credentials: false")
+        needs = [f"steps.{family[k].get('id')}.outcome != 'failure'"
+                 for k in (rm_at, co_at)]
+        closed = set()
+        for s in family[max(rm_at, co_at) + 1:]:
+            cond = str(s.get("if") or "")
+            if STATUS_IF.search(cond):
+                continue
+            if all(n in cond for n in needs) or (step_ids_referenced(cond) & closed):
+                if s.get("id"):
+                    closed.add(s["id"])
+            else:
+                fail(f"shadow step {s.get('name')!r} can run after the shadow's "
+                     "pipeline re-checkout failed: its if: must test "
+                     + " and ".join(needs)
+                     + ", directly or through a family step that does")
 
     # 4/5. The agent step.
     if agents:
@@ -486,6 +538,14 @@ def _tool_step(wd):
     return next(s for s in _family(wd) if TOOL_ARGS in str(s.get("uses", "")))
 
 
+def _recheckout_step(wd):
+    return next(s for s in _family(wd) if is_pipeline_recheckout(s))
+
+
+def _findings_step(wd):
+    return next(s for s in _family(wd) if s.get("id") == "diagnose-shadow-findings")
+
+
 def _move_family_before_upload(wd):
     steps = _job(wd)["steps"]
     fam = _family(wd)
@@ -639,6 +699,22 @@ MUTATIONS = [
     ("the shadow agent runs without a healthy baseline",
      lambda wd, w: _tool_step(wd).__setitem__(
          "if", "steps.diagnose-shadow-prep.outcome == 'success'")),
+    ("a shadow record step runs after a failed pipeline re-checkout",
+     lambda wd, w: _findings_step(wd).__setitem__(
+         "if", "steps.diagnose-shadow-prep.outcome == 'success'")),
+    ("the shadow's pipeline re-checkout is not tolerated",
+     lambda wd, w: _recheckout_step(wd).pop("continue-on-error")),
+    ("the shadow's pipeline re-checkout leaves its token behind",
+     lambda wd, w: _recheckout_step(wd)["with"].__setitem__(
+         "persist-credentials", True)),
+    ("the shadow's pipeline re-checkout takes the pipeline read token",
+     lambda wd, w: _recheckout_step(wd)["with"].__setitem__(
+         "token", "${{ secrets.pipeline-repo-token || github.token }}")),
+    ("the shadow's pipeline re-checkout takes a step's token",
+     lambda wd, w: _recheckout_step(wd)["with"].__setitem__(
+         "token", "${{ steps.diagnose-shadow-prep.outputs.token }}")),
+    ("the shadow family loses its pipeline re-checkout",
+     lambda wd, w: _job(wd)["steps"].remove(_recheckout_step(wd))),
     ("wrapper hard-codes the shadow on",
      lambda wd, w: w["jobs"]["watchdog"]["with"].__setitem__(
          "diagnose-shadow-enabled", True)),

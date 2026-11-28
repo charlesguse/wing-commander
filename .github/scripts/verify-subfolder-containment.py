@@ -703,7 +703,13 @@ def check_pipeline_recheckout(errors, wf_dir=None):
     and nothing else -- in particular no project guard, since a root
     lifecycle runs the same composites, some holding WC_BOT_TOKEN or the
     App key. Subfolder-capable means the job uses wing-commander-containment
-    in any mode."""
+    in any mode.
+
+    The same holds in every other job whose agent step is followed by a step
+    that runs pipeline code (owner decision, 2026-11-27): the pair does not
+    depend on the agent's grant staying narrow. An agent step in a job with
+    no containment check and no pipeline step after it has nothing to
+    replace, so it is skipped."""
     wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
     covered = 0
     for fn in sorted(os.listdir(wf_dir)):
@@ -713,13 +719,14 @@ def check_pipeline_recheckout(errors, wf_dir=None):
             doc = yaml.safe_load(fh)
         for job_name, job in ((doc or {}).get("jobs") or {}).items():
             steps = job.get("steps") or []
-            if not any(str(s.get("uses", "")).endswith("/wing-commander-containment") for s in steps):
-                continue
+            contained = any(str(s.get("uses", "")).endswith("/wing-commander-containment") for s in steps)
             for i, s in enumerate(steps):
                 if "claude-code-action" not in str(s.get("uses", "")):
                     continue
                 after = steps[i + 1:]
                 first = next((j for j, t in enumerate(after) if _reads_pipeline(t)), len(after))
+                if not contained and first == len(after):
+                    continue
                 rm = next((j for j, t in enumerate(after[:first]) if _is_pipeline_removal(t)), None)
                 co = next((j for j, t in enumerate(after[:first]) if _is_pipeline_recheckout(t)), None)
                 where = f"{fn}:{job_name}: agent {s.get('name')!r}"
@@ -868,6 +875,34 @@ RECHECKOUT_MUTATIONS = {
                           "if: steps.agent.outcome != 'skipped'\n        run: rm"),
         "can skip after the agent ran"),
 }
+
+# A job with no containment check whose agent step is followed by pipeline
+# code (the shape of the updater's, pr-conversation classify's and the
+# watchdog's read-only agents) must have the pair too; one with no pipeline
+# step after its agent has nothing to replace.
+UNCONTAINED_UNRECHECKED = """\
+jobs:
+  read-only:
+    steps:
+      - id: pipeline-ref
+        run: echo ref=x >> "$GITHUB_OUTPUT"
+      - name: Agent
+        id: agent
+        uses: anthropics/claude-code-action@v1
+      - name: Compute agent run verdict
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+"""
+UNCONTAINED_QUIET = """\
+jobs:
+  reviewer:
+    steps:
+      - name: Agent
+        id: agent
+        uses: anthropics/claude-code-action@v1
+      - name: Stage the output
+        run: cp out.json "$RUNNER_TEMP/out.json"
+"""
 
 
 def staged_clone(tmp, case):
@@ -1399,6 +1434,20 @@ def main():
             check_pipeline_recheckout(probe, tmp)
             if not any("MF-46" in p and expect in p for p in probe):
                 errors.append(f"pipeline re-checkout: mutation {name!r} was not flagged ({expect!r})")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "uncontained.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNCONTAINED_UNRECHECKED)
+        probe = []
+        check_pipeline_recheckout(probe, tmp)
+        if not any("MF-46" in p and "is not followed by" in p for p in probe):
+            errors.append("pipeline re-checkout: an agent with no containment check, followed by pipeline code "
+                          "and no pair, was not flagged")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "quiet.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNCONTAINED_QUIET)
+        probe = []
+        if check_pipeline_recheckout(probe, tmp) != 0 or probe:
+            errors.append(f"pipeline re-checkout: an agent with no pipeline step after it was flagged: {probe}")
     if check_snapshot_freshness(errors) == 0:
         errors.append("snapshot freshness: no containment check reading helpers-dir was found -- the check has lost its subject")
     with tempfile.TemporaryDirectory() as tmp:

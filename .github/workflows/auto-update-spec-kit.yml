@@ -1144,6 +1144,24 @@ jobs:
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*),Read(//proc/**),Bash(*proc/*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.decide.outcome != 'skipped'
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.decide.outcome != 'skipped'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # spec 052 FR-005/SC-005 (second maintainer review of PR #407): steps
       # below "Decide upgrade path" deliberately keep reading
       # steps.ctx.outputs.token, not env.WC_BOT_TOKEN, and there is no
@@ -2142,6 +2160,24 @@ jobs:
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
             --allowedTools "Bash(e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Bash(bash e2e-scratch/.specify/scripts/bash/create-new-feature.sh:*),Write(e2e-scratch/**),Edit(e2e-scratch/**),Write(${{ steps.ctx.outputs.workspace }}/e2e-scratch/**),Edit(${{ steps.ctx.outputs.workspace }}/e2e-scratch/**)"
             --disallowedTools "WebSearch,WebFetch,Bash(git push:*),Read(//proc/**),Bash(*proc/*)"
+
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.decide.outcome != 'skipped'
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.decide.outcome != 'skipped'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
 
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
@@ -3790,6 +3826,24 @@ jobs:
             --allowedTools "Read"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash,Read(//proc/**),Bash(*proc/*)"
             --json-schema '{"type":"object","properties":{"recognized":{"type":"boolean"},"chosen_option":{"type":["string","null"]}},"required":["recognized"]}'
+
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.interpret.outcome != 'skipped'
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.interpret.outcome != 'skipped'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
 
       - name: Compute agent run verdict
         id: interpret-verdict
