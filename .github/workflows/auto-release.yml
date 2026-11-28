@@ -119,7 +119,7 @@ jobs:
         id: mode
         shell: bash
         env:
-          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED == 'true' }}
         run: |
           set -uo pipefail
           # Days since the Unix epoch, NOT day-of-year parity (SC-009): the
@@ -2464,7 +2464,7 @@ jobs:
           # Whether the container leg is paused at all (not only on this
           # run's container day): a left-open container failure must not
           # promise a container turn the pause will never run.
-          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED }}
+          CONTAINER_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED == 'true' }}
           TAG_EXISTS: ${{ needs.detect.outputs.tag-exists }}
           LATEST_TAG: ${{ needs.detect.outputs.latest-tag }}
           VERDICT_JSON: ${{ needs.verify-e2e.outputs.verdict }}

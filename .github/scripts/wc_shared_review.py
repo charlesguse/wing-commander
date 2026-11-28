@@ -27,6 +27,7 @@ from board_item_marker import (  # noqa: E402
     is_loop_branch, is_loop_marker_author, last_marker_match, marker_json, marker_regexes)
 from wc_review_finding_fingerprint import fingerprint as finding_fingerprint  # noqa: E402
 from board_backlog_lines import closing_keyword_refs  # noqa: E402
+from wc_board_status import _switch_on  # noqa: E402 -- the one switch rule's home
 
 MARKER = "wing-commander-shared-review-round"
 MARKER_RE, MARKER_OPEN_RE = marker_regexes(MARKER)
@@ -456,7 +457,7 @@ def guard(ref, default_branch, kind, paused, dismissals=None):
     """The guard job's decision: (proceed, reason). Never a record."""
     if not default_branch or ref != "refs/heads/{0}".format(default_branch):
         return False, "refused: not run from the default branch ({0})".format(ref)
-    if str(paused).lower() in ("true", "1", "yes"):
+    if _switch_on(paused):
         return False, "paused"
     ok, reason = validate_request(0, kind, dismissals)
     if not ok:

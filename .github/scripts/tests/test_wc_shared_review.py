@@ -273,6 +273,11 @@ class GuardAndBudget(unittest.TestCase):
         self.assertIn("refused", sr.guard("refs/heads/feat", "main", "fix", "")[1])
         self.assertEqual(sr.guard("refs/heads/main", "main", "spec", "")[0], False)
         self.assertEqual(sr.guard("refs/heads/main", "main", "fix", "true"), (False, "paused"))
+        # #889, the one switch rule: `true` in any case pauses; nothing else does.
+        for value in ("True", "TRUE"):
+            self.assertEqual(sr.guard("refs/heads/main", "main", "fix", value), (False, "paused"), value)
+        for value in ("1", "yes", "true ", "false", None):
+            self.assertEqual(sr.guard("refs/heads/main", "main", "fix", value), (True, None), value)
         self.assertEqual(sr.guard("refs/heads/main", "main", "fix", ""), (True, None))
 
     def test_budget(self):
