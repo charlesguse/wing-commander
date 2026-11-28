@@ -83,6 +83,10 @@
 
 ---
 
+## Phase 8: Convergence
+
+- [ ] T023 Make the metrics record's convergence field (`converged` in the implement job's "Record cycle outcome" jq at `.github/workflows/implement.yml`) report the final post-agent decision, not the tasks-only reading, or document in `contracts/post-agent-verdict.md` that the record keeps the tasks-only value; per FR-006 (partial)
+
 ## Dependencies & Execution Order
 
 - Phase 1 → Phase 2 (T002 ∥ T003; T004 after T003; T005 after T004) → Phase 3.
