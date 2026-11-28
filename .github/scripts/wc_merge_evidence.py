@@ -85,7 +85,7 @@ _RUN_LINK_RE = re.compile(any_run_url_pattern())
 # GitHub closing keyword. A mention ("refs #N", "for #N") never links one.
 _LIFECYCLE_LINE_RE = re.compile(r"(?m)^Lifecycle issue: #(\d+)[ \t\r]*$")
 # The keyword fallback reads board_backlog_lines.closing_keyword_refs(), the
-# closing-keyword pattern's one home (Gate 166 fails a copy here).
+# closing-keyword pattern's one home (Gate 191 fails a copy here).
 _FIX_ISSUE_RE = re.compile(r"fix/(\d+)-")
 
 

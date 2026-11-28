@@ -290,7 +290,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
-          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          # (kept in agreement by Gate 186, specs/038 FR-011a).
           REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
@@ -2428,12 +2428,12 @@ jobs:
   # at all (FR-005).
   diagnose:
     needs: [collect, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): collect now carries !cancelled() (it
+    # spec 058 (Gate 15/Gate 186): collect now carries !cancelled() (it
     # tolerates a skipped verify-image-prerequisites), so GitHub's
     # implicit success() no longer protects this job across the whole
     # needs-closure -- !cancelled() && needs.collect.result == 'success'
     # restates that protection explicitly, and a status-guarded job must
-    # directly depend on verify-image-prerequisites too (Gate 23).
+    # directly depend on verify-image-prerequisites too (Gate 186).
     # research.md R-B1 (spec 058): an empty aggregate signal set alone --
     # not "zero signals AND zero failed collectors" -- now skips diagnose
     # too. A pass with one or more failed collectors but nothing left to
@@ -3694,12 +3694,12 @@ jobs:
   # turns that case into a failure instead of a silent skip.
   triage:
     needs: [collect, diagnose, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): collect (and, transitively, diagnose)
+    # spec 058 (Gate 15/Gate 186): collect (and, transitively, diagnose)
     # now carries !cancelled() (it tolerates a skipped
     # verify-image-prerequisites), so GitHub's implicit success() no
     # longer protects this job across the whole needs-closure -- the
     # first four lines below restate that protection explicitly (and
-    # satisfy Gate 23's requirement that a status-guarded job directly
+    # satisfy Gate 186's requirement that a status-guarded job directly
     # depend on verify-image-prerequisites too); the rest is the
     # pre-existing guard, unchanged.
     if: >-
@@ -4840,7 +4840,7 @@ jobs:
   # `!cancelled()` rather than the default success() -- see
   # pr-conversation.yml for why the drop is decided at output collection,
   # independently of how the producing job ended. It defeats
-  # skip-propagation, so the image gate is re-checked explicitly (Gate 23,
+  # skip-propagation, so the image gate is re-checked explicitly (Gate 186,
   # the `stalled` job's shape). It posts the loss on the lifecycle issue
   # first — or the step summary when there is none, the same two delivery
   # paths diagnose's own reports use — then fails the run.

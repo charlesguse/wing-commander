@@ -48,13 +48,13 @@ on:
       # The cost of a literal list is that a fifth document can be added
       # without one, so verify-gate-wiring.py derives the paths gates
       # actually open and fails if this list does not cover them - the
-      # required-tools.txt/Gate 23 arrangement, applied to triggers
+      # required-tools.txt/Gate 186 arrangement, applied to triggers
       # instead of tools.
       - "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
       - "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
       - "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
-      # Gate 23's subject: the published image-prerequisite contract, whose
-      # tool table Gate 23 compares against required-tools.txt in both
+      # Gate 186's subject: the published image-prerequisite contract, whose
+      # tool table Gate 186 compares against required-tools.txt in both
       # directions. Editing the table alone is the one change that can make
       # the two disagree.
       - "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
@@ -117,7 +117,7 @@ on:
       # code reviews of #940; each gate compares its document with code,
       # so an edit to the document alone has to run the gate. Gate 84
       # reads labels-and-cross-links.md's board:stalled sources (#889).
-      # verify-board-merge.py (the board self-merge Gate 165) reads
+      # verify-board-merge.py (the board self-merge Gate 190) reads
       # readiness-report.md for unscoped "never merges" prose (#889), and
       # the spec 061/062 contracts below for "handed to a human" prose and
       # board-loop-workflow.md's job list for the `merge` entry that points
@@ -134,7 +134,7 @@ on:
       - "specs/055-unattended-e2e-gates/research.md"
       - "specs/055-unattended-e2e-gates/spec.md"
       - "specs/056-stage-found-defect-filing/data-model.md"
-      # Gate 165 reads spec 059's convergence-signal contract for its
+      # Gate 189 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
       # Gate 180 (i) and (l) read these live contracts (and docs/**, above):
@@ -1903,7 +1903,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-22.py
 
-      # Gate 23 — specs/038-runner-container-passthrough FR-010/FR-011: an
+      # Gate 186 — specs/038-runner-container-passthrough FR-010/FR-011: an
       # adopter-named container image must be checked for every required
       # tool, and the registry-credential failure path must say why it
       # failed, BEFORE any agent-bearing job's own container is created —
@@ -1915,7 +1915,9 @@ jobs:
       # requires the canonical tool list itself to stay truthful — checked
       # against actual `run:` invocations, not just asserted once at plan
       # time. T018-T028 wired all three by hand across eleven files.
-      - name: Gate 23 — every published stage checks adopter-chosen image prerequisites before any real job starts
+      # specs/038 calls it Gate 23; #889 renumbered it, as the turn-budget
+      # gate had that number first.
+      - name: Gate 186 — every published stage checks adopter-chosen image prerequisites before any real job starts
         if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
@@ -1925,7 +1927,7 @@ jobs:
           TOOLS_PATH = ".github/scripts/required-tools.txt"
           # The published document required-tools.txt's own header names as
           # the contract the canonical list implements, and which claims in
-          # its own prose to be "kept in agreement with reality by Gate 23".
+          # its own prose to be "kept in agreement with reality by Gate 186".
           # It was not: nothing compared the two, and the table stood at
           # seven tools while the canonical list gained `timeout` as an
           # eighth. A promise a document makes about a gate is worth
@@ -2201,7 +2203,7 @@ jobs:
 
           # FR-011a — the canonical list (data-model.md "Image prerequisite
           # contract") must not be missing a tool a run: block anywhere in
-          # the repository actually invokes, or Gate 23's own wiring check
+          # the repository actually invokes, or Gate 186's own wiring check
           # above is enforcing a contract nobody can satisfy honestly.
           tools_path = TOOLS_PATH
           try:
@@ -2209,7 +2211,7 @@ jobs:
                           for ln in open(tools_path, encoding="utf-8")}
               canonical = {t for t in canonical if t}
           except OSError:
-              print(f"::error file={tools_path}::Gate 23 could not read the canonical "
+              print(f"::error file={tools_path}::Gate 186 could not read the canonical "
                     f"required-tool list — FR-011a's drift check cannot run.")
               failures += 1
               canonical = set()
@@ -2217,7 +2219,7 @@ jobs:
           # FR-011a's third reader. required-tools.txt's header names
           # contracts/runner-container-passthrough.md as the document it
           # implements, and that document says of its own table that it is
-          # "kept in agreement with reality by Gate 23". Nothing checked it,
+          # "kept in agreement with reality by Gate 186". Nothing checked it,
           # so the two drifted in the quietest possible direction: the
           # canonical list gained `timeout` and the published contract an
           # adopter reads kept promising seven tools. Set difference, both
@@ -2226,7 +2228,7 @@ jobs:
           # tool nothing asks of them.
           declared = contract_tools(CONTRACT_PATH)
           if declared is None:
-              print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): could "
+              print(f"::error file={CONTRACT_PATH}::Gate 186 (FR-011a): could "
                     f"not find the canonical tool-list table (a `| Tool | "
                     f"Basis |` header) in the contract {TOOLS_PATH} names as "
                     f"the document it implements. Either the table moved, the "
@@ -2237,7 +2239,7 @@ jobs:
               missing = sorted(canonical - set(declared))
               extra = sorted(set(declared) - canonical)
               if missing or extra:
-                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                  print(f"::error file={CONTRACT_PATH}::Gate 186 (FR-011a): the "
                         f"published image-prerequisite contract and {TOOLS_PATH} "
                         f"name different tools. In {TOOLS_PATH} but not in the "
                         f"contract table: {missing or '(none)'} - an adopter "
@@ -2248,7 +2250,7 @@ jobs:
                         f"row (with its basis) or drop it.")
                   failures += 1
               if len(declared) != len(set(declared)):
-                  print(f"::error file={CONTRACT_PATH}::Gate 23 (FR-011a): the "
+                  print(f"::error file={CONTRACT_PATH}::Gate 186 (FR-011a): the "
                         f"contract's tool table lists a tool twice, so the set "
                         f"comparison above can agree while the table itself "
                         f"contradicts what a reader counts.")
@@ -2710,7 +2712,7 @@ jobs:
                                   ("ALWAYS_AVAILABLE", ALWAYS_AVAILABLE)):
               both = sorted(canonical & excluded)
               if both:
-                  print(f"::error file={tools_path}::Gate 23 (FR-011a): "
+                  print(f"::error file={tools_path}::Gate 186 (FR-011a): "
                         f"{', '.join(both)} is named by BOTH the canonical "
                         f"required-tool list and this gate's {label} "
                         f"exclusion. The two mean opposite things — one says "
@@ -2722,7 +2724,7 @@ jobs:
 
           drift = sorted(invoked - canonical - MAINTENANCE_ONLY - ALWAYS_AVAILABLE)
           if drift:
-              print(f"::error file={tools_path}::Gate 23 (FR-011a): a run: block "
+              print(f"::error file={tools_path}::Gate 186 (FR-011a): a run: block "
                     f"or .github/actions/_shared/ script "
                     f"somewhere in this repository invokes {', '.join(drift)}, which "
                     f"is in neither the canonical required-tool list nor a recorded "
@@ -2733,10 +2735,10 @@ jobs:
                     f"runner-level tooling this repository's own CI uses instead.")
               failures += 1
 
-          print(f"Gate 23: {stages} published stage(s), {len(invoked)} distinct "
+          print(f"Gate 186: {stages} published stage(s), {len(invoked)} distinct "
                 f"command token(s) scanned; {failures} failure(s).")
           if stages == 0:
-              print("::error::Gate 23 found no workflow declaring on.workflow_call — it "
+              print("::error::Gate 186 found no workflow declaring on.workflow_call — it "
                     "checked nothing. Either the published stages moved or this gate's "
                     "detection of them has broken.")
               sys.exit(1)
@@ -2744,15 +2746,16 @@ jobs:
           PYEOF
 
       # Same reasoning as Gate 22's self-test: the fleet this gate runs
-      # against is (and should stay) uniform, so a green Gate 23 on the real
-      # repository says nothing about whether Gate 23's detection works.
+      # against is (and should stay) uniform, so a green Gate 186 on the real
+      # repository says nothing about whether Gate 186's detection works.
       #
-      # This Gate 23 and the turn-budget Gate 23 above it (specs/037-agent-
+      # This gate and the turn-budget Gate 23 above (specs/037-agent-
       # turn-budget-guard) collided on both the gate number and the script
-      # filename when this feature's branch rebased onto that one. Both
-      # halves now live in .github/scripts/verify-gate-23.py, dispatched by
-      # argument — --selftest runs this one.
-      - name: Gate 23 self-test (turn-budget collision half) — the detector actually detects
+      # filename when this feature's branch rebased onto that one; its
+      # specs/038 documents still call it Gate 23. Both halves live in
+      # .github/scripts/verify-gate-23.py, dispatched by argument —
+      # --selftest runs this one. #889 renumbered this one to 186.
+      - name: Gate 186 self-test — the detector actually detects
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
@@ -3228,7 +3231,7 @@ jobs:
         run: python3 .github/scripts/verify-spec-meta-single-home.py --self-test
 
       # Gate 62 — specs/054-e2e-container-coverage (research.md D6, FR-019):
-      # Gate 23's drift check is purely textual (it compares the embedded
+      # Gate 186's drift check is purely textual (it compares the embedded
       # REQUIRED_TOOLS= literal against required-tools.txt) and cannot fail
       # if .github/docker/e2e-reference-image/Dockerfile silently stops
       # installing a tool the text still claims to install. This gate
@@ -3481,7 +3484,7 @@ jobs:
       # run-tests.sh -- neither counts as this script being invoked BY A
       # WORKFLOW (verify-gate-wiring.py's wiring rule), so this checked-in
       # positive fixture gives it that direct invocation too.
-      - name: Gate 71 — verify-stage-finding-schema.py validates its own checked-in fixture
+      - name: Gate 71 fixture — verify-stage-finding-schema.py validates its own checked-in fixture
         if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-finding-schema.py .github/scripts/fixtures/stage-finding-schema/valid.json
       - name: Gate 71 self-test — verify-stage-finding-schema.py rejects every negative fixture for the reason it exists to demonstrate
@@ -4504,15 +4507,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
 
-      # Gate 22 — wing-commander-agent-verdict (specs/037-agent-turn-budget-guard/)
-      # classifies a transcript correctly. Same discipline as Gate 11: the
-      # shipped run: block, extracted and executed against synthetic
+      # Gate 185 — wing-commander-agent-verdict (specs/037-agent-turn-budget-guard/)
+      # classifies a transcript correctly. specs/037, 040, 047 and 079 call
+      # it Gate 22, which the runner passthrough gate also took; #889
+      # renumbered this one, whose number nothing else is built on. Same
+      # discipline as Gate 11: the shipped run: block, extracted and
+      # executed against synthetic
       # transcripts covering healthy-but-would-be-rejected, genuinely errored,
       # exhausted, and unreadable, plus mutations reintroducing each defect
       # class (reading is_error/subtype from the wrong record, collapsing
       # unclassifiable/failed together, computing over-budget from the
       # reported rather than counted total) to prove the suite can go red.
-      - name: Gate 22 — the agent verdict composite classifies transcripts correctly
+      - name: Gate 185 — the agent verdict composite classifies transcripts correctly
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-verdict.py
 
@@ -4595,7 +4601,7 @@ jobs:
       # verdict branch, agent-startup-check.yml's startup-agent /
       # classify-startup jobs keep their no-credential, fail-closed shape,
       # classify-startup reports the image prerequisite check's result
-      # beside its verdict (the jobs' if: is Gate 23's alone),
+      # beside its verdict (the jobs' if: is Gate 186's alone),
       # private-image-dogfood.yml grants no permission (FR-010), and
       # wing-commander-private-image-dogfood.yml refuses (fails) a
       # dispatched image outside the owner's GHCR namespace.
@@ -4754,51 +4760,55 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-reference-image-pin-sync.py
 
-      # Gate 157 — specs/122-settled-spec-pr-review FR-025: every
+      # Gate 187 — specs/122-settled-spec-pr-review FR-025: every
       # deterministic decision spec-pr-review.yml acts on (settledness,
       # one review per head, budget, fix backstop, action plan, failed-
       # attempt cap) is made by .github/scripts/spec_pr_review.py and is
       # exercised by a checked-in fixture in
       # .github/scripts/spec-pr-review-fixtures/. A subcommand with no
       # fixture, or a fixture the module disagrees with, fails. Path
-      # triggers: .github/scripts/** above.
-      - name: "Gate 157 — every spec-pr-review decision subcommand is exercised by a checked-in fixture that the module agrees with"
+      # triggers: .github/scripts/** above. It was Gate 157 until #889, a
+      # number spec 114's path-grammar gate had first.
+      - name: "Gate 187 — every spec-pr-review decision subcommand is exercised by a checked-in fixture that the module agrees with"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-pr-review.py
 
-      # Gate 158 — specs/122-settled-spec-pr-review FR-010/FR-015b/FR-015c/
+      # Gate 188 — specs/122-settled-spec-pr-review FR-010/FR-015b/FR-015c/
       # FR-016/FR-020/FR-022/FR-023: spec-pr-review.yml never approves,
       # requests changes or merges; pushes only through the hardened-push
       # composite; moves the stage label only behind the plan's move_label;
       # posts its own status context, failing by default; reads the kill
       # switch in `select`; and adds no workflow_call surface. Path
-      # triggers: .github/workflows/** above.
-      - name: "Gate 158 — spec-pr-review.yml is wired per specs/122 (no approve/merge, hardened push only, gated label move, own status context)"
+      # triggers: .github/workflows/** above. It was Gate 158 until #889, a
+      # number spec 114's name-parser gate had first.
+      - name: "Gate 188 — spec-pr-review.yml is wired per specs/122 (no approve/merge, hardened push only, gated label move, own status context)"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-pr-review-wiring.py --self-test
 
-      # Gate 166 — specs/121-board-backlog-line-items FR-019: the backlog
+      # Gate 191 — specs/121-board-backlog-line-items FR-019: the backlog
       # line parser, selector and annotator behave as the fixtures under
       # .github/scripts/tests/board-backlog-lines/ say, and board-loop.yml
       # and wing-commander-issue-context are wired to them (T034: no step
       # closes, labels or retitles the backlog issue for a line). Path
       # triggers: .github/scripts/**, .github/workflows/** and
-      # .github/actions/** above.
-      - name: "Gate 166 — Maintenance backlog lines parse, select and annotate as the fixtures say"
+      # .github/actions/** above. It was Gate 166 until #889, a number
+      # spec 123's buildable classification had first.
+      - name: "Gate 191 — Maintenance backlog lines parse, select and annotate as the fixtures say"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-backlog-lines.py
-      - name: "Gate 166 self-test — a parser that ignores code fences fails the structure fixture"
+      - name: "Gate 191 self-test — a parser that ignores code fences fails the structure fixture"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-backlog-lines.py --self-test
 
-      # Gate 167 — specs/121-board-backlog-line-items SC-003/FR-024: the one
+      # Gate 192 — specs/121-board-backlog-line-items SC-003/FR-024: the one
       # backlog edit helper keeps a concurrent writer's change, never forces a
       # write, and no other file edits the backlog body. Path triggers:
-      # .github/scripts/** above.
-      - name: "Gate 167 — the backlog edit helper loses no concurrent edit and is the only writer"
+      # .github/scripts/** above. It was Gate 167 until #889, a number
+      # spec 123's buildable-wait gate had first.
+      - name: "Gate 192 — the backlog edit helper loses no concurrent edit and is the only writer"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-backlog-edit.py
-      - name: "Gate 167 self-test — an editor that skips read-back fails the concurrent-append scenario"
+      - name: "Gate 192 self-test — an editor that skips read-back fails the concurrent-append scenario"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-backlog-edit.py --self-test
 
@@ -5036,7 +5046,10 @@ jobs:
       - name: Gate 164 — spec-meta self-identity in a project and after graduation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
-      - name: Gate 165 — implement stall hand-off (task classification, blocker, stop rule, remaining-work report)
+      # Gate 189 — specs/117-implement-stall-handoff. specs/117 calls it
+      # Gate 165, the number spec 116's convergence gate below also took
+      # (and the review-until-clean skill cites); #889 renumbered this one.
+      - name: Gate 189 — implement stall hand-off (task classification, blocker, stop rule, remaining-work report)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-stall-handoff.py
       - name: Gate 166 — buildable classification of tasks.md lines (specs/123)
@@ -5239,7 +5252,7 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-shared-review-wiring.py --self-test
 
-      # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
+      # Gate 190 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py
       # has a checked-in fixture under .github/scripts/fixtures/board-merge/
       # that must block (or classify), and board-loop.yml's `merge` job is
@@ -5249,8 +5262,9 @@ jobs:
       # logic of its own. The auto-update stage posts the verification record
       # and never merges. The documents this gate scans
       # (unscoped_merge_claim_docs) don't bring back the retired whole-loop
-      # "never merges" sentences.
-      - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
+      # "never merges" sentences. It was Gate 165 until #889, a number two
+      # other gates also took.
+      - name: Gate 190 — board loop self-merge decision, refusal classes and merge-job shape
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-merge.py
 

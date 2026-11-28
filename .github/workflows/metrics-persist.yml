@@ -177,7 +177,7 @@ jobs:
   # this exact job, deliberately, even though this stage runs no agent step
   # and so pulls no image of its own for that purpose — an adopter's
   # stage-binding tooling iterates over every published stage uniformly
-  # (Gate 7/22/23), and a container-image input with nothing to check it
+  # (Gate 7/22/186), and a container-image input with nothing to check it
   # against would silently accept a broken image reference.
   verify-image-prerequisites:
     # This job now carries `if: inputs.container-image != ''` and reports
@@ -506,7 +506,7 @@ jobs:
   # Gate 79 holds it bare.
   warn-sweep-backstop:
     needs: [verify-image-prerequisites, persist]
-    # The image check is required to be 'success' (Gate 23: a status-check
+    # The image check is required to be 'success' (Gate 186: a status-check
     # function must not run past a real prerequisite failure). With
     # tolerate-failure a failed check also reports 'success', so a broken
     # image reaches this job too, and because this job runs on the bare
