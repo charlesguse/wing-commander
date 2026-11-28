@@ -12,9 +12,15 @@ only — the intake, clarify, plan, and tasks stage agents are not addressed
 by it.
 
 Run the full PR-time gate suite locally — it is derived from what
-lint-workflows.yml actually invokes, so it is the same set CI runs:
+lint-workflows.yml actually invokes, so it is the same set CI runs. Run it
+as a background command, because it takes longer than a 10-minute
+foreground call:
 
-    python .github/scripts/run-local-gates.py
+    python .github/scripts/run-local-gates.py --jobs 4
+
+When the machine is shared with other agents and the run cannot finish,
+run every gate the change touches on its own and let CI's `lint` and
+`lint-shard-*` checks run the rest.
 
 A change that touches any `if:`, `continue-on-error:`, or failing step in a
 workflow should also get a pass from the `review-step-gating` skill.
