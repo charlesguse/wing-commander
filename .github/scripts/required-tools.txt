@@ -6,7 +6,7 @@
 # convention (FR-011a):
 #   - every stage file's verify-image-prerequisites job (T003) embeds this
 #     same list literally as REQUIRED_TOOLS in its tool-check step;
-#   - lint-workflows.yml's Gate 23 (T032) compares each stage's embedded
+#   - lint-workflows.yml's Gate 186 (T032) compares each stage's embedded
 #     list against this file and fails on drift;
 #   - lint-workflows.yml's Gate 62 (specs/054-e2e-container-coverage)
 #     builds wing-commander's own e2e reference image
@@ -26,7 +26,7 @@
 # .github/actions/_shared/lifecycle-issue-state.sh (run by
 # wing-commander-lifecycle-gate and wing-commander-board-stop-check, #1210)
 # wraps the `gh issue view` read in `timeout "$read_timeout" ...` so a hung
-# read becomes a retryable 124 rather than a stalled stage. Gate 23's drift
+# read becomes a retryable 124 rather than a stalled stage. Gate 186's drift
 # scan reads _shared/*.sh too since #889, but skips text inside $(...),
 # where this call sits, so it would not notice this line going stale on
 # that call's account. That action runs INSIDE the adopter's
@@ -41,7 +41,7 @@
 # 113612908101) on wing-commander's own e2e reference image failed there
 # with "Unable to locate executable file: unzip." while this check, which
 # did not yet list unzip, had passed the image. It was previously assumed
-# present under Gate 23's ALWAYS_AVAILABLE set, as timeout was.
+# present under Gate 186's ALWAYS_AVAILABLE set, as timeout was.
 #
 # This list is an INFERENCE, cross-checked rather than proven by the agent
 # start-up check (specs/112-agent-startup-image-check): the daily

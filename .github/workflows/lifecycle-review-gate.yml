@@ -464,7 +464,7 @@ jobs:
           # holds is the one to rely on: the `kill-switch` job plus the
           # job-level `if:` on every job below it, which is to say a pause
           # takes effect on the next run.
-          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED == 'true' }}
         run: |
           set -uo pipefail
 
@@ -2019,7 +2019,7 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
-          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          KILL_SWITCH_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED == 'true' }}
           REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
         run: |
           set -euo pipefail

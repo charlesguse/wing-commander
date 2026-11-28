@@ -259,7 +259,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
-          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          # (kept in agreement by Gate 186, specs/038 FR-011a).
           REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
@@ -433,14 +433,14 @@ jobs:
   # with zero human action.
   teardown-done:
     needs: [select, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): select now carries !cancelled() (it
+    # spec 058 (Gate 15/Gate 186): select now carries !cancelled() (it
     # tolerates a skipped verify-image-prerequisites), so GitHub's
     # implicit success() no longer protects this job across the whole
     # needs-closure -- !cancelled() restates that protection explicitly,
     # needs.select.result == 'success' restates the check implicit
     # success() used to make (alongside the existing outcome branch), and
     # a status-guarded job must directly depend on
-    # verify-image-prerequisites too (Gate 23).
+    # verify-image-prerequisites too (Gate 186).
     if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'teardown-done'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
@@ -1123,7 +1123,7 @@ jobs:
   # required.
   teardown-rejected:
     needs: [select, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): see teardown-done's own comment above.
+    # spec 058 (Gate 15/Gate 186): see teardown-done's own comment above.
     if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'teardown-rejected'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
@@ -1398,7 +1398,7 @@ jobs:
   # agent step — no credential required.
   mark-stalled:
     needs: [select, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): see teardown-done's own comment above.
+    # spec 058 (Gate 15/Gate 186): see teardown-done's own comment above.
     if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.select.result == 'success' && needs.select.outputs.outcome == 'mark-stalled'"
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:

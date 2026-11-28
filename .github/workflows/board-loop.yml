@@ -910,8 +910,10 @@ jobs:
       # research.md D6: a line already claimed is the current item, switch
       # or no switch, and keeps the board even when an issue is waiting; a
       # new line is claimed only when no issue was selected, the switch
-      # WING_COMMANDER_BOARD_BACKLOG_LINES is exactly true and Principle X
-      # on the default branch names Maintenance backlog lines. Every rule is
+      # WING_COMMANDER_BOARD_BACKLOG_LINES is on by the one switch rule
+      # (`true` in any letter case, nothing trimmed; owner decision on the
+      # Roadmap issue, 2026-11-27) and Principle X on the default branch
+      # names Maintenance backlog lines. Every rule is
       # board_backlog_lines.decide_line_item(); this step only reads and
       # writes. With the switch off and no line claimed it changes no
       # output, and a failure here must never fail the select job while the
@@ -6005,7 +6007,7 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
-          AUTO_MERGE_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}
+          AUTO_MERGE_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' }}
           KILL_SWITCH_PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
@@ -6588,7 +6590,7 @@ jobs:
           # variable mid-job (the App has no Variables permission and
           # GITHUB_TOKEN can never hold one), and the job starts minutes
           # before the merge. The kill switch is re-checked live below.
-          SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}
+          SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
           READY: ${{ needs.readiness.outputs.ready }}
           BACKSTOP_HOLDS: ${{ needs.readiness.outputs.backstop-holds }}

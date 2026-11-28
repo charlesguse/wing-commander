@@ -26,7 +26,7 @@ classify-startup reports that result beside its verdict: spec 112's edge
 case ("the required-tool list and the start-up check disagree ... both
 results are reported; neither silently overrides the other"), and SC-001's
 proof (an image without `unzip`, which the tool list also rejects) is
-unreachable otherwise. The two jobs' `if:` has one home, Gate 23
+unreachable otherwise. The two jobs' `if:` has one home, Gate 186
 (lint-workflows.yml, REPORTED_BESIDE_IMAGE_CHECK), which requires it to be
 exactly "!cancelled() && inputs.container-image != ''": a missing
 !cancelled() or a read of the prerequisite check's result fails there. This
@@ -231,7 +231,7 @@ def check_workflow(path):
         errors.append("agent-startup-check.yml carries an inline copy of the classifier's marker logic")
     # Spec 112's edge case (the tool-list result never gates the start-up
     # check; both are reported) is the two jobs' exact if:, checked in
-    # Gate 23 only -- see the docstring.
+    # Gate 186 only -- see the docstring.
     if classify is not None:
         if "container" in classify:
             errors.append("classify-startup must run on the runner, not in the image under test: there it "
@@ -752,7 +752,7 @@ def self_test():
                mutated(classify_sparse(".github/actions")), "must pass --allow-escape-sequences")
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
-        # The start-up jobs' if: has one home, Gate 23 (verify-gate-23.py
+        # The start-up jobs' if: has one home, Gate 186 (verify-gate-23.py
         # drives these same shapes, the O2 regression included: the jobs
         # gated on the tool-list result, which made SC-001's
         # image-without-unzip proof unreachable). A second, partial copy
@@ -766,8 +766,8 @@ def self_test():
         for label, errs in (("no !cancelled", mutated(drop_cancelled)),
                             ("startup-agent gated on prereqs", mutated(gate_on_prereq("startup-agent"))),
                             ("classify-startup gated on prereqs", mutated(gate_on_prereq("classify-startup")))):
-            expect_clean(label + " (Gate 23's check, not this gate's)", errs, "if:")
-            expect_clean(label + " (Gate 23's check, not this gate's)", errs, "!cancelled()")
+            expect_clean(label + " (Gate 186's check, not this gate's)", errs, "if:")
+            expect_clean(label + " (Gate 186's check, not this gate's)", errs, "!cancelled()")
 
         def drop_prereq_report(jobs):
             for s in jobs["classify-startup"]["steps"]:

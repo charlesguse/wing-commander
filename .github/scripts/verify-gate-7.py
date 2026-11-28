@@ -293,7 +293,7 @@ def registry_second_homes(texts):
     """Paths in `texts` ({path: text}) that open unpublished-callables.json
     themselves instead of calling wc_published_stages.unpublished_callables().
 
-    Gates 7, 22 and 23 each once carried a pasted copy of the loader, and
+    Gates 7, 22 and 186 each once carried a pasted copy of the loader, and
     those copies skipped the empty-reason rule the module applies. Comment
     lines are prose and do not count."""
     found = []

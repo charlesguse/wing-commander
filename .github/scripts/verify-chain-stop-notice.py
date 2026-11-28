@@ -116,7 +116,7 @@ def _mut_remove_image_prereq_guard(cond):
     leading conjunct (spec 058 narrowed this from `== 'success'`, since the
     check job now legitimately reports `skipped` too) — the notice would
     fire from inside the adopter's own already-failed container again
-    (Gate 23)."""
+    (Gate 186)."""
     pat = re.compile(
         r"needs\.verify-image-prerequisites\.result != 'failure' &&\s*")
     return pat.sub("", cond, count=1)

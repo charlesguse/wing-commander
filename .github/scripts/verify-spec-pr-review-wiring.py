@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 158 -- spec-pr-review.yml is wired the way specs/122 requires.
+"""Gate 188 -- spec-pr-review.yml is wired the way specs/122 requires.
 
 Static structure only (yaml.safe_load plus text scans). Asserts:
 
@@ -265,13 +265,13 @@ def main():
         text = fh.read()
     problems = check(text)
     for p in problems:
-        print("::error::Gate 158: %s" % p)
+        print("::error::Gate 188: %s" % p)
     if "--self-test" in sys.argv:
         problems += ["self-test"] * self_test(text)
     if problems:
-        print("Gate 158: %d failure(s)." % len(problems))
+        print("Gate 188: %d failure(s)." % len(problems))
         return 1
-    print("Gate 158: spec-pr-review.yml is wired per specs/122; 0 failure(s).")
+    print("Gate 188: spec-pr-review.yml is wired per specs/122; 0 failure(s).")
     return 0
 
 

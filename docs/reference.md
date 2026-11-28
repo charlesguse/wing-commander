@@ -280,13 +280,9 @@ with nothing trimmed. That is GitHub's own `vars.X == 'true'` comparison, so
 `True` and `TRUE` are on, while `true ` (with a space), `yes` and `1` are off.
 `verify-board-status.py` runs the readers of the switches the "Board status"
 issue reports against this rule, and fails on any other switch reader it does
-not know. Three readers do not follow it yet, until each is fixed (tracked on
-the Maintenance backlog), and each reads only the exact text `true`:
-`board-loop.yml`'s merge decision (`WING_COMMANDER_BOARD_AUTO_MERGE`),
-`lifecycle-review-gate.yml`'s live re-checks
-(`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`, behind the jobs' own `if:`,
-which does follow the rule) and `auto-release.yml`'s container leg
-(`WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`).
+not know. Every reader follows it: a workflow that hands a switch to a shell
+or script step hands over GitHub's `vars.X == 'true'`, never the raw value,
+unless the step reads it through `wc_board_status._switch_on`.
 
 | Switch | Stops |
 |---|---|

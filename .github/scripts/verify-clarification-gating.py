@@ -774,7 +774,7 @@ def run_scenario(stage, steps, sc, tmproot):
         "steps.agent.outcome": "success",
         # Baseline for every scenario here: a healthy agent run. These
         # scenarios exercise clarification-shape defects downstream of the
-        # verdict, not the verdict computation itself (that is Gate 22's
+        # verdict, not the verdict computation itself (that is Gate 185's
         # job) — specs/037-agent-turn-budget-guard/ replaced both stages'
         # validation-gate condition with this output.
         "steps.agent-verdict.outputs.verdict": "healthy",

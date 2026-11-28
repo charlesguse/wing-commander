@@ -248,12 +248,30 @@ class Confirm(unittest.TestCase):
         r = {"id": 10, "path": sr.WRAPPER_PATH, "head_branch": "main", "status": "completed",
              "conclusion": "success", "head_sha": "b" * 40, "repository": "o/r",
              "referenced_workflows": ["o/r/" + sr.WORKFLOW_PATH + "@refs/heads/main"],
-             "artifacts": [sr.ARTIFACT_PREFIX + "a" * 40]}
+             "artifacts": [sr.ARTIFACT_PREFIX + "a" * 40],
+             "artifact_verdicts": {sr.ARTIFACT_PREFIX + "a" * 40: "clean"}}
         r.update(kw)
         return r
 
     def test_confirms(self):
         self.assertTrue(sr.confirm_record(rec(), self.run_(), "main"))
+
+    def test_edited_verdict_never_confirms(self):
+        # #889 (found by the code review of #1346): an App comment edited
+        # from `findings` to `clean` keeps its run and head; only the run's
+        # own artifact still says `findings`.
+        posted = rec(verdict="findings")
+        run = self.run_(artifact_verdicts={sr.ARTIFACT_PREFIX + "a" * 40: "findings"})
+        self.assertTrue(sr.confirm_record(posted, run, "main"))
+        edited = sr.parse_records([comment(sr.build_record(dict(posted, verdict="clean")))], BOT)[0]
+        self.assertFalse(sr.confirm_record(edited, run, "main"))
+
+    def test_unreadable_artifact_never_confirms(self):
+        # The artifact is listed but its verdict could not be read (expired,
+        # 404/410, no well-formed record): the record does not confirm.
+        name = sr.ARTIFACT_PREFIX + "a" * 40
+        for verdicts in ({}, {name: None}, None):
+            self.assertFalse(sr.confirm_record(rec(), self.run_(artifact_verdicts=verdicts), "main"), verdicts)
 
     def test_each_failure(self):
         for kw in ({"path": "x"}, {"head_branch": "feat"}, {"head_sha": "c" * 40}, {"conclusion": "failure"},
@@ -266,6 +284,12 @@ class Confirm(unittest.TestCase):
         rs = [rec(1), rec(2), rec(3, head="d" * 40)]
         self.assertEqual(sr.latest_round_for_commit(rs, "a" * 40)["round"], 2)
 
+    def test_latest_round_is_pr_wide(self):
+        rs = [rec(1), rec(2, head="d" * 40), rec(1, verdict="findings")]
+        self.assertEqual(sr.latest_round(rs)["head_sha"], "d" * 40)
+        self.assertEqual(sr.latest_round(rs[:1] + rs[2:])["verdict"], "findings")
+        self.assertIsNone(sr.latest_round([]))
+
 
 class GuardAndBudget(unittest.TestCase):
     def test_guard(self):
@@ -273,6 +297,11 @@ class GuardAndBudget(unittest.TestCase):
         self.assertIn("refused", sr.guard("refs/heads/feat", "main", "fix", "")[1])
         self.assertEqual(sr.guard("refs/heads/main", "main", "spec", "")[0], False)
         self.assertEqual(sr.guard("refs/heads/main", "main", "fix", "true"), (False, "paused"))
+        # #889, the one switch rule: `true` in any case pauses; nothing else does.
+        for value in ("True", "TRUE"):
+            self.assertEqual(sr.guard("refs/heads/main", "main", "fix", value), (False, "paused"), value)
+        for value in ("1", "yes", "true ", "false", None):
+            self.assertEqual(sr.guard("refs/heads/main", "main", "fix", value), (True, None), value)
         self.assertEqual(sr.guard("refs/heads/main", "main", "fix", ""), (True, None))
 
     def test_budget(self):
@@ -585,6 +614,130 @@ class ReviewRound2Fixes(unittest.TestCase):
                 mock.patch.object(sr, "confirmed_from_github", side_effect=AssertionError("read")):
             self.assertEqual(sr.main(["state", "--pr", "1", "--bot-login", "b[bot]",
                                       "--default-branch", "main", "--repository", "o/r"]), 1)
+
+
+def artifact_zip(record_body, head="a" * 40, member=None):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member or "record-{0}.md".format(head), record_body)
+    return buf.getvalue()
+
+
+class ArtifactVerdict(unittest.TestCase):
+    """#889: the verdict confirm_record compares, read from the run's
+    `shared-review-<head>` artifact (the record job's record-<head>.md)."""
+    NAME = sr.ARTIFACT_PREFIX + "a" * 40
+
+    def test_reads_the_records_verdict(self):
+        body = sr.build_record(rec(verdict="findings"))
+        self.assertEqual(sr.artifact_verdict(artifact_zip(body), self.NAME), "findings")
+
+    def test_unreadable_is_none(self):
+        body = sr.build_record(rec())
+        for data in (b"not a zip", artifact_zip(body, member="other.md"), artifact_zip("no marker"),
+                     artifact_zip(sr.build_record(rec(head="d" * 40))),
+                     artifact_zip(sr.build_record(sr.build_handoff(1, [], 5, 9, "c" * 40), handoff=True))):
+            self.assertIsNone(sr.artifact_verdict(data, self.NAME))
+
+    def runs(self, artifacts):
+        def runs(args):
+            if args[0].endswith("/artifacts"):
+                return {"artifacts": artifacts}
+            return {"id": 10, "repository": {"full_name": "o/r"}}
+        return runs
+
+    def test_fetch_run_facts_downloads_the_head_artifact_only(self):
+        seen = []
+        zipped = artifact_zip(sr.build_record(rec(verdict="findings")))
+
+        def gh_zip(args):
+            seen.append(args[0])
+            return zipped
+        run = sr.fetch_run_facts("o/r", "10", self.runs([{"id": 5, "name": self.NAME},
+                                                          {"id": 6, "name": "shared-review-input"}]), gh_zip)
+        self.assertEqual(seen, ["repos/o/r/actions/artifacts/5/zip"])
+        self.assertEqual(run["artifact_verdicts"], {self.NAME: "findings"})
+
+    def test_a_reruns_newest_artifact_wins(self):
+        # The API lists newest first; the re-run attempt's artifact decides.
+        zips = {"5": artifact_zip(sr.build_record(rec(verdict="findings"))),
+                "8": artifact_zip(sr.build_record(rec(verdict="clean")))}
+        run = sr.fetch_run_facts("o/r", "10", self.runs([
+            {"id": 8, "name": self.NAME, "created_at": "2026-01-02T00:00:00Z"},
+            {"id": 5, "name": self.NAME, "created_at": "2026-01-01T00:00:00Z"}]),
+            lambda args: zips[args[0].split("/")[-2]])
+        self.assertEqual(run["artifact_verdicts"], {self.NAME: "clean"})
+
+    def test_a_gone_artifact_has_no_verdict(self):
+        # Expired (listed as such, or 404/410 on download) or no zip reader:
+        # the record it backs is unconfirmed, never a read failure.
+        def gone(args):
+            raise sr.GhNotFound(args[0])
+        for arts, gh_zip in (([{"id": 5, "name": self.NAME, "expired": True}], lambda a: b""),
+                             ([{"id": 5, "name": self.NAME}], gone),
+                             ([{"id": 5, "name": self.NAME}], None),
+                             ([{"name": self.NAME}], lambda a: b"")):
+            run = sr.fetch_run_facts("o/r", "10", self.runs(arts), gh_zip)
+            self.assertEqual(run["artifact_verdicts"], {self.NAME: None})
+
+    def test_a_failed_download_raises(self):
+        with self.assertRaises(sr.GhReadError):
+            sr.fetch_run_facts("o/r", "10", self.runs([{"id": 5, "name": self.NAME}]), lambda a: None)
+
+    def test_confirmed_from_github_drops_an_edited_record(self):
+        # The reviewer's loop: the edited record is dropped like any other
+        # unconfirmed one; the unedited one confirms.
+        run = Confirm().run_()
+        artifact = artifact_zip(sr.build_record(rec(verdict="findings")))
+        posted = comment(sr.build_record(rec(verdict="findings")))
+
+        def gh(args):
+            if args[0].endswith("/comments"):
+                return [[posted]]
+            if args[0].endswith("/artifacts"):
+                return {"artifacts": [{"id": 5, "name": n} for n in run["artifacts"]]}
+            return dict(run, repository={"full_name": "o/r"},
+                        referenced_workflows=[{"path": p} for p in run["referenced_workflows"]])
+        self.assertEqual(len(sr.confirmed_from_github(5, BOT, "main", "o/r", gh, gh, lambda a: artifact)), 1)
+        posted["body"] = sr.build_record(rec(verdict="clean"))
+        self.assertEqual(sr.confirmed_from_github(5, BOT, "main", "o/r", gh, gh, lambda a: artifact), [])
+        # An artifact that is gone drops the record too; a failed download
+        # stops the round.
+        posted["body"] = sr.build_record(rec(verdict="findings"))
+
+        def gone(args):
+            raise sr.GhNotFound(args[0])
+        self.assertEqual(sr.confirmed_from_github(5, BOT, "main", "o/r", gh, gh, gone), [])
+        with self.assertRaises(sr.GhReadError):
+            sr.confirmed_from_github(5, BOT, "main", "o/r", gh, gh, lambda a: None)
+
+    def test_gh_zip_returns_bytes_and_maps_gone(self):
+        import subprocess
+        with mock.patch.object(subprocess, "run",
+                               lambda argv, **kw: subprocess.CompletedProcess(argv, 0, b"PK\x03", b"")):
+            self.assertEqual(sr._gh_zip(["x"]), b"PK\x03")
+        for code, raises in ((410, True), (404, True), (500, False)):
+            err = "gh: Gone (HTTP {0})".format(code).encode()
+            with mock.patch.object(subprocess, "run",
+                                   lambda argv, err=err, **kw: subprocess.CompletedProcess(argv, 1, b"", err)):
+                if raises:
+                    self.assertRaises(sr.GhNotFound, sr._gh_zip, ["x"])
+                else:
+                    self.assertIsNone(sr._gh_zip(["x"]))
+
+    def test_state_passes_a_zip_reader(self):
+        seen = {}
+
+        def fake(*args):
+            seen["gh_zip"] = args[6] if len(args) > 6 else None
+            return []
+        with mock.patch.dict(os.environ, {"RUN_TOKEN": "t"}), mock.patch.object(sr, "confirmed_from_github", fake), \
+                mock.patch("sys.stdout"):
+            sr.main(["state", "--pr", "1", "--bot-login", "b[bot]", "--default-branch", "main",
+                     "--repository", "o/r"])
+        self.assertTrue(callable(seen.get("gh_zip")))
 
 
 class FetchRunFacts(unittest.TestCase):

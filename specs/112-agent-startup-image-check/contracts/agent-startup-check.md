@@ -65,7 +65,7 @@ spec's edge case reads "The required-tool list and the start-up check
 disagree ... both results are reported; neither silently overrides the
 other", and SC-001's image without `unzip` fails the tool list too. A
 failed prerequisite check stays red on its own job, and the start-up verdict
-is reported next to it. Gate 23 exempts exactly these two jobs, by file and
+is reported next to it. Gate 186 exempts exactly these two jobs, by file and
 job name, from its result guard (they must still need the check and carry
 `!cancelled()`). Gate 147 fails if either `if:` reads the check's result.
 

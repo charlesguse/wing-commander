@@ -1,4 +1,4 @@
-# Fixtures for verify-implement-stall-handoff.py (Gate 165)
+# Fixtures for verify-implement-stall-handoff.py (Gate 189)
 
 Each fixture exercises one branch of a shared script under
 `.github/actions/_shared/`. Naming: `<script>-<branch>.{md,json,env}` for the
