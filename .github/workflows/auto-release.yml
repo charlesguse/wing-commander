@@ -60,7 +60,7 @@ jobs:
       run-verification: ${{ steps.verification.outputs.run-verification }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -347,7 +347,7 @@ jobs:
       # first scheduled run (this job is schedule/dispatch-only; PR CI
       # never exercises it) would fail with "can't find action.yml".
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -995,7 +995,7 @@ jobs:
 
       - name: Checkout this repository at the verified head (wrapper fixture + supported Spec Kit version)
         if: steps.reset.outputs.ok == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.detect.outputs.head-sha }}
           persist-credentials: false
@@ -1083,7 +1083,7 @@ jobs:
       - name: Install uv (provides uvx for the Spec Kit CLI)
         if: steps.speckit-version.outputs.ok == 'true'
         continue-on-error: true
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       # Scaffolds `specify init` output at this repository's own pinned
       # version, plus the minimal wrapper set docs/adoption.md documents --
@@ -2240,7 +2240,7 @@ jobs:
       collision: ${{ steps.decide.outputs.collision }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -2351,7 +2351,7 @@ jobs:
       dispatch-rejected: ${{ steps.decide.outputs.dispatch-rejected }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -2439,7 +2439,7 @@ jobs:
       # verdict.sh`, `uses: ./_shared/durable-failure-issue`) and had no
       # checkout at all.
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 

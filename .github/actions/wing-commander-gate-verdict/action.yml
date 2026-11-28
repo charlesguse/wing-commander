@@ -51,7 +51,7 @@ runs:
   steps:
     - name: Download gate verdict
       continue-on-error: true
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: wc-gate-verdict-${{ inputs.site }}
         path: ${{ runner.temp }}/wc-gate-verdict-in-${{ inputs.site }}

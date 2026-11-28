@@ -51,7 +51,7 @@ runs:
     - name: Download workspace bundle
       if: inputs.head-ref == ''
       continue-on-error: true
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.bundle-artifact || format('wc-gate-bundle-{0}', inputs.site) }}
         path: ${{ runner.temp }}/wc-gate-bundle
@@ -68,7 +68,7 @@ runs:
         bash "$GITHUB_ACTION_PATH/../_shared/contained-gate-suite.sh" "$SITE" "$BUNDLE_DIR" "$TRUSTED_SHA" "$VERDICT_OUT" "$HEAD_REF"
     - name: Upload gate verdict
       if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: wc-gate-verdict-${{ inputs.site }}
         path: ${{ runner.temp }}/wc-gate-verdict.json

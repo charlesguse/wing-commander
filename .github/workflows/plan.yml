@@ -485,7 +485,7 @@ jobs:
       credential-any-refresh-failure: ${{ (steps.credential-status-auto.outputs.ok == 'false' || steps.credential-status-pr.outputs.ok == 'false') && 'true' || 'false' }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -509,7 +509,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -580,7 +580,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Re-checkout default branch as wing-commander-bot
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.defbranch.outputs.name }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -730,7 +730,7 @@ jobs:
       # clean: false — preserve .wing-commander-pipeline (see above).
       - name: Checkout spec branch as wing-commander-bot
         if: steps.dupe.outputs.skip != 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -995,7 +995,7 @@ jobs:
 
       - name: Re-checkout pipeline repository (post-agent, auto)
         if: always() && steps.agent-auto.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1270,7 +1270,7 @@ jobs:
 
       - name: Re-checkout pipeline repository (post-agent, pr)
         if: always() && steps.agent-pr.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1346,7 +1346,7 @@ jobs:
       # moment the agent step completes, so nothing is lost reading it early.
       - name: Upload Claude execution log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1416,7 +1416,7 @@ jobs:
           (steps.agent-pr.outcome != 'skipped' ||
            steps.agent-auto.outcome != 'skipped')
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-branch-advance
           path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
@@ -1451,7 +1451,7 @@ jobs:
           always() &&
           (steps.agent-pr.outcome != 'skipped' ||
            steps.agent-auto.outcome != 'skipped')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record
           path: ${{ runner.temp }}/wing-commander-metrics-record.json

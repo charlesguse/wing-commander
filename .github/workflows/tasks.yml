@@ -513,7 +513,7 @@ jobs:
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -537,7 +537,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -630,7 +630,7 @@ jobs:
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -977,7 +977,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent, auto)
         id: pipeline-recheckout-auto
         if: always() && steps.agent-auto.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1262,7 +1262,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent, pr)
         id: pipeline-recheckout-pr
         if: always() && steps.agent-pr.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1400,7 +1400,7 @@ jobs:
           (steps.agent-auto.outcome != 'skipped' ||
            steps.agent-pr.outcome != 'skipped')
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-branch-advance
           path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
@@ -1438,7 +1438,7 @@ jobs:
           always() &&
           (steps.agent-auto.outcome != 'skipped' ||
            steps.agent-pr.outcome != 'skipped')
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -1632,7 +1632,7 @@ jobs:
       # for post-mortems (which tools were denied, turn count, cost).
       - name: Upload Claude execution log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1765,7 +1765,7 @@ jobs:
       refusal-reason: ${{ needs.resolve-spec.outputs.refusal-reason || steps.preflight.outputs.reason }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1788,7 +1788,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1855,7 +1855,7 @@ jobs:
 
       # clean: false — preserve .wing-commander-pipeline (see the tasks job).
       - name: Checkout spec branch as wing-commander-bot
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.resolve-spec.outputs.slug }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1994,7 +1994,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2017,7 +2017,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2152,7 +2152,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2175,7 +2175,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

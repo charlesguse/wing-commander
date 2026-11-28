@@ -70,7 +70,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -99,7 +99,7 @@ jobs:
       # the run id, and upload-artifact refuses a name that already exists in it.
       - name: Upload the ledger
         if: steps.pause.outputs.paused != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: merge-evidence-ledger
           path: ledger.json
@@ -118,7 +118,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload the section
         if: steps.pause.outputs.paused != 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: merge-evidence-section
           path: merge-evidence-section.json

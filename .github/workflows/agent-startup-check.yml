@@ -222,7 +222,7 @@ jobs:
       # The credential-less run writes none, so this uploads nothing today.
       - name: Upload Claude execution log
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -267,7 +267,7 @@ jobs:
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - name: Check out the start-up classifier
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

@@ -41,7 +41,7 @@ jobs:
       group: wing-commander-${{ inputs.spec-dir }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # The branch input is pushed to below, so anything but a spec branch

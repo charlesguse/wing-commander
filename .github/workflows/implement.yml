@@ -437,7 +437,7 @@ jobs:
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         if: inputs.fold-queue-token != ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -466,7 +466,7 @@ jobs:
 
       - name: Checkout pipeline repository (shared composite actions)
         if: inputs.fold-queue-token != ''
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -537,7 +537,7 @@ jobs:
       # The trusted commit, full history (so origin/<spec branch> is here),
       # and no credential left in .git/config afterwards.
       - name: Checkout consumer repository (trusted commit, no credential kept)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -568,7 +568,7 @@ jobs:
         id: pipeline-checkout
         if: steps.pipeline-ref.outcome == 'success'
         continue-on-error: true
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -788,7 +788,7 @@ jobs:
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -812,7 +812,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -954,7 +954,7 @@ jobs:
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout spec branch as wing-commander-bot
         if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1519,7 +1519,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent, cycle)
         id: pipeline-recheckout-cycle
         if: always() && steps.cycle.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -1631,7 +1631,7 @@ jobs:
       # path) doesn't clobber the primary attempt's.
       - name: Upload Claude execution log (cycle)
         if: always() && steps.cycle.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-cycle
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -1664,7 +1664,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (cycle)
         if: always() && steps.cycle.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-cycle
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -2111,7 +2111,7 @@ jobs:
       - name: Upload cycle outcome artifact (cycle)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wing-commander-cycle-outcome-cycle
           path: ${{ runner.temp }}/wing-commander-cycle-outcome-cycle.json
@@ -2583,7 +2583,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent, retry)
         id: pipeline-recheckout-retry
         if: always() && steps.retry.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2681,7 +2681,7 @@ jobs:
 
       - name: Upload Claude execution log (retry)
         if: always() && steps.retry.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-retry
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -2713,7 +2713,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (retry)
         if: always() && steps.retry.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-retry
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -3070,7 +3070,7 @@ jobs:
       - name: Upload cycle outcome artifact (retry)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wing-commander-cycle-outcome-retry
           path: ${{ runner.temp }}/wing-commander-cycle-outcome-retry.json
@@ -3364,7 +3364,7 @@ jobs:
       - name: Upload stall diagnostics
         if: steps.agentmsg.outcome == 'success'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: implement-stall-diagnostics
           path: ${{ runner.temp }}/implement-stall-diagnostics.json
@@ -3500,7 +3500,7 @@ jobs:
       - name: Re-checkout pipeline repository (post-agent, progress)
         id: pipeline-recheckout-progress
         if: always() && steps.progress.outcome != 'skipped'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3640,7 +3640,7 @@ jobs:
       # uploaded from this same job.
       - name: Upload Claude execution log (progress)
         if: always() && steps.progress.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-progress
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -3673,7 +3673,7 @@ jobs:
       # feature persists past the transcript's own retention window.
       - name: Upload metrics record (progress)
         if: always() && steps.progress.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-progress
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -3911,7 +3911,7 @@ jobs:
       - name: Upload metrics record (branch advance)
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-branch-advance
           path: ${{ runner.temp }}/wing-commander-metrics-record-branch-advance.json
@@ -4309,7 +4309,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4332,7 +4332,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -4360,7 +4360,7 @@ jobs:
       - name: Download stall diagnostics
         if: needs.implement.outputs.final-ok == 'false'
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: implement-stall-diagnostics
           path: ${{ runner.temp }}/stall-diagnostics
@@ -4398,7 +4398,7 @@ jobs:
       # clean: false — preserve .wing-commander-pipeline (see the implement job).
       - name: Checkout spec branch as wing-commander-bot
         if: needs.implement.outputs.final-ok == 'false'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ needs.implement.outputs.slug }}
           token: ${{ steps.ctx.outputs.token }}
@@ -4602,7 +4602,7 @@ jobs:
         id: identity-checkout
         if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
         continue-on-error: true
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug-qualified }}
           token: ${{ steps.ctx.outputs.token }}
@@ -4743,7 +4743,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4770,7 +4770,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}

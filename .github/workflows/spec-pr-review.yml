@@ -51,13 +51,13 @@ jobs:
       # diffs the stopped head against main, and a shallow clone has
       # neither, so every moved head would read as re-armed (FR-019).
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -320,7 +320,7 @@ jobs:
       # FR-021 / edge cases: only a same-repo spec-draft/ head is checked out,
       # and by the SHA select captured, never a branch name re-resolved.
       - name: Checkout the PR's head commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.select.outputs.head-sha }}
           fetch-depth: 0
@@ -338,7 +338,7 @@ jobs:
           chmod -R a-w "$dest"
 
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -835,7 +835,7 @@ jobs:
 
       - name: Upload the round's artifacts
         if: "!cancelled()"
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: spec-pr-review-round
           path: |
@@ -870,7 +870,7 @@ jobs:
       statuses: write
     steps:
       - name: Checkout the PR's head commit
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.select.outputs.head-sha }}
           fetch-depth: 0
@@ -888,7 +888,7 @@ jobs:
           chmod -R a-w "$dest"
 
       - name: Checkout this job's own trusted copy (composites)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           path: .wc-pristine-repo
@@ -909,7 +909,7 @@ jobs:
       - name: Download the round's artifacts
         if: needs.review.result != 'skipped'
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: spec-pr-review-round
           path: ${{ runner.temp }}/round

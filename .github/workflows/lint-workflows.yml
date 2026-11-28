@@ -198,7 +198,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -1531,7 +1531,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2967,7 +2967,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3272,7 +3272,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3748,7 +3748,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4079,7 +4079,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4534,7 +4534,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4951,7 +4951,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -5388,7 +5388,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -5470,7 +5470,7 @@ jobs:
       # Gate 124's online half reads each cited issue's state.
       issues: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 

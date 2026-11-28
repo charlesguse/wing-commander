@@ -420,7 +420,7 @@ jobs:
       cycle-outcome-handoff: ${{ steps.collect-cycle-outcome.outputs.handoff }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -444,7 +444,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -2500,7 +2500,7 @@ jobs:
       finding-count: ${{ steps.diagnose-outcome.outputs.finding-count }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2524,7 +2524,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -3043,7 +3043,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: always() && steps.diagnose.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-diagnose
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -3073,7 +3073,7 @@ jobs:
       # omitted above, leaving spec.identity_available: false in the record.
       - name: Upload metrics record
         if: always() && steps.diagnose.outcome != 'skipped'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-diagnose
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
@@ -3183,7 +3183,7 @@ jobs:
       # download instead of at the crafted "no Finding with index" check.
       - name: Upload findings
         if: steps.diagnose-outcome.outputs.finding-count != '' && steps.diagnose-outcome.outputs.finding-count != '0'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: watchdog-findings
           path: ${{ runner.temp }}/watchdog-findings.json
@@ -3598,7 +3598,7 @@ jobs:
       - name: Upload Claude execution log (diagnose shadow)
         if: always() && steps.diagnose-shadow.outcome != 'skipped'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-output-diagnose-shadow
           path: ${{ runner.temp }}/claude-execution-output.json
@@ -3673,7 +3673,7 @@ jobs:
       - name: Upload metrics record (diagnose shadow)
         if: steps.diagnose-shadow-metrics.outcome == 'success'
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: metrics-record-diagnose-shadow
           path: ${{ runner.temp }}/wing-commander-metrics-record-diagnose-shadow.json
@@ -3751,7 +3751,7 @@ jobs:
       # and nothing above it can leave the body unloaded for any other
       # reason (act's report step keys on exactly that, below).
       - name: Download findings
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: watchdog-findings
           path: ${{ runner.temp }}/findings
@@ -3796,7 +3796,7 @@ jobs:
           emit new-class "$(field '.newClass // false')"
 
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -3820,7 +3820,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -4280,7 +4280,7 @@ jobs:
 
       - name: Upload triage decision artifact
         if: always() && steps.finding.outcome == 'success'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: watchdog-triage-decision-${{ matrix.index }}
           path: ${{ runner.temp }}/watchdog-triage-decision.json
@@ -4367,7 +4367,7 @@ jobs:
       # fails this leg here, before any write; report-unhandled-failure
       # then names act as the failed job.
       - name: Download findings
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: watchdog-findings
           path: ${{ runner.temp }}/findings
@@ -4412,7 +4412,7 @@ jobs:
           emit new-class "$(field '.newClass // false')"
 
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -4436,7 +4436,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
@@ -4460,7 +4460,7 @@ jobs:
       - name: Download triage decision
         id: download-decision
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: watchdog-triage-decision-${{ matrix.index }}
           path: ${{ runner.temp }}/triage
@@ -4942,7 +4942,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
         with:
           persist-credentials: false
@@ -4971,7 +4971,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         continue-on-error: true
         with:
           repository: ${{ inputs.pipeline-repo }}

@@ -202,7 +202,7 @@ jobs:
       action-taken: ${{ steps.decide.outputs.action-taken || steps.react.outputs.action-taken }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -229,7 +229,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout pipeline repository (shared composite actions)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ steps.pipeline-ref.outputs.ref }}
