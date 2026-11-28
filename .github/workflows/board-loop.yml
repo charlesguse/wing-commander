@@ -6674,8 +6674,10 @@ jobs:
           path: .wc-pristine-repo
           persist-credentials: false
       - name: Record trusted-copy provenance
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.event.repository.default_branch }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${DEFAULT_BRANCH}." >> "$GITHUB_STEP_SUMMARY"
       - name: Write-protect board-loop's own trusted copy (composites)
         run: chmod -R a-w .wc-pristine-repo
 
@@ -6940,8 +6942,10 @@ jobs:
           path: .wc-pristine-repo
           persist-credentials: false
       - name: Record trusted-copy provenance
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.event.repository.default_branch }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${DEFAULT_BRANCH}." >> "$GITHUB_STEP_SUMMARY"
       - name: Write-protect board-loop's own trusted copy (composites)
         run: chmod -R a-w .wc-pristine-repo
 

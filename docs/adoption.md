@@ -187,7 +187,7 @@ gated:
 | Event | Drives | Gated by |
 |-------|--------|----------|
 | `issues` | intake (and the read-only report wrappers) | maintainer-applied label |
-| `issue_comment` | clarify, PR conversation | commenter is a maintainer or the issue author, never a bot |
+| `issue_comment` | clarify, PR conversation | commenter is a maintainer (by association), never a bot |
 | `pull_request` | plan, tasks, cleanup, spec-kit update | same-repo pipeline branches only |
 | `pull_request_review`, `pull_request_review_comment` | PR conversation | same-repo PRs; commenter gate |
 | `workflow_dispatch` | implement, finalize and the redispatch targets | repository write access |

@@ -694,7 +694,8 @@ def self_test():
                                    '        "*": hash-pin')},
          _runner(payload=[]), "outside the owner-approved"),
         ("trusted list copy in a gate script",
-         {".github/scripts/other.py": "X = {'actions/*': 'ref-pin'}\n"},
+         # Built at run time, so this file's own text holds no copy of the list.
+         {".github/scripts/other.py": "X = {'actions/" + "*': 'ref-pin'}\n"},
          _runner(payload=[]), "second copy"),
         ("record without control",
          {REGISTER_PATH: json.dumps({"waivers": [
