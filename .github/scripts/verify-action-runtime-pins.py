@@ -32,17 +32,27 @@ reusable-workflow calls are not action pins) is looked up in
 THE SECOND RULE: NO ACTIONS CACHE
 ---------------------------------
 No workflow or composite in this repository restores or saves an Actions
-cache (owner decision, 2026-11-27). Over the same external steps:
+cache (owner decision, 2026-11-27). Over the same external steps, with
+action names compared case-insensitively:
 
   * a step that uses actions/cache, or its restore or save sub-action,
     fails;
-  * a setup action (an action named setup-*) fails unless SETUP_CACHE_INPUTS
-    names it. A row names the input that turns its cache off, or None for
-    a setup action that keeps no Actions cache;
+  * a step with a `with:` value that names the Actions cache backend
+    (type=gha, the cache-from / cache-to backend of buildx-based actions
+    such as docker/build-push-action) fails, and so does a cache-from or
+    cache-to value built from an expression, which this gate cannot read;
+  * a setup action (an action whose repository, or a sub-path under it,
+    is named setup-*) fails unless SETUP_CACHE_INPUTS names its path. A row
+    names the input that turns its cache off, or None for a setup action
+    that keeps no Actions cache;
   * a step whose setup action has such an input fails unless the step sets
     that input to false. A missing input counts as caching on, because
     astral-sh/setup-uv's enable-cache defaults to auto, which restores and
     saves one; so does an expression, which this gate cannot evaluate.
+
+The rule reads the `uses:` and `with:` of steps in this repository's own
+files. It does not read `run:` steps, or the steps inside an external
+composite action.
 
 WHY A COMMITTED TABLE, NOT A LIVE READ
 --------------------------------------
@@ -74,29 +84,46 @@ PINS_PATH = ".github/scripts/action-runtime-pins.json"
 WAIVERS_PATH = ".github/scripts/action-runtime-waivers.json"
 DEPRECATED = ("node12", "node16", "node20")
 KNOWN = DEPRECATED + ("node24", "composite", "docker")
-# The second rule (see the docstring). owner/repo of each setup action this
-# repository may use -> the input that turns its Actions cache off, or None
-# when the action keeps no Actions cache at all.
+# The second rule (see the docstring). The path of each setup action this
+# repository may use (owner/repo, or owner/repo/sub-path for an action in a
+# sub-path), in lower case -> the input that turns its Actions cache off, or
+# None when the action keeps no Actions cache at all.
 CACHE_ACTION = "actions/cache"
 SETUP_CACHE_INPUTS = {"astral-sh/setup-uv": "enable-cache"}
+GHA_CACHE_BACKEND = "type=gha"
+BUILDX_CACHE_INPUTS = ("cache-from", "cache-to")
 
 
 def cache_problem(uses, with_):
     """-> why this step restores or saves an Actions cache, or None."""
-    path = uses.split("@", 1)[0].strip()
-    owner_repo = "/".join(path.split("/")[:2])
-    if owner_repo == CACHE_ACTION:
+    # Names compare case-insensitively; SETUP_CACHE_INPUTS keys are lower
+    # case.
+    path = uses.split("@", 1)[0].strip().lower()
+    parts = path.split("/")
+    with_ = with_ if isinstance(with_, dict) else {}
+    if "/".join(parts[:2]) == CACHE_ACTION:
         return "restores or saves an Actions cache"
-    if owner_repo in SETUP_CACHE_INPUTS:
-        key = SETUP_CACHE_INPUTS[owner_repo]
-    elif path.split("/")[1].startswith("setup-"):
+    for name, value in sorted(with_.items(), key=lambda kv: str(kv[0])):
+        if not isinstance(value, str):
+            continue
+        if GHA_CACHE_BACKEND in value.lower():
+            return ("sets {0} to the Actions cache backend ({1}), which "
+                    "restores or saves an Actions cache".format(
+                        name, GHA_CACHE_BACKEND))
+        if str(name).lower() in BUILDX_CACHE_INPUTS and "${{" in value:
+            return ("sets {0} from an expression, which this gate cannot "
+                    "read for the Actions cache backend ({1})".format(
+                        name, GHA_CACHE_BACKEND))
+    if path in SETUP_CACHE_INPUTS:
+        key = SETUP_CACHE_INPUTS[path]
+    elif any(p.startswith("setup-") for p in parts[1:]):
         return ("is a setup action with no row in SETUP_CACHE_INPUTS; read "
                 "how it caches and add the input that turns caching off")
     else:
         return None
     if key is None:
         return None
-    value = with_.get(key) if isinstance(with_, dict) else None
+    value = with_.get(key)
     if value is False or (isinstance(value, str)
                           and value.strip().lower() == "false"):
         return None
@@ -446,6 +473,56 @@ def self_test():
          ["actions/checkout@v5", "actions/setup-go@v5"],
          {"actions/checkout@v5": "node24", "actions/setup-go@v5": "node24"},
          [], ["actions/setup-go@v5", "no row in SETUP_CACHE_INPUTS"])
+
+    def with_lines(pin, **inputs):
+        return pin + "\n        with:" + "".join(
+            "\n          {0}: {1}".format(k.replace("_", "-"), v)
+            for k, v in inputs.items())
+
+    # Names compare case-insensitively.
+    case("actions/cache spelled in mixed case fails",
+         ["actions/checkout@v5", "Actions/Cache@v4"],
+         {"actions/checkout@v5": "node24", "Actions/Cache@v4": "node24"}, [],
+         ["Actions/Cache@v4", "restores or saves an Actions cache"])
+    mixed_uv = "Astral-SH/setup-uv@v10.0.0"
+    case("setup-uv spelled in mixed case with enable-cache: false passes",
+         ["actions/checkout@v5", with_lines(mixed_uv, enable_cache="false")],
+         {"actions/checkout@v5": "node24", mixed_uv: "node24"}, [], None)
+    case("a setup action spelled Setup-* with no row fails",
+         ["actions/checkout@v5", "Owner/Setup-Thing@v1"],
+         {"actions/checkout@v5": "node24", "Owner/Setup-Thing@v1": "node24"},
+         [], ["Owner/Setup-Thing@v1", "no row in SETUP_CACHE_INPUTS"])
+    # A setup action in a sub-path is a setup action too.
+    gradle = "gradle/actions/setup-gradle@v4"
+    case("a setup action in a sub-path with no row fails",
+         ["actions/checkout@v5", gradle],
+         {"actions/checkout@v5": "node24", gradle: "node24"}, [],
+         [gradle, "no row in SETUP_CACHE_INPUTS"])
+    # The Actions cache backend of buildx-based actions.
+    bpa = "docker/build-push-action@v6"
+    bpa_pins = {"actions/checkout@v5": "node24", bpa: "node20"}
+    bpa_waiver = [{"uses": bpa, "issue": "#889", "reason": "r"}]
+    case("build-push-action with cache-to: type=gha fails",
+         ["actions/checkout@v5",
+          with_lines(bpa, push="true", cache_to="type=gha,mode=max")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-to to the Actions cache backend"])
+    case("build-push-action with cache-from: type=gha fails",
+         ["actions/checkout@v5", with_lines(bpa, cache_from="type=gha")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-from to the Actions cache backend"])
+    case("build-push-action with cache-from from an expression fails",
+         ["actions/checkout@v5",
+          with_lines(bpa, cache_from="${{ inputs.cache }}")],
+         bpa_pins, bpa_waiver,
+         [bpa, "sets cache-from from an expression"])
+    case("build-push-action with no cache input passes",
+         ["actions/checkout@v5", with_lines(bpa, push="true")],
+         bpa_pins, bpa_waiver, None)
+    case("build-push-action with a registry cache passes",
+         ["actions/checkout@v5",
+          with_lines(bpa, cache_from="type=registry,ref=r/c:cache")],
+         bpa_pins, bpa_waiver, None)
 
     passed = sum(results)
     print("verify-action-runtime-pins self-test: {0}/{1} passed".format(
