@@ -297,7 +297,7 @@ on:
     outputs:
       converged:
         description: "Whether this cycle's converge pass reported convergence (empty when the cycle failed or was skipped)"
-        value: ${{ jobs.implement.outputs.converged }}
+        value: ${{ jobs.implement-dispatch.outputs.converged }}
 
 permissions: {}
 
@@ -3935,6 +3935,463 @@ jobs:
         run: |
           gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
 
+      # specs/133-post-agent-gate-verdict: the outbound hand-off no longer
+      # runs here -- implement-dispatch (below) decides convergence from the
+      # post-agent suite's verdict and dispatches exactly once. This step
+      # hands it the prose and counts this job composed, as an artifact (never
+      # job outputs, #309). Per-run cost line (specs/043-durable-metrics-record):
+      # the progress-comment agent's own cost, appended to whichever comment
+      # implement-dispatch posts (FR-031c).
+      - name: Write dispatch context
+        id: dispatch-context
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
+        env:
+          MAX: ${{ steps.cap.outputs.max }}
+          TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
+          REASON: ${{ steps.final.outputs.reason }}
+          STALL_COMMENT: ${{ steps.final.outputs.stall-comment }}
+          CYCLE_OUTCOME: ${{ steps.final.outputs.cycle-outcome }}
+          BUILDABLE_RETRY: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
+          BUILDABLE_CYCLE: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
+          TIER: ${{ steps.final.outputs.tier }}
+          REMAINING: ${{ steps.final.outputs.remaining }}
+          COST_LINE: ${{ steps.cost-line-progress.outputs.line }}
+        run: |
+          jq -n \
+            --arg max "$MAX" \
+            --arg truncated_count "$TRUNCATED_COUNT" \
+            --arg reason "$REASON" \
+            --arg stall_comment "$STALL_COMMENT" \
+            --arg cycle_outcome "$CYCLE_OUTCOME" \
+            --arg buildable_retry "$BUILDABLE_RETRY" \
+            --arg buildable_cycle "$BUILDABLE_CYCLE" \
+            --arg tier "$TIER" \
+            --arg remaining "$REMAINING" \
+            --arg cost_line "$COST_LINE" \
+            '{max: $max, "truncated-count": $truncated_count, reason: $reason, "stall-comment": $stall_comment, "cycle-outcome": $cycle_outcome, "buildable-retry": $buildable_retry, "buildable-cycle": $buildable_cycle, tier: $tier, remaining: $remaining, "cost-line": $cost_line}' \
+            > "$RUNNER_TEMP/implement-dispatch-context.json"
+
+      # `overwrite: true` -- see "Upload stall diagnostics" above. No
+      # continue-on-error: implement-dispatch cannot hand off without it, and
+      # a failed upload here fails the job loudly rather than guessing.
+      - name: Upload dispatch context
+        id: upload-dispatch-context
+        if: steps.dispatch-context.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: implement-dispatch-context
+          path: ${{ runner.temp }}/implement-dispatch-context.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+      # Deferred to the job's last steps, one per agent-step chain -- see
+      # clarify.yml's copy of this note (review-step-gating skill, spec 052
+      # self-review after the maintainer review of PR #407). Each is a
+      # no-op unless its own chain actually ran (the !cancelled() guard
+      # below, mirroring each chain's own agent-outcome != 'skipped' test).
+      - name: Determine post-agent credential status (cycle)
+        id: credential-status-cycle
+        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-cycle.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-cycle.outcome }}
+
+      - name: Determine post-agent credential status (retry)
+        id: credential-status-retry
+        if: "!cancelled() && steps.retry.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-retry.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-retry.outcome }}
+
+      - name: Determine post-agent credential status (progress)
+        id: credential-status-progress
+        if: "!cancelled() && steps.progress.outcome != 'skipped'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
+        with:
+          mint-outcome: ${{ steps.reestablish-progress.outcome }}
+          refresh-outcome: ${{ steps.refresh-remote-progress.outcome }}
+
+      # FR-011: names the specific post-agent step that failed, for the
+      # stalled job to read instead of the generic "a step after it did not
+      # complete" -- see clarify.yml. Three agent steps share this one job
+      # (cycle/retry/progress), so the guard is "any of them ran".
+      #
+      # candidates-json lists this job's own hard-failing (non-continue-on-
+      # error) post-agent steps, each read via `.conclusion` -- see
+      # clarify.yml for the single-homed composite. Every "Fail loud on
+      # non-healthy agent verdict (*)" and "Report exhausted cycle
+      # classification (*)" step in this job carries continue-on-error
+      # (research.md R13, so a non-healthy/exhausted verdict never strands
+      # the retry/dispatch logic below it) and is deliberately excluded;
+      # only the three subfolder containment checks (spec 114), "Flip stage
+      # label (first cycle)" and "Upload dispatch context" (the dispatch
+      # itself moved to implement-dispatch, spec 133) can actually
+      # hard-fail this job.
+      - name: Determine failed post-agent step
+        id: failed-step
+        if: "!cancelled() && (steps.cycle.outcome != 'skipped' || steps.retry.outcome != 'skipped' || steps.progress.outcome != 'skipped')"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
+        with:
+          candidates-json: >-
+            [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, cycle)", "conclusion": "${{ steps.pipeline-rm-cycle.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, cycle)", "conclusion": "${{ steps.pipeline-recheckout-cycle.conclusion }}"},
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, retry)", "conclusion": "${{ steps.pipeline-rm-retry.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, retry)", "conclusion": "${{ steps.pipeline-recheckout-retry.conclusion }}"},
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, progress)", "conclusion": "${{ steps.pipeline-rm-progress.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, progress)", "conclusion": "${{ steps.pipeline-recheckout-progress.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (cycle)", "conclusion": "${{ steps.containment-cycle.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (retry)", "conclusion": "${{ steps.containment-retry.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (progress)", "conclusion": "${{ steps.containment-progress.conclusion }}"},
+              {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
+              {"name": "Upload dispatch context", "conclusion": "${{ steps.upload-dispatch-context.conclusion }}"}
+            ]
+
+  # specs/133-post-agent-gate-verdict: the FULL gate suite on the head this
+  # cycle pushed, after the agent, in a credential-free job -- the verdict
+  # that decides convergence (and an informational one on a stall hand-off).
+  # Same container, runner and prerequisites as gate-suite-implement-cycle
+  # (the shared prepare composite); the cycle-start job's comments say why it
+  # holds no id-token and why a missing pipeline checkout reads as a named
+  # missing prerequisite. The suite's budget (25 min) sits below the step's
+  # (30) so a slow suite writes a fail verdict naming the budget (FR-007).
+  # The verdict is read, fail-closed and bound to the head, by
+  # implement-dispatch -- never here.
+  gate-suite-implement-post:
+    needs: [verify-image-prerequisites, implement]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.implement.result == 'success' &&
+      (needs.implement.outputs.tasks-converged == 'true' ||
+      needs.implement.outputs.handoff == 'true')
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+        # No Docker in this container either (#989): Gate 62 reads this.
+        WC_GATE_SUITE_DOCKERLESS: "true"
+    permissions:
+      contents: read
+    # Same shape as gate-suite-implement-cycle's outputs: ready only with the
+    # pipeline checked out, a missing pipeline named as the missing
+    # prerequisite.
+    outputs:
+      script-exists: ${{ steps.prepare.outputs.script-exists }}
+      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.prepare.outputs.ready || 'false' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.prepare.outputs.missing }}
+    steps:
+      # The trusted commit, full history (so origin/<spec branch> is here),
+      # and no credential left in .git/config afterwards.
+      - name: Checkout consumer repository (trusted commit, no credential kept)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        continue-on-error: true
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander implement stage (post-agent gate suite): cannot determine the pipeline commit to check out — github.job_workflow_sha is empty, and this credential-free job holds no id-token for the OIDC fallback. Set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        id: pipeline-checkout
+        if: steps.pipeline-ref.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # Only the job's own read-only token -- see gate-suite-implement-cycle.
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Install actionlint for the gate suite
+        if: steps.pipeline-checkout.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
+
+      # The spec branch to gate and the suite's prerequisites -- see
+      # wing-commander-gate-suite-prepare.
+      - name: "Prepare the gate suite (post-agent)"
+        id: prepare
+        if: steps.pipeline-checkout.outcome == 'success'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-suite-prepare
+        with:
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-prefix: ${{ inputs.spec-prefix }}
+          leg: post-agent
+
+      # Budget: the composite's own (25 min) is below the step's (30), so a
+      # slow suite writes a fail verdict that names the budget and the step
+      # timeout stays the backstop for a hung upload -- see
+      # gate-suite-implement-cycle.
+      - name: Run the post-agent gate suite (credential-free)
+        if: steps.prepare.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
+        timeout-minutes: 30
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
+        with:
+          site: implement-post
+          head-ref: ${{ steps.prepare.outputs.ref }}
+          suite-timeout-minutes: "25"
+
+  # specs/133-post-agent-gate-verdict: the one outbound hand-off per completed
+  # cycle, moved here from the implement job so it can read the post-agent
+  # suite's verdict (fail-closed, bound to the head the cycle pushed) before it
+  # decides convergence. It holds the App token and never runs the suite
+  # (gate-suite-implement-post is the credential-free job that does). The
+  # prose the implement job composed (remaining work, stall comment, cycle
+  # outcome, cost line) reaches it as the implement-dispatch-context artifact,
+  # never as job outputs (#309); only flags and the final `converged` are
+  # outputs. A stall hand-off's verdict is informational: it is reported on
+  # the issue and never blocks the hand-off (FR-014).
+  implement-dispatch:
+    needs: [verify-image-prerequisites, implement, gate-suite-implement-post]
+    if: >-
+      !cancelled() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.implement.result == 'success' &&
+      needs.implement.outputs.final-ok == 'true'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-${{ inputs.spec-dir }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      # Dispatching the finalize wrapper / re-dispatching the implement
+      # wrapper uses the default GITHUB_TOKEN -- see the implement job.
+      actions: write
+      id-token: write
+    outputs:
+      converged: ${{ steps.decide.outputs.converged }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      - name: Wing Commander context
+        id: ctx
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # The prose and counts the implement job composed -- see the job's
+      # header comment. A missing artifact fails this job loudly: a cycle
+      # that cannot say what remains must not guess a hand-off.
+      - name: Download dispatch context
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: implement-dispatch-context
+          path: ${{ runner.temp }}/dispatch-context
+
+      # Re-exposed as STEP outputs -- stored unmasked, never put through the
+      # job-output secret check -- so the steps below read the same variables
+      # the implement job's dispatch step always did. Heredoc form because
+      # the values are multi-line and agent-derived; the random delimiter
+      # keeps a crafted body from ending the block early. See "Load stall
+      # diagnostics" in the stalled job.
+      - name: Load dispatch context
+        id: load-context
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        run: |
+          f="$RUNNER_TEMP/dispatch-context/implement-dispatch-context.json"
+          emit() {
+            local d="wc-ctx-eof-$RANDOM$RANDOM$RANDOM"
+            printf '%s<<%s\n%s\n%s\n' "$1" "$d" "$(jq -r --arg k "$1" '.[$k] // ""' "$f")" "$d" >> "$GITHUB_OUTPUT"
+          }
+          for k in max truncated-count reason stall-comment cycle-outcome buildable-retry buildable-cycle tier remaining cost-line; do
+            emit "$k"
+          done
+
+      # The verdict for the head the implement job pushed, read fail-closed
+      # (absent, unreadable, another head or a cancelled gate job all read as
+      # not-a-pass). Skipped only when the post-agent job itself was skipped.
+      - name: Read post-agent gate verdict
+        id: verdict
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && needs.gate-suite-implement-post.result != 'skipped'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-verdict
+        with:
+          site: implement-post
+          expected-head-sha: ${{ needs.implement.outputs.head-sha }}
+          gate-job-result: ${{ needs.gate-suite-implement-post.result }}
+
+      # Final convergence (data-model.md "Cycle decision"). The tasks-only
+      # reading stands when there is no suite; with one, only a pass bound to
+      # the pushed head converges. No gate is run here.
+      - name: Decide convergence
+        id: decide
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          TASKS_CONVERGED: ${{ needs.implement.outputs.tasks-converged }}
+          HANDOFF: ${{ needs.implement.outputs.handoff }}
+          ROUTED: ${{ needs.implement.outputs.routed }}
+          HEAD_SHA: ${{ needs.implement.outputs.head-sha }}
+          POST_RESULT: ${{ needs.gate-suite-implement-post.result }}
+          SCRIPT_EXISTS: ${{ needs.gate-suite-implement-post.outputs.script-exists }}
+          READY: ${{ needs.gate-suite-implement-post.outputs.ready }}
+          MISSING: ${{ needs.gate-suite-implement-post.outputs.missing }}
+          VERDICT_OUTCOME: ${{ steps.verdict.outputs.outcome }}
+          VERDICT_REASON: ${{ steps.verdict.outputs.reason }}
+          FIRST_FAILURE: ${{ steps.verdict.outputs.first-failure }}
+        run: |
+          # What the suite said, whichever way the cycle ended.
+          if [ "$POST_RESULT" = "skipped" ]; then
+            outcome=none; detail="the post-agent gate job did not run"
+          elif [ "$SCRIPT_EXISTS" = "false" ]; then
+            outcome=none; detail="this repository has no gate suite"
+          elif [ "$READY" != "true" ]; then
+            outcome=none; detail="missing prerequisite(s): ${MISSING:-unknown}"
+          elif [ "$VERDICT_OUTCOME" = "pass" ]; then
+            outcome=pass; detail="the suite passed on the pushed head"
+          else
+            outcome=fail; detail="${VERDICT_REASON:-no verdict produced}"
+          fi
+          converged=false
+          if [ "$TASKS_CONVERGED" = "true" ]; then
+            if [ "$outcome" = "pass" ] || { [ "$outcome" = "none" ] && [ "$SCRIPT_EXISTS" = "false" ] && [ "$POST_RESULT" != "skipped" ]; }; then
+              converged=true
+            fi
+          fi
+          echo "converged=$converged" >> "$GITHUB_OUTPUT"
+          echo "suite-outcome=$outcome" >> "$GITHUB_OUTPUT"
+          fence='```'
+          ff="$(printf '%s' "$FIRST_FAILURE" | tr -d '`')"
+          head_text="${HEAD_SHA:-none}"
+          note="$RUNNER_TEMP/suite-note.md"
+          : > "$note"
+          if [ "$TASKS_CONVERGED" = "true" ] && [ "$converged" != "true" ]; then
+            # FR-010: the reason names the post-agent full suite and quotes
+            # the first failing gate, distinct from the unchecked-tasks reason.
+            {
+              echo "❌ **Not converged — the post-agent full suite did not pass.** Every task is checked, but the full gate suite on head \`$head_text\` is not green: $detail."
+              if [ -n "$ff" ]; then
+                printf '\n%smarkdown\n%s\n%s\n' "$fence" "$ff" "$fence"
+              fi
+            } > "$note"
+            echo "Not converged: post-agent full suite ($outcome) — $detail" >> "$GITHUB_STEP_SUMMARY"
+            echo "kind=non-convergence" >> "$GITHUB_OUTPUT"
+          elif [ "$TASKS_CONVERGED" != "true" ] && { [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]; }; then
+            # FR-014: informational on a stall hand-off; finalize renders it.
+            {
+              echo "<!-- wing-commander:post-agent-verdict -->"
+              echo "**Post-agent full suite (informational):** outcome \`$outcome\` on head \`$head_text\`."
+              if [ "$outcome" = "none" ]; then
+                echo "no verdict produced: $detail"
+              elif [ -n "$ff" ]; then
+                printf '\n%smarkdown\n%s\n%s\n' "$fence" "$ff" "$fence"
+              fi
+            } > "$note"
+            echo "kind=handoff-verdict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report post-agent suite outcome on the lifecycle issue
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.kind != ''
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/suite-note.md"
+
+      # clean: false — preserve .wing-commander-pipeline (see the implement job).
+      - name: Checkout spec branch as wing-commander-bot
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.spec-prefix }}${{ needs.implement.outputs.slug }}
+          token: ${{ steps.ctx.outputs.token }}
+          fetch-depth: 0
+          clean: false
+
+      - name: Refuse a branch that tracks .wing-commander-pipeline/
+        shell: bash
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          WC_PIPELINE_REF: ${{ steps.pipeline-ref.outputs.ref }}
+        run: |
+          p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
+          if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
+          git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
       # Exactly one outbound hand-off per completed cycle — finalize
       # (converged), the next iteration (below the cap), or, at the cap, the
       # remaining-work report plus a non-converged finalize. Deterministic; no
@@ -3943,33 +4400,31 @@ jobs:
       # workflow (FR-002).
       - name: Dispatch next step
         id: dispatch-next
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
-          APP_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          APP_TOKEN: ${{ steps.ctx.outputs.token }}
           DISPATCH_TOKEN: ${{ github.token }}
-          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SPEC_DIR: ${{ needs.implement.outputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
           ITERATION: ${{ inputs.iteration }}
-          MAX: ${{ steps.cap.outputs.max }}
-          CONVERGED: ${{ steps.final.outputs.converged }}
-          TRUNCATED: ${{ steps.final.outputs.truncated }}
-          TRUNCATED_COUNT: ${{ steps.record-truncation.outputs.count }}
-          HANDOFF: ${{ steps.final.outputs.handoff }}
-          ROUTED: ${{ steps.final.outputs.routed }}
-          REASON: ${{ steps.final.outputs.reason }}
-          STALL_COMMENT: ${{ steps.final.outputs.stall-comment }}
-          CYCLE_OUTCOME: ${{ steps.final.outputs.cycle-outcome }}
-          BUILDABLE_RETRY: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
-          BUILDABLE_CYCLE: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
-          TIER: ${{ steps.final.outputs.tier }}
-          REMAINING: ${{ steps.final.outputs.remaining }}
+          MAX: ${{ steps.load-context.outputs.max }}
+          CONVERGED: ${{ steps.decide.outputs.converged }}
+          TRUNCATED: ${{ needs.implement.outputs.truncated }}
+          TRUNCATED_COUNT: ${{ steps.load-context.outputs.truncated-count }}
+          HANDOFF: ${{ needs.implement.outputs.handoff }}
+          ROUTED: ${{ needs.implement.outputs.routed }}
+          REASON: ${{ steps.load-context.outputs.reason }}
+          STALL_COMMENT: ${{ steps.load-context.outputs.stall-comment }}
+          CYCLE_OUTCOME: ${{ steps.load-context.outputs.cycle-outcome }}
+          BUILDABLE_RETRY: ${{ steps.load-context.outputs.buildable-retry }}
+          BUILDABLE_CYCLE: ${{ steps.load-context.outputs.buildable-cycle }}
+          TIER: ${{ steps.load-context.outputs.tier }}
+          REMAINING: ${{ steps.load-context.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
-          # Per-run cost line (specs/043-durable-metrics-record) — the
-          # progress-comment agent's own cost, appended to whichever of this
-          # step's comments actually posts (FR-031c); it is the last
-          # comment-posting step in this job after that record is computed.
-          COST_LINE: ${{ steps.cost-line-progress.outputs.line }}
+          # Per-run cost line (specs/043-durable-metrics-record), appended to
+          # whichever of this step's comments actually posts (FR-031c).
+          COST_LINE: ${{ steps.load-context.outputs.cost-line }}
         run: |
           # FR-010/D4 (spec 059): the FR-010 hand-off (HANDOFF branch below)
           # and the cap-reached else branch post the identical shape of
@@ -4169,190 +4624,16 @@ jobs:
       # an if: as a guard).
       - name: Hand off to stalled (buildable tasks remain)
         id: stalled-handoff
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && env.WC_STALLED_HANDOFF == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && env.WC_STALLED_HANDOFF == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff
         with:
-          token: ${{ env.WC_BOT_TOKEN }}
+          token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
-          spec-dir: ${{ steps.spec.outputs.spec-dir }}
-          slug: ${{ steps.spec.outputs.slug }}
+          spec-dir: ${{ needs.implement.outputs.spec-dir }}
+          slug: ${{ needs.implement.outputs.slug }}
           bot-slug: ${{ steps.ctx.outputs.bot-slug }}
           body-file: ${{ runner.temp }}/stalled-body.md
           marker-kind: implement-buildable-handoff
-
-      # Deferred to the job's last steps, one per agent-step chain -- see
-      # clarify.yml's copy of this note (review-step-gating skill, spec 052
-      # self-review after the maintainer review of PR #407). Each is a
-      # no-op unless its own chain actually ran (the !cancelled() guard
-      # below, mirroring each chain's own agent-outcome != 'skipped' test).
-      - name: Determine post-agent credential status (cycle)
-        id: credential-status-cycle
-        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish-cycle.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-cycle.outcome }}
-
-      - name: Determine post-agent credential status (retry)
-        id: credential-status-retry
-        if: "!cancelled() && steps.retry.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish-retry.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-retry.outcome }}
-
-      - name: Determine post-agent credential status (progress)
-        id: credential-status-progress
-        if: "!cancelled() && steps.progress.outcome != 'skipped'"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status
-        with:
-          mint-outcome: ${{ steps.reestablish-progress.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-progress.outcome }}
-
-      # FR-011: names the specific post-agent step that failed, for the
-      # stalled job to read instead of the generic "a step after it did not
-      # complete" -- see clarify.yml. Three agent steps share this one job
-      # (cycle/retry/progress), so the guard is "any of them ran".
-      #
-      # candidates-json lists this job's own hard-failing (non-continue-on-
-      # error) post-agent steps, each read via `.conclusion` -- see
-      # clarify.yml for the single-homed composite. Every "Fail loud on
-      # non-healthy agent verdict (*)" and "Report exhausted cycle
-      # classification (*)" step in this job carries continue-on-error
-      # (research.md R13, so a non-healthy/exhausted verdict never strands
-      # the retry/dispatch logic below it) and is deliberately excluded;
-      # only the three subfolder containment checks (spec 114), "Flip stage
-      # label (first cycle)" and "Dispatch next step" can actually
-      # hard-fail this job.
-      - name: Determine failed post-agent step
-        id: failed-step
-        if: "!cancelled() && (steps.cycle.outcome != 'skipped' || steps.retry.outcome != 'skipped' || steps.progress.outcome != 'skipped')"
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step
-        with:
-          candidates-json: >-
-            [
-              {"name": "Remove the agent-writable pipeline checkout (post-agent, cycle)", "conclusion": "${{ steps.pipeline-rm-cycle.conclusion }}"},
-              {"name": "Re-checkout pipeline repository (post-agent, cycle)", "conclusion": "${{ steps.pipeline-recheckout-cycle.conclusion }}"},
-              {"name": "Remove the agent-writable pipeline checkout (post-agent, retry)", "conclusion": "${{ steps.pipeline-rm-retry.conclusion }}"},
-              {"name": "Re-checkout pipeline repository (post-agent, retry)", "conclusion": "${{ steps.pipeline-recheckout-retry.conclusion }}"},
-              {"name": "Remove the agent-writable pipeline checkout (post-agent, progress)", "conclusion": "${{ steps.pipeline-rm-progress.conclusion }}"},
-              {"name": "Re-checkout pipeline repository (post-agent, progress)", "conclusion": "${{ steps.pipeline-recheckout-progress.conclusion }}"},
-              {"name": "Check agent changes stay inside the project folder (cycle)", "conclusion": "${{ steps.containment-cycle.conclusion }}"},
-              {"name": "Check agent changes stay inside the project folder (retry)", "conclusion": "${{ steps.containment-retry.conclusion }}"},
-              {"name": "Check agent changes stay inside the project folder (progress)", "conclusion": "${{ steps.containment-progress.conclusion }}"},
-              {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
-              {"name": "Dispatch next step", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
-            ]
-
-  # specs/133-post-agent-gate-verdict: the FULL gate suite on the head this
-  # cycle pushed, after the agent, in a credential-free job -- the verdict
-  # that decides convergence (and an informational one on a stall hand-off).
-  # Same container, runner and prerequisites as gate-suite-implement-cycle
-  # (the shared prepare composite); the cycle-start job's comments say why it
-  # holds no id-token and why a missing pipeline checkout reads as a named
-  # missing prerequisite. The suite's budget (25 min) sits below the step's
-  # (30) so a slow suite writes a fail verdict naming the budget (FR-007).
-  # The verdict is read, fail-closed and bound to the head, by
-  # implement-dispatch -- never here.
-  gate-suite-implement-post:
-    needs: [verify-image-prerequisites, implement]
-    if: >-
-      !cancelled() &&
-      needs.verify-image-prerequisites.result != 'failure' &&
-      needs.implement.result == 'success' &&
-      (needs.implement.outputs.tasks-converged == 'true' ||
-      needs.implement.outputs.handoff == 'true')
-    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
-    container:
-      image: ${{ inputs.container-image }}
-      credentials: >-
-        ${{
-          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
-            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
-            || fromJSON('{}')
-        }}
-      # Git safe.directory for the caller's container image -- see clarify.yml.
-      env:
-        GIT_CONFIG_COUNT: "1"
-        GIT_CONFIG_KEY_0: safe.directory
-        GIT_CONFIG_VALUE_0: "*"
-        # No Docker in this container either (#989): Gate 62 reads this.
-        WC_GATE_SUITE_DOCKERLESS: "true"
-    permissions:
-      contents: read
-    # Same shape as gate-suite-implement-cycle's outputs: ready only with the
-    # pipeline checked out, a missing pipeline named as the missing
-    # prerequisite.
-    outputs:
-      script-exists: ${{ steps.prepare.outputs.script-exists }}
-      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.prepare.outputs.ready || 'false' }}
-      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.prepare.outputs.missing }}
-    steps:
-      # The trusted commit, full history (so origin/<spec branch> is here),
-      # and no credential left in .git/config afterwards.
-      - name: Checkout consumer repository (trusted commit, no credential kept)
-        uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-
-      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
-      - name: Resolve pipeline ref
-        id: pipeline-ref
-        continue-on-error: true
-        env:
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
-          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
-        run: |
-          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ]; then
-            echo "::error::wing-commander implement stage (post-agent gate suite): cannot determine the pipeline commit to check out — github.job_workflow_sha is empty, and this credential-free job holds no id-token for the OIDC fallback. Set the pipeline-ref input to the same ref as your uses: pin."
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout pipeline repository (shared composite actions)
-        id: pipeline-checkout
-        if: steps.pipeline-ref.outcome == 'success'
-        continue-on-error: true
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ steps.pipeline-ref.outputs.ref }}
-          # Only the job's own read-only token -- see gate-suite-implement-cycle.
-          token: ${{ github.token }}
-          path: .wing-commander-pipeline
-          persist-credentials: false
-
-      - name: Install actionlint for the gate suite
-        if: steps.pipeline-checkout.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
-
-      # The spec branch to gate and the suite's prerequisites -- see
-      # wing-commander-gate-suite-prepare.
-      - name: "Prepare the gate suite (post-agent)"
-        id: prepare
-        if: steps.pipeline-checkout.outcome == 'success'
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-suite-prepare
-        with:
-          spec-dir: ${{ inputs.spec-dir }}
-          spec-prefix: ${{ inputs.spec-prefix }}
-          leg: post-agent
-
-      # Budget: the composite's own (25 min) is below the step's (30), so a
-      # slow suite writes a fail verdict that names the budget and the step
-      # timeout stays the backstop for a hung upload -- see
-      # gate-suite-implement-cycle.
-      - name: Run the post-agent gate suite (credential-free)
-        if: steps.prepare.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
-        timeout-minutes: 30
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
-        with:
-          site: implement-post
-          head-ref: ${{ steps.prepare.outputs.ref }}
-          suite-timeout-minutes: "25"
 
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
   # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's

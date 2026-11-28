@@ -21,6 +21,7 @@ SITES = {
     "board-review-fixup": Site("board-loop.yml", "gate-suite-review-fixup",
                                "review-fixup-publish"),
     "implement-cycle": Site("implement.yml", "gate-suite-implement-cycle", "implement"),
+    "implement-post": Site("implement.yml", "gate-suite-implement-post", "implement-dispatch"),
 }
 
 # Every job in these workflows runs an agent and later acts with the App
