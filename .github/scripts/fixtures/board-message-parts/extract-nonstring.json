@@ -1,0 +1,10 @@
+{
+  "mode": "extract-explanation",
+  "id": "bl-b9677278",
+  "input": {
+    "result": "Committed the fix.\n\n```wing-commander-explanation\n{\"code\": [\"a.py\"], \"issue\": 7, \"why_it_matters\": \"y\", \"options\": {\"state\": \"other\", \"text\": \"z\"}}\n```\n"
+  },
+  "expect": {
+    "why_it_matters": "y"
+  }
+}

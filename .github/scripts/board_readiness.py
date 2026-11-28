@@ -13,11 +13,11 @@ captured earlier, since a check that completed against an earlier push
 must never be read as covering a later one (FR-037).
 
 `evaluate_from_snapshot()` is the pure decision, fixturable without a live
-`gh` call; `evaluate()` is the runtime wrapper that fetches the snapshot.
+`gh` call; board-loop.yml's readiness job fetches the snapshot and calls it
+(there is no other runtime entry point; specs/130 MF007).
 """
 import json
 import re
-import subprocess
 import sys
 
 CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
@@ -369,15 +369,22 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     }
 
 
-def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paused):
-    """Runtime entry point: `gh pr view <pr_number> --json
-    headRefOid,statusCheckRollup`, fresh at this exact moment (FR-036)."""
-    proc = subprocess.run(
-        ["gh", "pr", "view", str(pr_number), "--json", "headRefOid,statusCheckRollup"],
-        capture_output=True, text=True, check=True)
-    snapshot = json.loads(proc.stdout)
-    return evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
-                                  kill_switch_paused)
+def next_step_note(auto_merge_on, kill_switch_paused):
+    """What happens to a PR the readiness report calls ready (specs/130
+    FR-009, Story 3 scenarios 1, 2 and 4): the loop merges it, a human must,
+    or the loop is stopped. Registered in board-fixed-messages.json as
+    readiness-next-step; verify-board-message-parts.py checks each claim
+    against the switch settings it is posted under."""
+    # fixed-message: readiness-next-step (board-fixed-messages.json)
+    if kill_switch_paused:
+        return ("Next: the board loop is stopped by the kill switch, so "
+                "nothing merges this PR until the switch is cleared; a "
+                "maintainer may merge it.")
+    if not auto_merge_on:
+        return ("Next: the board loop's auto-merge is off, so this PR waits "
+                "for a maintainer to merge it.")
+    return ("Next: the board loop merges this PR itself on a later run once "
+            "its own merge conditions hold.")
 
 
 def main():

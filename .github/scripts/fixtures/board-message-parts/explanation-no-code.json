@@ -1,0 +1,14 @@
+{
+  "mode": "render-explanation",
+  "id": "#1202",
+  "expect": "ok",
+  "input": {
+    "line": "The review comment hides what was checked (#1202)",
+    "pr_title": "Fix: name what the review checked",
+    "parts": {
+      "issue": "A clean review and an empty review read the same.",
+      "why_it_matters": "The owner cannot tell them apart.",
+      "options": "Keep it; or list the checks."
+    }
+  }
+}

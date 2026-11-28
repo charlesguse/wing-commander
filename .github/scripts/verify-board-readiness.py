@@ -238,6 +238,15 @@ def _load(path):
 def run():
     failures = 0
 
+    # specs/130 MF007: the dead `evaluate()` entry point (no caller, wrong
+    # bot-login handling) must not come back; evaluate_from_snapshot is the
+    # one entry point.
+    import board_readiness
+    if hasattr(board_readiness, "evaluate"):
+        failures += 1
+        print("::error::verify-board-readiness: board_readiness.evaluate() is back; "
+              "it has no caller. Use evaluate_from_snapshot().")
+
     if not os.path.isdir(FIXTURES_DIR):
         print("::error::verify-board-readiness: fixtures directory {0} "
               "does not exist.".format(FIXTURES_DIR))

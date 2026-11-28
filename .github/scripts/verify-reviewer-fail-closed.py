@@ -113,7 +113,8 @@ LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
                   "wc_schema_pattern.py", "board_spec_request_body.py",
                   "wc_convergence.py", "wc_review_finding_fingerprint.py",
-                  "wc_finding_triage.py")
+                  "wc_finding_triage.py", "wc_message_parts.py",
+                  "board_backlog_lines.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
@@ -210,7 +211,8 @@ def run_pipeline(extract_script, round_script, compose_script, tmproot,
         rc3, out3, _outputs3, _ = run_step(
             BASH, compose_script, workdir,
             {"PARSE_FAILED": outputs1.get("parse-failed", ""),
-             "DROPPED_COUNT": outputs1.get("dropped-count", "")},
+             "DROPPED_COUNT": outputs1.get("dropped-count", ""),
+             "ISSUE_NUMBER": "1"},
             runner_temp)
         body = None
         body_path = os.path.join(runner_temp, "board-review-body.md")
@@ -242,8 +244,8 @@ SCENARIOS = [
           body_lacks=("No findings.",))),
     ("control: genuinely zero findings, healthy verdict",
      dict(transcript=_fenced_transcript("[]"), review_verdict="healthy"),
-     dict(parse_failed="false", outcome="converged", body_has=("No findings.",),
-          body_lacks=("Inconclusive",))),
+     dict(parse_failed="false", outcome="converged", body_has=("Board loop review of `#1`",),
+          body_lacks=("Inconclusive", "No findings."))),
 ]
 
 
@@ -732,10 +734,10 @@ def check_review_body_cap(compose_script, tmproot):
 def check_review_body_cap_mutation(compose_script, tmproot):
     """The pre-cap compose (every finding shown, max(2000, 60000 // n)
     each) must fail check_review_body_cap()."""
-    old_cap, old_budget = "MAX_SHOWN = 25\n", TAIL_BUDGET
-    if compose_script.count(old_cap) != 1 or compose_script.count(old_budget) != 1:
+    old_cap, old_budget = "MAX_SHOWN = 25\n", _budget_anchor(compose_script)
+    if compose_script.count(old_cap) != 1 or old_budget is None:
         return ["review body cap mutation: the compose step no longer has "
-                "one {0!r} and one {1!r}; update this harness".format(old_cap, old_budget)]
+                "one {0!r} and one of {1!r}; update this harness".format(old_cap, BUDGET_ANCHORS)]
     mutated = compose_script.replace(old_cap, "MAX_SHOWN = 10 ** 9\n", 1).replace(
         old_budget, "budget = max(2000, 60000 // max(1, len(shown)))\n", 1)
     import contextlib
@@ -757,6 +759,19 @@ def check_review_body_cap_mutation(compose_script, tmproot):
 # comes out of the findings' 57000, so a full round still posts.
 
 TAIL_BUDGET = 'budget = (57000 - utf16_len("\\n".join(tail))) // max(1, len(shown))\n'
+# The board loop's compose step reserves the head and the tail through
+# wc_message_parts.review_findings_budget() (spec 130); lifecycle-review-gate
+# still spells the sum inline. Each compose step must carry exactly one.
+BOARD_BUDGET = 'budget = review_findings_budget("\\n".join(lines), "\\n".join(tail), len(shown))\n'
+BUDGET_ANCHORS = (TAIL_BUDGET, BOARD_BUDGET)
+
+
+def _budget_anchor(script):
+    """The one budget line a compose step carries, or None."""
+    counts = [script.count(a) for a in BUDGET_ANCHORS]
+    if sorted(counts) != [0, 1]:
+        return None
+    return BUDGET_ANCHORS[counts.index(1)]
 UNRESERVED_BUDGET = "budget = 57000 // max(1, len(shown))\n"
 
 
@@ -825,11 +840,11 @@ def check_review_body_cap_with_tail_mutation(compose_scripts, tmproot):
     check_review_body_cap_with_tail() on every compose step."""
     failures = []
     for label, script, stem, env in compose_scripts:
-        if script.count(TAIL_BUDGET) != 1:
-            failures.append("{0}: no one {1!r}; update this harness".format(label, TAIL_BUDGET))
+        if _budget_anchor(script) is None:
+            failures.append("{0}: no one of {1!r}; update this harness".format(label, BUDGET_ANCHORS))
     if failures:
         return failures
-    mutated = [(label, script.replace(TAIL_BUDGET, UNRESERVED_BUDGET, 1), stem, env)
+    mutated = [(label, script.replace(_budget_anchor(script), UNRESERVED_BUDGET, 1), stem, env)
                for label, script, stem, env in compose_scripts]
     import contextlib
     import io

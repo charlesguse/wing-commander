@@ -1,0 +1,13 @@
+{
+  "mode": "render-options",
+  "id": "bl-b9677278",
+  "expect": "ok",
+  "input": {
+    "parts": {
+      "options": {
+        "state": "follow",
+        "text": "Keep the bare line; list what was checked; or drop the comment."
+      }
+    }
+  }
+}

@@ -3108,6 +3108,10 @@ jobs:
       branch: ${{ steps.base.outputs.branch }}
       base-sha: ${{ steps.base.outputs.base-sha }}
       head-sha: ${{ steps.bundle.outputs.head-sha }}
+      # specs/130 FR-001..FR-004: the fixer's explanation parts, one line
+      # of JSON from wc_message_parts.py extract-explanation; fix renders
+      # them into the PR's first comment and body summary.
+      explain-parts: ${{ steps.explain-extract.outputs.parts }}
     # specs/121-board-backlog-line-items: empty for an issue item; a
     # Maintenance backlog line's id otherwise -- see
     # board_item_marker.current_line_id().
@@ -3321,6 +3325,24 @@ jobs:
             after you runs the full local gate suite and pushes only if it
             is green). Do not open a PR yourself.
 
+            End your final message with exactly one fenced block that
+            explains the change to the repository's owner; the loop posts
+            it on the PR as text. Each key is an optional string; omit a
+            key you cannot fill rather than invent text:
+
+            ```wing-commander-explanation
+            {"code": "the files, functions or gates concerned",
+             "issue": "what the issue is, in one sentence",
+             "why_it_matters": "why it is or might be a problem",
+             "options": "the alternatives a reader might have expected instead",
+             "what_this_pr_does": "which of those options this change takes"}
+            ```
+
+            When the alternatives are too long to sit with the other
+            parts, give `"options": {"state": "follow", "text": "the
+            alternatives"}` instead: the first comment then says the
+            options follow, and the loop lists them in a later comment.
+
             ${{ steps.commit-guidance-fixer.outputs.guidance }}
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
@@ -3406,6 +3428,20 @@ jobs:
         run: |
           echo "::error::wing-commander board-loop fixer: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
+
+      # specs/130 FR-001..FR-004: the explanation block the fixer ended
+      # with, read by wc_message_parts.py (the one home) from the pristine
+      # snapshot. Missing or malformed reads as {} -- every part then
+      # shows as a gap in fix's comment -- so this step never decides the
+      # item's outcome: continue-on-error, and fix falls back to {} too.
+      - name: Extract the fixer's explanation parts
+        id: explain-extract
+        if: "!cancelled() && steps.fixer.outcome != 'skipped'"
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          parts="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" extract-explanation --in "$RUNNER_TEMP/claude-execution-output.json")" || parts='{}'
+          printf 'parts=%s\n' "$parts" >> "$GITHUB_OUTPUT"
 
       # spec 095 (FR-001/FR-005/FR-006): the fixer's commits leave this job
       # as a workspace bundle (contracts/workspace-bundle.md) for
@@ -3757,8 +3793,12 @@ jobs:
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
           BRANCH: ${{ steps.base.outputs.branch }}
           BASE_SHA: ${{ steps.base.outputs.base-sha }}
+          EXPLAIN_JSON: ${{ needs.fix-agent.outputs.explain-parts }}
         run: |
           set -euo pipefail
+          # specs/130: fix-agent's explanation parts; one-line fallback for
+          # an extract step that never ran -- {} renders every part a gap.
+          jq -e 'type == "object"' <<<"${EXPLAIN_JSON:-}" >/dev/null 2>&1 || EXPLAIN_JSON='{}'
           # One-line fallback (CLAUDE.md "shared logic has exactly one
           # home") for the case the composite step above never ran: this
           # step is `set -e`, so a missing board:owned would otherwise
@@ -3772,8 +3812,6 @@ jobs:
             pr_title="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --pre-push-check "$ISSUE_NUMBER" "$BOARD_LINE_ID" "$BASE_SHA" | jq -r '.title // empty')"
             pr_body="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --pr-body "$ISSUE_NUMBER" "$BOARD_LINE_ID" "$BRANCH" "$BASE_SHA")"
             [ -n "$pr_title" ] || { echo "::error::board-loop fix: backlog line $BOARD_LINE_ID is gone -- no PR is opened (specs/121 FR-016)."; exit 1; }
-            hits="$(jq -n --arg t "$pr_title" --arg b "$pr_body" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")"
-            [ "$hits" = "[]" ] || { echo "::error::board-loop fix: the line PR's title or body carries a closing keyword ($hits) -- no PR is opened (specs/121 FR-017)."; exit 1; }
           else
             # #889: no closing keyword in the title or body -- GitHub would
             # close the issue at the merge, and prove would stand down on
@@ -3782,6 +3820,38 @@ jobs:
             issue_pr="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --issue-pr "$ISSUE_NUMBER" "$issue_title" "$BRANCH" "$BASE_SHA")"
             pr_title="$(jq -r '.title' <<<"$issue_pr")"
             pr_body="$(jq -r '.body' <<<"$issue_pr")"
+          fi
+          # specs/130 FR-004: the body's short summary of the explanation.
+          # wc_message_parts.py is the one home; its exit 2 is the
+          # closing-keyword refusal (agent prose such as "fixes #12"),
+          # which drops the summary and warns: the pushed branch still
+          # gets its PR, with the issue_pr() body that carries no keyword.
+          # The line path's own title/body is checked first and fatally; the
+          # summary is then checked with the body and dropped on a hit.
+          if [ -n "${BOARD_LINE_ID:-}" ]; then
+            hits="$(jq -n --arg t "$pr_title" --arg b "$pr_body" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")"
+            [ "$hits" = "[]" ] || { echo "::error::board-loop fix: the line PR's title or body carries a closing keyword ($hits) -- no PR is opened (specs/121 FR-017)."; exit 1; }
+          fi
+          summary_id="${BOARD_LINE_ID:-#$ISSUE_NUMBER}"
+          jq -n --argjson parts "$EXPLAIN_JSON" --arg title "$pr_title" '{parts: $parts, pr_title: $title}' > "$RUNNER_TEMP/board-explain-summary.json"
+          summary_rc=0
+          summary="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" summary --in "$RUNNER_TEMP/board-explain-summary.json" --id "$summary_id")" || summary_rc=$?
+          if [ "$summary_rc" -eq 2 ]; then
+            echo "::warning::board-loop fix: the PR body's summary carries a closing keyword -- the PR opens without the summary (specs/130 FR-004)."
+          elif [ "$summary_rc" -eq 0 ]; then
+            with_summary="$(printf '%s\n\n%s' "$pr_body" "$summary")"
+            if [ -n "${BOARD_LINE_ID:-}" ]; then
+              hits="$(jq -n --arg t "$pr_title" --arg b "$with_summary" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")" || hits="[unchecked]"
+              if [ "$hits" = "[]" ]; then
+                pr_body="$with_summary"
+              else
+                echo "::warning::board-loop fix: the PR body's summary trips the line closing-keyword check ($hits) -- the PR opens without it (specs/130 FR-004)."
+              fi
+            else
+              pr_body="$with_summary"
+            fi
+          else
+            echo "::warning::board-loop fix: the PR body's summary could not be rendered -- the PR opens without it (specs/130 FR-004)."
           fi
           pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "$pr_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"
           pr_number="${pr_url##*/}"
@@ -3798,6 +3868,71 @@ jobs:
           marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --pr "$pr_number" --branch "$BRANCH" --base-sha "$BASE_SHA")" \
             || { echo "::error::board-loop fix: PR #$pr_number is open but its review marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
+
+      # specs/130 FR-001..FR-003, FR-001a: the fix PR's first comment
+      # explains the line -- a backlog line's own text, or an issue's title
+      # and #N. wc_message_parts.py (the one home) renders every part,
+      # filled from the fixer's explanation parts (fix-agent's
+      # explain-parts) or as stated gap text, never invented. When Options
+      # said they follow, the later options comment is posted next, in this
+      # step, so it precedes the review and readiness jobs (FR-003). Both
+      # posts degrade to a warning: neither decides the item's outcome.
+      - name: Explain the line on the PR (fix)
+        if: steps.push-pr.outputs.pr-url != ''
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          PR_NUMBER: ${{ steps.push-pr.outputs.pr-number }}
+          EXPLAIN_JSON: ${{ needs.fix-agent.outputs.explain-parts }}
+        run: |
+          set -uo pipefail
+          # One-line fallback -- see "Open the PR".
+          jq -e 'type == "object"' <<<"${EXPLAIN_JSON:-}" >/dev/null 2>&1 || EXPLAIN_JSON='{}'
+          if [ -n "${BOARD_LINE_ID:-}" ]; then
+            explain_id="$BOARD_LINE_ID"
+            line_text="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --line-title "$ISSUE_NUMBER" "$BOARD_LINE_ID")" || line_text=""
+          else
+            explain_id="#$ISSUE_NUMBER"
+            line_text="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)" && line_text="$line_text (#$ISSUE_NUMBER)" || line_text=""
+          fi
+          pr_title="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)" || pr_title=""
+          jq -n --argjson parts "$EXPLAIN_JSON" --arg line "$line_text" --arg pr "$pr_title" '{parts: $parts, line: $line, pr_title: $pr}' > "$RUNNER_TEMP/board-explain-parts.json"
+          if ! body="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-explanation --in "$RUNNER_TEMP/board-explain-parts.json" --id "$explain_id")"; then
+            echo "::warning::board-loop fix: the explanation was refused by wc_message_parts.py (specs/130 FR-003)."
+            exit 0
+          fi
+          # Empty when Options did not say they follow: nothing is owed.
+          options="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-options --in "$RUNNER_TEMP/board-explain-parts.json" --id "$explain_id")" || options=""
+          first_posted=0
+          for attempt in 1 2 3; do
+            if gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"; then first_posted=1; break; fi
+            sleep $((attempt * 3))
+          done
+          if [ "$first_posted" -ne 1 ]; then
+            if [ -n "$options" ]; then
+              # No marker is on the PR. A failing step would strand the route
+              # backstop re-check, the cross-link and the issue marker below
+              # (MF003), so this warns and the step exits 0; the unexplained
+              # PR is named for a human.
+              echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options were to follow -- post the explanation and its options by hand (specs/130 FR-003)."
+              exit 0
+            fi
+            echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
+            exit 0
+          fi
+          if [ -n "$options" ]; then
+            # The first comment promised this one, so a transient failure
+            # is retried; if all tries fail the warning names the step to
+            # re-run. Readiness does not wait for it (owner decision,
+            # 2026-11-28).
+            options_posted=0
+            for attempt in 1 2 3; do
+              if gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$options"; then options_posted=1; break; fi
+              sleep $((attempt * 3))
+            done
+            [ "$options_posted" -eq 1 ] \
+              || echo "::warning::board-loop fix: the options comment the first comment promised could not be posted on PR #$PR_NUMBER after 3 tries -- re-run 'Explain the line on the PR (fix)' or post the options by hand (specs/130 FR-003)."
+          fi
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
       # to the pushed branch's real diff and real file content -- the
@@ -4363,6 +4498,19 @@ jobs:
             at this PR's head, where the finding sits. Give it whenever the
             finding has one line; omit it for a whole-file concern rather
             than guess.
+
+            Then, after it, end with one more fenced block that reports
+            against the question this PR was asked to answer. Each key is
+            an optional string; omit a key you cannot fill rather than
+            invent text:
+
+            ```wing-commander-review-report
+            {"asked": "the question this change answers",
+             "checked": "what you checked",
+             "decided": "what the diff settles",
+             "not_decided": "what it leaves undecided",
+             "open": "what is still open"}
+            ```
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.review-ceiling.outputs.ceiling }}
@@ -4459,6 +4607,7 @@ jobs:
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
           raw = []
+          report = {}
           # SF1/#499: unlike triage-propose/route-propose, a parse failure
           # here must NEVER read as "zero findings" -- that would silently
           # advance a possibly-unreviewed PR to readiness (see "Decide the
@@ -4508,6 +4657,12 @@ jobs:
                   else:
                       print("::warning::board-loop reviewer: parsed ```wing-commander-review-findings``` block was not a JSON array (got {0}) -- the round will be treated as not completed, not as zero findings".format(type(parsed).__name__))
                       parse_failed = True
+                  # specs/130 FR-005: the five-part report. A missing or
+                  # malformed block is not a parse failure -- the renderer
+                  # shows every part it lacks as a gap.
+                  rep, _rep_err = extract_fenced_json(text, "wing-commander-review-report")
+                  if isinstance(rep, dict):
+                      report = rep
               else:
                   print("::warning::board-loop reviewer: claude-execution-output.json has no terminal result record -- the round will be treated as not completed, not as zero findings")
                   parse_failed = True
@@ -4543,6 +4698,8 @@ jobs:
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), "w", encoding="utf-8") as fh:
               json.dump(kept, fh)
+          with open(os.path.join(runner_temp, "board-review-report.json"), "w", encoding="utf-8") as fh:
+              json.dump({"parts": report}, fh)
 
           in_scope = [f for f in kept if f.get("in_scope") is True]
           out_of_scope = [f for f in kept if f.get("in_scope") is False]
@@ -4605,6 +4762,7 @@ jobs:
           python3 -I - <<'PYEOF'
           import json
           import os
+          import re
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
@@ -4623,8 +4781,18 @@ jobs:
           # body too, the same fail-closed default used there.
           parse_failed = os.environ.get("PARSE_FAILED", "") != "false"
 
+          # specs/130 FR-005..FR-007: the five review parts come from
+          # wc_message_parts (the one home), never a bare "No findings.".
+          # A failed round posts "review did not complete".
+          from wc_message_parts import Refusal, render_incomplete_review, render_review, review_findings_budget
+          identifier = os.environ.get("BOARD_LINE_ID") or "#{0}".format(os.environ.get("ISSUE_NUMBER", ""))
           lines = ["Board loop review."]
+          lines.append("")
           if parse_failed:
+              try:
+                  lines.append(render_incomplete_review(identifier))
+              except Refusal:
+                  lines.append("Review did not complete.")
               lines.append("")
               lines.append(
                   "Inconclusive -- this round did not produce a "
@@ -4632,9 +4800,29 @@ jobs:
                   "reviewer result, or a non-healthy agent verdict). "
                   "Findings below, if any, are whatever could still be "
                   "salvaged; do not read this as a clean review.")
-          elif not findings:
-              lines.append("")
-              lines.append("No findings.")
+          else:
+              report_parts = {}
+              report_path = os.path.join(runner_temp, "board-review-report.json")
+              if os.path.isfile(report_path):
+                  with open(report_path, encoding="utf-8") as fh:
+                      report_parts = json.load(fh).get("parts", {})
+              if not isinstance(report_parts, dict):
+                  report_parts = {}
+              # The Open part is the real kept findings, never "not
+              # provided" above a findings list.
+              kept_count = len([f for f in findings if isinstance(f, dict) and f.get("in_scope") is True])
+              if kept_count:
+                  report_parts = dict(report_parts)
+                  count_line = "{0} in-scope finding(s) open; listed below.".format(kept_count)
+                  agent_open = report_parts.get("open")
+                  if (isinstance(agent_open, str) and agent_open.strip()
+                          and not re.match(r"\s*(nothing|none|no )", agent_open, re.I)):
+                      count_line = agent_open.strip() + "\n" + count_line
+                  report_parts["open"] = count_line
+              try:
+                  lines.append(render_review(report_parts, identifier, []))
+              except Refusal:
+                  lines.append("Review report unavailable: no valid line or issue identifier.")
           # #583: dropped findings are named, never silently omitted -- see
           # "Decide the round outcome".
           dropped = os.environ.get("DROPPED_COUNT") or "0"
@@ -4680,7 +4868,9 @@ jobs:
               tail.append(void_round_record_marker())
           MAX_SHOWN = 25
           shown = findings[:MAX_SHOWN]
-          budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
+          # MF006: the review-report block above comes out of the same
+          # budget (wc_message_parts.review_findings_budget, the one home).
+          budget = review_findings_budget("\n".join(lines), "\n".join(tail), len(shown))
           for n, f in enumerate(shown, 1):
               scope = "in-scope (will be fixed on this PR)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
@@ -5815,6 +6005,8 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          AUTO_MERGE_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}
+          KILL_SWITCH_PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -5822,8 +6014,21 @@ jobs:
         run: |
           set -uo pipefail
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
-          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s' \
-            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
+          # specs/130 FR-009: say what happens next -- the loop merges, a
+          # maintainer must, or the loop is stopped (board_readiness.next_step_note).
+          next_step="$(AUTO_MERGE_ON="$AUTO_MERGE_ON" KILL_SWITCH_PAUSED="$KILL_SWITCH_PAUSED" python3 -I - <<'PYEOF'
+          import os
+          import sys
+
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
+          from board_readiness import next_step_note
+
+          print(next_step_note(os.environ.get("AUTO_MERGE_ON") == "true",
+                               os.environ.get("KILL_SWITCH_PAUSED") == "true"))
+          PYEOF
+          )" || next_step=""
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\n%s\n\ndecision: %s' \
+            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$next_step" "$decision")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           # An empty/failed marker here causes readiness to re-drive this
@@ -6829,8 +7034,9 @@ jobs:
           elif [ -n "${BOARD_LINE_ID:-}" ]; then
             # FR-011/FR-020: the merge ticks the line whoever merged it,
             # whatever the backlog-lines switch says.
-            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" \
-              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail}' \
+            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --argjson pr "$PR_NUMBER" \
+              --arg url "https://github.com/$GITHUB_REPOSITORY/pull/$PR_NUMBER" \
+              '{op: "tick-fixed", issue: $issue, line_id: $id, pr: $pr, decided: "merged", url: $url}' \
               | python3 .github/scripts/board_backlog_lines.py)" || tick="failed"
             if [ "$tick" = '"applied"' ]; then
               echo "board-loop: backlog line $BOARD_LINE_ID on #$issue_number ticked -- fixed by #$PR_NUMBER (specs/121 FR-011)." >> "$GITHUB_STEP_SUMMARY"

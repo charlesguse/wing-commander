@@ -173,6 +173,16 @@ def clear_note(body, line_id):
 NOT_PROVEN = " not-proven: "
 
 
+def tick_record(pr, decided="merged", url=""):
+    """The detail of a ticked `fixed` line (FR-017, research.md D6): `by #PR`
+    plus a one-line `decided: ... (link)` suffix, so the line carries its own
+    why. A missing `decided` falls back to `merged`; a missing link is omitted."""
+    text = _sanitise(decided) or "merged"
+    link = re.sub(r"[\s)\]]", "", str(url or ""))
+    return "by #{0} decided: {1}{2}".format(
+        int(pr), text, " ({0})".format(link) if link else "")
+
+
 def fixed_detail(detail, reason):
     """A `fixed` token's detail with its not-proven note replaced: the
     `by #PR` part stays (FR-011: the ticked line *also* carries the note);
@@ -876,7 +886,11 @@ def main():
         elif op in ("claim", "progress", "hold", "release", "route-proposal",
                     "tick-evidence", "tick-fixed", "note-proof"):
             import board_backlog_edit as bbe
-            apply_fn, verify = bbe._operations(op, request["line_id"], request.get("detail", ""),
+            detail = request.get("detail", "")
+            if op == "tick-fixed" and request.get("pr") is not None:
+                detail = tick_record(request["pr"], request.get("decided", "merged"),
+                                     request.get("url", ""))
+            apply_fn, verify = bbe._operations(op, request["line_id"], detail,
                                                request.get("url", ""))
             result = bbe.edit(request["issue"], apply_fn, verify,
                               fetch=bbe.gh_fetch, write=bbe.gh_write)
