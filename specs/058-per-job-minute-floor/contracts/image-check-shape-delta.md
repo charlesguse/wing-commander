@@ -36,7 +36,7 @@ carries this condition, is NOT exempt (research.md R-A2, corrected):
 adding a status-function `if:` anywhere upstream in a chain switches off
 GitHub's implicit `success()` protection for every job downstream of it
 too, so `verify-image-prerequisites` must be named directly in `needs:`
-and the comparison restated at every subsequent link. Gate 23 enforces
+and the comparison restated at every subsequent link. Gate 186 enforces
 this across the whole closure, not just direct dependents; verified
 empirically at 45 jobs in the closure, 0 without a status function.
 

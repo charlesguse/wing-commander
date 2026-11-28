@@ -1738,7 +1738,7 @@ jobs:
                       continue
 
                   if jname == "verify-image-prerequisites":
-                      # Gate 23 owns this job's shape (research.md D5): it
+                      # Gate 186 owns this job's shape (research.md D5): it
                       # deliberately carries no container: of its own, so it
                       # can invoke Docker directly on the runner before any
                       # other job's container is created. It still forwards
