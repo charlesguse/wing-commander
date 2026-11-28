@@ -82,7 +82,7 @@ def lookup(ref, ctx):
         # identically here and no scenario needs to distinguish them. This
         # simulator reads each job's `if:` in isolation and has no model of
         # GitHub suppressing a job whose needs-CLOSURE contains a skipped
-        # one (the #224 blind spot); Gate 15 and Gate 23 cover that shape,
+        # one (the #224 blind spot); Gate 15 and Gate 186 cover that shape,
         # and a scenario here proves nothing about it either way.
         return "skipped"
     # unset needs.*.outputs.* / inputs.* render as empty string

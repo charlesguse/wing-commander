@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Gate 23 dispatcher — two unrelated features independently landed a
+"""Gates 23 and 186 dispatcher — two unrelated features independently landed a
 "Gate 23" (specs/037-agent-turn-budget-guard and
 specs/038-runner-container-passthrough) and both named their script
 .github/scripts/verify-gate-23.py. Rather than let one silently clobber the
 other at rebase time, this file holds both bodies verbatim and dispatches on
-an argument, so lint-workflows.yml's two "Gate 23" steps each keep the exact
-behavior they shipped with.
+an argument, so lint-workflows.yml's two steps each keep the exact
+behavior they shipped with. 038's gate is Gate 186 since #889 gave each
+gate number one gate; the file keeps its name.
 
     python3 .github/scripts/verify-gate-23.py             -> 037's Gate 23:
         every agent call site carries the full turn-budget protection.
-    python3 .github/scripts/verify-gate-23.py --selftest   -> 038's Gate 23
+    python3 .github/scripts/verify-gate-23.py --selftest   -> 038's Gate 186
         self-test: the image-prerequisites gate's detector actually detects.
 
 Each body below is the complete, unmodified source of the script that used
@@ -366,9 +367,9 @@ if __name__ == "__main__":
 '''
 
 _IMAGE_PREREQ_SELFTEST_SOURCE = r'''
-"""Self-test for lint-workflows.yml's Gate 23.
+"""Self-test for lint-workflows.yml's Gate 186.
 
-Gate 23 asserts two things (specs/038-runner-container-passthrough):
+Gate 186 asserts two things (specs/038-runner-container-passthrough):
   1. every published stage declares verify-image-prerequisites, gated on
      `if: inputs.container-image != ''` with no container: of its own, and
      every entry job / always()/!cancelled()-style survival job depends on
@@ -379,7 +380,7 @@ Gate 23 asserts two things (specs/038-runner-container-passthrough):
 
 The fleet it guards is uniform today and should stay that way, so the gate
 will print "0 failure(s)" forever — whether its detection works or not. This
-script feeds Gate 23 synthetic fixtures that each carry one known defect (or
+script feeds Gate 186 synthetic fixtures that each carry one known defect (or
 one known NON-defect) and asserts the verdict, including what the error text
 names — same discipline as verify-gate-7.py / verify-gate-22.py.
 
@@ -404,7 +405,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_lint_gate_source import LINT_WORKFLOW, case_env, extract_gate_step  # noqa: E402
 
-STEP_PREFIX = "Gate 23 — every published stage"
+STEP_PREFIX = "Gate 186 — every published stage"
 
 
 # ---------------------------------------------------------------- fixtures
@@ -455,7 +456,7 @@ def canonical_tools():
 CANONICAL = object()   # sentinel: "the real list", vs None = "no list at all"
 
 # The published document required-tools.txt's header names as the contract
-# it implements. Gate 23 compares its table against the canonical list, so
+# it implements. Gate 186 compares its table against the canonical list, so
 # every fixture needs one — derived from that case's OWN canonical list, so
 # the two agree by construction and only the cases that MEAN to disagree do.
 CONTRACT_PATH = ("specs/038-runner-container-passthrough/contracts/"
@@ -483,7 +484,7 @@ def contract_md(tools):
             "The list `verify-image-prerequisites` checks against a named "
             "image:\n\n"
             "| Tool | Basis |\n|---|---|\n" + rows +
-            "\nKept in agreement with reality by Gate 23.\n")
+            "\nKept in agreement with reality by Gate 186.\n")
 
 
 EXPECTED_VIP_IF = "inputs.container-image != ''"
@@ -823,7 +824,7 @@ DRIFT_CASES = [
     # canonical one. The drift scan above cannot see this — the embedded
     # list is a shell assignment (skipped as a VAR=value prefix, never
     # tokenized as an invocation) and the check loop iterates the variable
-    # rather than the tool names — so until Gate 23 compared them, the
+    # rather than the tool names — so until Gate 186 compared them, the
     # twelve copies agreed by hand-coordination alone.
     ("a stage whose embedded list drops a canonical tool",
      {"stage.yml": stage(HEALTHY_ENTRY,
@@ -863,7 +864,7 @@ DRIFT_CASES = [
     # FR-011a's third reader (#234 review). required-tools.txt's header
     # names contracts/runner-container-passthrough.md as the document it
     # implements, and that document says of its own table that it is "kept
-    # in agreement with reality by Gate 23" — a promise nothing kept, which
+    # in agreement with reality by Gate 186" — a promise nothing kept, which
     # is how the published table stayed at seven tools while the canonical
     # list gained `timeout`. A 6th case element overrides the fixture
     # contract's table; every other case derives it from that case's own
@@ -930,7 +931,7 @@ def norm(path):
 
 
 def check_derivations_agree(gate_path):
-    """Gate 23's inline stage detection vs the shared wc_published_stages module.
+    """Gate 186's inline stage detection vs the shared wc_published_stages module.
 
     Same reasoning as verify-gate-7.py / verify-gate-22.py: a stage visible
     to one derivation and invisible to the other is issue #149 again.
@@ -947,10 +948,10 @@ def check_derivations_agree(gate_path):
                           capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     out = (proc.stdout or "") + (proc.stderr or "")
-    m = re.search(r"Gate 23: (\d+) published stage\(s\)", out)
+    m = re.search(r"Gate 186: (\d+) published stage\(s\)", out)
     if not m:
         return [("shared stage derivation",
-                 ["could not read the stage count out of Gate 23's own output; "
+                 ["could not read the stage count out of Gate 186's own output; "
                   "its summary line has changed shape"], out.strip())]
 
     gate_count = int(m.group(1))
@@ -958,24 +959,24 @@ def check_derivations_agree(gate_path):
                    re.findall(r"^note: (.+): published stage$", out, re.M)}
     if len(gate_stages) != gate_count:
         return [("shared stage derivation", [
-            f"Gate 23's summary says {gate_count} published stage(s) but it "
+            f"Gate 186's summary says {gate_count} published stage(s) but it "
             f"named {len(gate_stages)} of them."], out.strip())]
 
     if gate_stages != module_stages:
         only_gate = sorted(gate_stages - module_stages)
         only_module = sorted(module_stages - gate_stages)
         return [("shared stage derivation", [
-            f"Gate 23 and wc_published_stages.py disagree about which "
-            f"workflows are published stages. Seen only by Gate 23: "
+            f"Gate 186 and wc_published_stages.py disagree about which "
+            f"workflows are published stages. Seen only by Gate 186: "
             f"{only_gate or '(none)'}. Seen only by wc_published_stages.py: "
             f"{only_module or '(none)'}."], "")]
-    print(f"ok    the shared stage derivation agrees with Gate 23 "
+    print(f"ok    the shared stage derivation agrees with Gate 186 "
           f"({gate_count} published stages)")
     return []
 
 
 def check_real_fleet(gate_path):
-    """Gate 23 must actually PASS against this repository's own real files.
+    """Gate 186 must actually PASS against this repository's own real files.
 
     Covers both halves at once: the wiring check against the eleven real
     stages (T029/T033) AND the FR-011a drift check against every real run:
@@ -989,11 +990,11 @@ def check_real_fleet(gate_path):
                           encoding="utf-8", errors="replace")
     out = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        return [("Gate 23 against the real repository",
-                 ["Gate 23 fails when run against this repository's own "
+        return [("Gate 186 against the real repository",
+                 ["Gate 186 fails when run against this repository's own "
                   "real workflows/actions — the fixtures above can be "
                   "green while the real surface is not."], out.strip())]
-    print("ok    Gate 23 passes against this repository's own real fleet")
+    print("ok    Gate 186 passes against this repository's own real fleet")
     return []
 
 
@@ -1101,13 +1102,13 @@ def main():
     total = len(all_cases) + 2
     print()
     if failures:
-        print(f"::error file={LINT_WORKFLOW}::Gate 23 self-test: "
+        print(f"::error file={LINT_WORKFLOW}::Gate 186 self-test: "
               f"{len(failures)} of {total} check(s) behaved wrongly "
-              f"({', '.join(name for name, _, _ in failures)}). Gate 23's "
-              f"detection logic does not do what its name claims, so a green Gate 23 "
+              f"({', '.join(name for name, _, _ in failures)}). Gate 186's "
+              f"detection logic does not do what its name claims, so a green Gate 186 "
               f"on the real fleet means nothing.")
         return 1
-    print(f"Gate 23 self-test: all {total} checks behaved as expected.")
+    print(f"Gate 186 self-test: all {total} checks behaved as expected.")
     return 0
 
 
@@ -1121,7 +1122,7 @@ def _run(source):
     # globals this dict holds, and 038's self-test resolves its sibling
     # modules with os.path.dirname(os.path.abspath(__file__)) — so without
     # it that body died on NameError before running a single check, and the
-    # shipped "Gate 23 self-test" step exited 1 every time. Both bodies get
+    # shipped "Gate 186 self-test" step exited 1 every time. Both bodies get
     # the dispatcher's own path, which is the path they had when they were
     # standalone files.
     namespace = {"__name__": "__main__", "__file__": os.path.abspath(__file__)}

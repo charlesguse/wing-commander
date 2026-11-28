@@ -219,7 +219,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
-          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          # (kept in agreement by Gate 186, specs/038 FR-011a).
           REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
@@ -639,12 +639,12 @@ jobs:
     # every matrix value.
     name: ${{ inputs.sync-method == 'merge' && format('Sync spec branch with main ({0}, {1}, {2})', matrix.slug, matrix.spec_dir, matrix.issue) || format('rebase ({0}, {1}, {2})', matrix.slug, matrix.spec_dir, matrix.issue) }}
     needs: [discover, verify-image-prerequisites]
-    # spec 058 (Gate 15/Gate 23): discover now carries !cancelled() (it
+    # spec 058 (Gate 15/Gate 186): discover now carries !cancelled() (it
     # tolerates a skipped verify-image-prerequisites), so GitHub's
     # implicit success() no longer protects this job across the whole
     # needs-closure -- !cancelled() && needs.discover.result == 'success'
     # restates that protection explicitly, and a status-guarded job must
-    # directly depend on verify-image-prerequisites too (Gate 23).
+    # directly depend on verify-image-prerequisites too (Gate 186).
     if: ${{ !cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.discover.result == 'success' && needs.discover.outputs.branches != '[]' }}
     strategy:
       fail-fast: false

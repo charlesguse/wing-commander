@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gate 62 - the e2e reference image has required-tools.txt and this repo's implement prerequisites.
 
-Gate 23's existing drift check is purely textual: it compares the
+Gate 186's existing drift check is purely textual: it compares the
 `REQUIRED_TOOLS=` string literal embedded in each stage's
 verify-image-prerequisites job against .github/scripts/required-tools.txt.
 That check cannot fail if .github/docker/e2e-reference-image/Dockerfile
@@ -59,7 +59,7 @@ and (a) builds the real, unmodified set and expects a clean pass, and (b)
 builds ONE drifted copy of the Dockerfile that drops jq together with
 python3-yaml, python-is-python3 and yamllint, and installs apt's
 shellcheck in place of the pinned one (the image before #1204), and
-expects the required-tools failure to name jq (the gap Gate 23's
+expects the required-tools failure to name jq (the gap Gate 186's
 textual-only check leaves open, proving this gate fails on its own
 subject, Constitution VIII), the preflight failure to name pyyaml, the
 prompted-command failure to name python and yamllint, and the shellcheck
@@ -1101,7 +1101,7 @@ def self_test():
             problems.append("clean copy of the real image FAILED: " + "; ".join(got))
 
         # (b) one drifted build: the Dockerfile silently drops jq -- the
-        # exact gap Gate 23's textual-only check cannot see, since the
+        # exact gap Gate 186's textual-only check cannot see, since the
         # embedded REQUIRED_TOOLS= literal and required-tools.txt both stay
         # untouched here -- and every package only this repository's
         # implement jobs need. yamllint depends on python3-yaml, so both go

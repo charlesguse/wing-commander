@@ -280,7 +280,7 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
         run: |
           # Canonical required-tool list: .github/scripts/required-tools.txt
-          # (kept in agreement by Gate 23, specs/038 FR-011a).
+          # (kept in agreement by Gate 186, specs/038 FR-011a).
           REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
 
           if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
@@ -1707,11 +1707,11 @@ jobs:
     # and it is also what the runner leaves behind when it withholds an
     # output (#287) — the legs-dropped job below is what turns that case
     # into a failure instead of a silent skip.
-    # spec 058 (Gate 15/Gate 23): classify-and-announce now carries
+    # spec 058 (Gate 15/Gate 186): classify-and-announce now carries
     # !cancelled() (it tolerates a skipped verify-image-prerequisites),
     # so GitHub's implicit success() no longer protects this job across
     # the whole needs-closure -- the first three lines below restate that
-    # protection explicitly (and satisfy Gate 23's requirement that a
+    # protection explicitly (and satisfy Gate 186's requirement that a
     # status-guarded job directly depend on verify-image-prerequisites
     # too); the rest is the pre-existing guard, unchanged.
     # specs/074-serialized-fold-dispatch: the same loss-of-implicit-
@@ -3987,7 +3987,7 @@ jobs:
   # withheld — the run is already red, but nothing would say WHICH way it
   # went wrong. A classify that failed before confirm ran sets none of
   # the three outputs and cannot fire this. `!cancelled()` defeats
-  # skip-propagation, so the image gate is re-checked explicitly (Gate 23,
+  # skip-propagation, so the image gate is re-checked explicitly (Gate 186,
   # the `stalled` job's shape). It posts the loss on the PR first (T063's
   # ordering lesson: a reply after a failing step is a reply that never
   # happens), then fails the run.

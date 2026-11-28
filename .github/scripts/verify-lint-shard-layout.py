@@ -24,7 +24,14 @@ specs/129-parallel-pr-lint/contracts/lint-workflow-layout.md, items 1, 2, 3,
     docstring with the same "Gate N", and a step that runs a script which
     declares "Gate N" is itself named "Gate N ..." (two gates merged on the
     same day both took Gate 174, #889; the dispatch-input-types gate is
-    now Gate 175).
+    now Gate 175). The step names hold the same rule for gates whose script
+    claims no number: the steps named "Gate N" with nothing between the
+    number and the separator ("Gate N — ...", "Gate N: ...") are one gate's
+    own steps, so they must all run the same repository scripts (or be one
+    inline step). A qualified step ("Gate N self-test", "Gate N fixtures")
+    is a part of gate N and is not compared. Gates 22, 23, 157, 158, 166
+    and 167 each named two different gates, and Gate 165 three, before
+    #889 renumbered them to 185-192.
 
 Which jobs are PR-time is the registry's own reading
 (wc_gate_registry._job_runs_on_pull_request), so this gate and the local
@@ -57,6 +64,10 @@ _PAIR = re.compile(r"^(Gate \S+) self-test\b")
 _OUTCOME = re.compile(r"steps\.([\w-]+)\.outcome\s*!=\s*'failure'")
 _CLAIM = re.compile(r"\s*Gate (\d+)\b")
 _STEP_GATE = re.compile(r"^Gate (\d+)\b")
+# What follows "Gate N" up to the first separator is the step's qualifier
+# ("self-test", "fixtures", "wiring self-test"); none makes it a gate step.
+_QUALIFIER_END = re.compile(r"\s+(?:\u2014|\u2013|--|-)\s|:")
+_REPO_SCRIPT = re.compile(r"\.github/(?:scripts|actions)/[\w./-]+")
 SCRIPTS = os.path.join(".github", "scripts")
 
 
@@ -107,6 +118,34 @@ def _claim_failures(doc, claims):
                                  "declares Gate {3}; name the step "
                                  "'Gate {3} ...'".format(name or "?", k,
                                                          script, n))
+    return fails
+
+
+def _step_number_failures(doc):
+    """One number, one gate, read from step names alone: every unqualified
+    "Gate N" step runs the same set of repository scripts, or N has one
+    such step. A script's arguments do not count (Gate 124's open-issue
+    check runs its own script with --check-open), and an inline step with
+    no script is a gate of its own."""
+    gates = {}
+    for k, job in (doc.get("jobs") or {}).items():
+        for s in (job or {}).get("steps") or []:
+            name = str((s or {}).get("name") or "")
+            m = _STEP_GATE.match(name)
+            if not m or _QUALIFIER_END.split(name[m.end():], 1)[0].strip():
+                continue
+            run = "\n".join(l for l in str(s.get("run") or "").splitlines()
+                             if not l.lstrip().startswith("#"))
+            key = frozenset(_REPO_SCRIPT.findall(run)) or ("inline", k, name)
+            gates.setdefault(m.group(1), {}).setdefault(key, []).append(
+                "{0!r} in '{1}'".format(name, k))
+    fails = []
+    for n, keys in sorted(gates.items(), key=lambda x: int(x[0])):
+        if len(keys) > 1:
+            fails.append("Gate {0} names {1} different gates: {2}; give all "
+                         "but one the next free gate number".format(
+                             n, len(keys), "; ".join(
+                                 v[0] for v in keys.values())))
     return fails
 
 
@@ -186,6 +225,7 @@ def check(doc, derived=None, claims=None):
     `claims` is gate_claims() of it; None skips the one-number-one-gate
     rule for the same reason."""
     fails = [] if claims is None else _claim_failures(doc, claims)
+    fails += _step_number_failures(doc)
     if doc.get("name") != NAME:
         fails.append("workflow name is {0!r}, not {1!r}".format(
             doc.get("name"), NAME))
@@ -447,6 +487,45 @@ def self_test():
          lambda d: J(d, "lint-shard-1")["steps"][2].update(
              {"name": "Gate 3 self-test — a"}),
          "declares Gate 1", claims=claims)
+    step = lambda name, run: {"name": name, "if": "${{ !cancelled() }}",
+                              "run": run}
+    case("two unqualified steps of one number running different scripts "
+         "fail (the two Gate 157s, #889)",
+         lambda d: J(d, "lint-shard-2")["steps"][0].update(
+             {"name": "Gate 1 — b"}),
+         "Gate 1 names 2 different gates")
+    case("an inline step and a script step of one number fail (the two "
+         "Gate 23s, #889)",
+         lambda d: J(d, "lint-shard-2")["steps"].append(
+             step("Gate 1: inline", "python3 - <<'PY'\nprint(1)\nPY")),
+         "Gate 1 names 2 different gates")
+    case("two inline steps of one number fail",
+         lambda d: (J(d, "lint-shard-2")["steps"].append(
+             step("Gate 5 — x", "python3 - <<'PY'\nprint(1)\nPY")),
+             J(d, "lint-shard-2")["steps"].append(
+             step("Gate 5 — y", "python3 - <<'PY'\nprint(2)\nPY"))),
+         "Gate 5 names 2 different gates")
+    case("three gates on one number are all named (the three Gate 165s)",
+         lambda d: (J(d, "lint-shard-2")["steps"][0].update(
+             {"name": "Gate 1 — b"}),
+             J(d, "lint-shard-2")["steps"].append(
+             step("Gate 1 - c", "python3 .github/scripts/verify-c.py"))),
+         "Gate 1 names 3 different gates")
+    case("one gate's script run twice with other arguments, in two jobs, "
+         "passes (Gate 124's --check-open)",
+         lambda d: J(d, "names-and-tags")["steps"].append(
+             step("Gate 1 — a, on main", "python3 .github/scripts/verify-a.py "
+                  "--check-open")), None)
+    case("qualified parts of one gate running other scripts pass (Gate "
+         "171's fixtures and wiring)",
+         lambda d: J(d, "lint-shard-1")["steps"].extend([
+             step("Gate 1 fixtures — a", "bash .github/scripts/a-tests/run.sh"),
+             step("Gate 1 wiring self-test — a",
+                  "python3 .github/scripts/verify-a-wiring.py")]), None)
+    case("a commented-out script in a gate step does not make it another gate",
+         lambda d: J(d, "lint-shard-2")["steps"].append(
+             step("Gate 2 — b, again", "# was .github/scripts/verify-z.py\n"
+                  "python3 .github/scripts/verify-b.py --x")), None)
     results.extend(_claim_reader_cases())
     results.extend(_derivation_cases())
     bad = results.count(False)

@@ -112,7 +112,7 @@ ON_DISK_SUBJECT_PATH_RE = re.compile(
 # `python3 - <<'PYEOF' ... PYEOF` inside a run: block, which is how the
 # larger gates in lint-workflows.yml are written. The opener may carry
 # script arguments before the delimiter (watchdog.yml's signal-id stamp
-# passes `"$f"`) and a redirect after it (Gate 23's does), and the
+# passes `"$f"`) and a redirect after it (Gate 186's does), and the
 # terminator is matched at any indentation so the YAML block's own nesting
 # is irrelevant. Interpreter flags before the `-` are read too: board-
 # loop.yml's post-agent heredocs run `python3 -I -` (#583).
@@ -498,7 +498,7 @@ def check_local_runner_parity(root="."):
     if not runnable:
         failures.append(
             "pr_time_inline_steps found no runnable python-heredoc step in "
-            "lint-workflows.yml's PR-time jobs - Gates 2/3/6/15/16/22/23 "
+            "lint-workflows.yml's PR-time jobs - Gates 2/3/6/15/16/22/186 "
             "are written that way, so the reader has stopped seeing them.")
     elif not unrunnable:
         print(f"ok    all {len(runnable)} PR-time heredoc gate(s) run "

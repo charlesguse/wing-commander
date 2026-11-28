@@ -318,11 +318,11 @@ intended budget × 2.5, rounded up) instead of the intended budget directly,
 and a `wing-commander-agent-verdict` step classifies each run
 (healthy/exhausted/rate-limited/failed/unclassifiable) from the transcript
 alone, so a stage can tell a post-hoc-rejected-but-healthy run from a genuine
-failure and continue rather than fail loud on the former. Gate 22
+failure and continue rather than fail loud on the former. Gate 185
 (`verify-agent-verdict.py`) proves that classification under mutation; Gate 23
 (`verify-gate-23.py`) proves every agent call site in the repository carries
 the full ceiling/verdict/fail-loud wiring and catches both a newly-added
-unprotected site and a ceiling regressed back to its intended budget. Gate 22
+unprotected site and a ceiling regressed back to its intended budget. Gate 185
 also carries the `rate-limited` cases (a terminal API 429, a mid-run 429 the
 runtime recovered from, a non-429 API error that must not be widened
 into `rate-limited`, and an unrelated failure that logged only an

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 165 — implement stall hand-off and honest remaining-work reporting.
+"""Gate 189 — implement stall hand-off and honest remaining-work reporting.
 
 WHY THIS EXISTS
 ----------------

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared extraction of a lint-workflows.yml gate's python source, drift-free.
 
-Seven self-tests (Gate 6, 7, 12, 15, 16, 22, 23) each carried their own copy
+Seven self-tests (Gate 6, 7, 12, 15, 16, 22, 186) each carried their own copy
 of the same ~25 lines: find the non-self-test step named "Gate N", then
 return the source between its `python3 - <<'PYEOF' ... PYEOF` markers.
 Running the SHIPPED gate rather than a copy of it is the whole point (Gate 5
@@ -40,11 +40,13 @@ def extract_gate_step(step_prefix, path=LINT_WORKFLOW):
     Collects every step in `path` whose name starts with `step_prefix` and
     does not contain "self-test", and returns the source between the heredoc
     markers of the ONE such step carrying a heredoc. `step_prefix` must be
-    unique among non-self-test steps: two unrelated features each landed a
-    "Gate 22" and a "Gate 23", so those callers pass a longer prefix ("Gate
-    22 — every job") naming their twin unambiguously; two heredoc-bearing
-    matches refuse loudly. Error text names the caller as "verify-" + the
-    prefix's "Gate N" head, which is every verifier's filename.
+    unique among non-self-test steps: two unrelated features each once
+    landed a "Gate 22" and a "Gate 23" (the later two are Gates 185 and 186
+    since #889), so those callers pass a longer prefix ("Gate 22 — every
+    job") naming their gate unambiguously; two heredoc-bearing matches
+    refuse loudly. Error text names the caller as "verify-" + the prefix's
+    "Gate N" head, which is every verifier's filename but verify-gate-23.py's
+    (Gate 186's self-test lives there).
     """
     head = re.match(r"Gate \d+", step_prefix)
     caller = ("verify-" + head.group(0).lower().replace(" ", "-")
@@ -88,7 +90,7 @@ def case_env():
     """The environment to run an extracted gate in a temp case directory.
 
     A gate may import a shared module from .github/scripts relative to its
-    working directory (Gates 7, 22 and 23 read the unpublished-callables
+    working directory (Gates 7, 22 and 186 read the unpublished-callables
     registry through wc_published_stages). A case directory has no
     .github/scripts, so this puts the repository's own on PYTHONPATH; the
     gate still reads the case directory's files."""

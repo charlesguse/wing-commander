@@ -832,7 +832,7 @@ def test_structural():
             failures.append(f"structural: {job_id!r}.needs is {needs!r}, "
                             f"expected exactly [verify-image-prerequisites, "
                             f"classify-and-announce, act, "
-                            f"{EXTRA_NEEDS[job_id]}] (Gate 23 requires "
+                            f"{EXTRA_NEEDS[job_id]}] (Gate 186 requires "
                             f"every always()-guarded job to depend on "
                             f"verify-image-prerequisites directly — PR #253 "
                             f"review).")
@@ -847,7 +847,7 @@ def test_structural():
                             f"needs.verify-image-prerequisites.result != "
                             f"'failure' — always() defeats ordinary "
                             f"skip-propagation, so a real image-prerequisite "
-                            f"failure would run this job unchecked (Gate 23), "
+                            f"failure would run this job unchecked (Gate 186), "
                             f"or a legitimate skip (spec 058) would be "
                             f"treated as a failure.")
 
