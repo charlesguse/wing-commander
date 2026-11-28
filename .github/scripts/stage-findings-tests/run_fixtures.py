@@ -882,7 +882,8 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
           state and set(state.keys()) == {
               "disabled", "proposed", "dropped_malformed", "dropped_cap",
               "dropped_spec_errata", "routed_to_lifecycle", "filed", "appended",
-              "dropped_api_failure", "outstanding_skipped", "notes"},
+              "dropped_api_failure", "outstanding_skipped", "notes",
+              "triaged_out", "triaged_markdown"},
           state and sorted(state.keys()))
     check(case + ": dropped_malformed/dropped_cap are still zero -- not counted as a drop",
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
