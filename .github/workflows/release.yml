@@ -155,9 +155,8 @@ jobs:
       #
       # The release-contract half — no literal main as a branch ref, the
       # publisher's owner/repo only as the pipeline-repo default, and
-      # --model plus --max-turns on every agent step (counted on the
-      # `uses: anthropics/claude-code-action` wiring form, NOT a bare
-      # mention, which also matches `#1462`-style issue refs in comments)
+      # --model plus --max-turns on every agent step (the step Gate 23
+      # also calls one, wc_agent_step.py; comments are not counted)
       # — lives in .github/scripts/verify-release-contract.py (Gate 50),
       # run and invoked the same way. Those three stayed here as inline
       # greps after Gate 31, on a derived stage set, which fixed COVERAGE

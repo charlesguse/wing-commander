@@ -819,27 +819,21 @@ READER_VALUES = ("true", "True", "TRUE", "tRuE", "true ", " true", "\ttrue\n", "
                  "", None, "yes", "1", "truee")
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
-# The one temporary exception: a reader that may still disagree with the
-# rule, the tracker that holds its fix, and the exact line (stripped) it is
-# registered against. When that line changes the exception fails, so it is
-# dropped with the fix rather than left to excuse a later drift.
-READER_EXCEPTIONS = {
-    "board-loop.yml merge decision (jq)": {
-        "tracker": "#889",
-        "path": BOARD_LOOP,
-        "line": "'{class: $class, switch_on: ($switch_on == \"true\"),",
-    },
-}
-# Shell pause checks that do not follow the rule yet, tracked on #889
-# ("One rule for all switches"): (workflow file that relays the raw value,
-# switch, workflow file whose check reads it). Not run by
-# one_rule_problems(); docs_half() requires docs/reference.md to name each,
-# and relay_problems() fails on a raw relay of a switch that is neither here
-# nor in ONE_RULE_RELAYS, and on an entry whose relay is gone.
-PENDING_SHELL_READERS = (
-    ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED", "lifecycle-review-gate.yml"),
-    ("auto-release.yml", "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED", "auto-release.yml"),
-)
+# A temporary exception: a reader that may still disagree with the rule,
+# the tracker that holds its fix, and the exact line (stripped) it is
+# registered against; at most one. When that line changes the exception
+# fails, so it is dropped with the fix rather than left to excuse a later
+# drift. Empty since #889's "One rule for all switches" lines were fixed:
+# every reader follows the rule.
+READER_EXCEPTIONS = {}
+# Shell pause checks that do not follow the rule yet: (workflow file that
+# relays the raw value, switch, workflow file whose check reads it). Not run
+# by one_rule_problems(); docs_half() requires docs/reference.md to name
+# each, and relay_problems() fails on a raw relay of a switch that is
+# neither here nor in ONE_RULE_RELAYS, and on an entry whose relay is gone.
+# Empty since #889's last pending readers (auto-release's container leg,
+# lifecycle-review-gate's live re-checks) moved to `vars.X == 'true'`.
+PENDING_SHELL_READERS = ()
 # Raw relays of a switch to a reader one_rule_problems() runs (or to the
 # registered exception): workflow file -> the switches it relays that way
 # (None: every switch). A `switch-value:` hand-off to the watch-guard
@@ -847,8 +841,7 @@ PENDING_SHELL_READERS = (
 ONE_RULE_RELAYS = {
     "board-status.yml": None,  # wc_board_status
     "wing-commander-feature-health.yml": None,  # wc_feature_health.collect
-    "board-loop.yml": {"WING_COMMANDER_BOARD_BACKLOG_LINES", "WING_COMMANDER_BOARD_LOOP_PAUSED",
-                       "WING_COMMANDER_BOARD_AUTO_MERGE"},  # selection_gate; the exception
+    "board-loop.yml": {"WING_COMMANDER_BOARD_BACKLOG_LINES", "WING_COMMANDER_BOARD_LOOP_PAUSED"},  # selection_gate
     # shared-pr-reviewer.yml's `paused` input, which its guard and prepare
     # jobs read as `inputs.paused == 'true'` (shell_pause_readers()).
     "wing-commander-shared-pr-reviewer.yml": {"WING_COMMANDER_SHARED_REVIEWER_PAUSED"},
@@ -871,6 +864,14 @@ def pending_docs_problems(kill_flat, pending):
     """docs/reference.md's "N readers do not follow it yet" sentence states
     how many readers are pending and names only their workflow files."""
     m = re.search(r"(\w+) readers? do(?:es)? not follow it yet(.*?)\| Switch \|", kill_flat)
+    if not pending:
+        # #889: with nothing pending the list is gone, and the section says
+        # every reader follows the rule.
+        if m:
+            return ["docs/reference.md still lists readers that do not follow the rule; none is pending"]
+        if "Every reader follows it" not in kill_flat:
+            return ["docs/reference.md's Kill switches section does not say every reader follows the rule"]
+        return []
     if not m:
         return ["docs/reference.md's Kill switches section has no \"do not follow it yet\" list"]
     problems = []
@@ -918,8 +919,9 @@ def relay_problems(root, switch_vars, pending, conforming):
 READER_SITES = {
     "auto_release_paused": [(".github/workflows/auto-release.yml",
                              "if: vars.WING_COMMANDER_AUTO_RELEASE_PAUSED != 'true'")],
-    "board_auto_merge": [(BOARD_LOOP, "SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}"),
-                         (BOARD_LOOP, "'{class: $class, switch_on: ($switch_on == \"true\"),")],
+    "board_auto_merge": [(BOARD_LOOP, "&& vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'"),
+                         (BOARD_LOOP, "SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' }}"),
+                         (BOARD_LOOP, "AUTO_MERGE_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' }}")],
     "board_backlog_lines": [(BOARD_LOOP, "BACKLOG_LINES_SWITCH: ${{ vars.WING_COMMANDER_BOARD_BACKLOG_LINES }}"),
                             (BOARD_LOOP, "\"switch\": os.environ.get(\"BACKLOG_LINES_SWITCH\") or \"\","),
                             (".github/scripts/board_backlog_lines.py",
@@ -1071,18 +1073,49 @@ def real_readers(root):
                                          "constitution_text": None})
         return reason == "board loop is paused"
 
-    # board-loop.yml's merge decision: the comparison is read from the
-    # workflow line and run through real jq, so a fixed line is run as fixed.
-    lines = _file_lines(root, BOARD_LOOP)
-    merge_line = next((line for line in lines if "switch_on: (" in line and "$switch_on" in line), "")
+    # board-loop.yml's merge decision (#889): the step's SWITCH_ON env is
+    # evaluated from the variable's raw value by wc_gha_expr, and the jq
+    # comparison read from the workflow line is run on the result through
+    # real jq, so either half run as shipped.
+    import wc_gha_expr as gx
+    known = ("vars.", "inputs.", "steps.", "needs.", "env.")
+    decide = _workflow_step(root, BOARD_LOOP, "merge", "decide")
+    merge_line = next((line for line in decide["run"].splitlines()
+                       if "switch_on: (" in line and "$switch_on" in line), "")
     match = re.search(r"switch_on: (\(\$switch_on.*?\)),", merge_line)
+
+    def env_of(step, key, var, value):
+        ctx = {} if value is None else {"vars." + var: value}
+        return gx.interpolate(step["env"][key], ctx, known)
 
     def jq_merge(value):
         if not match:
             raise ValueError("no merge-decision switch_on comparison in {0}".format(BOARD_LOOP))
-        out = subprocess.run(["jq", "-n", "--arg", "switch_on", str(value or ""), match.group(1)],
+        handed = env_of(decide, "SWITCH_ON", "WING_COMMANDER_BOARD_AUTO_MERGE", value)
+        out = subprocess.run(["jq", "-n", "--arg", "switch_on", handed, match.group(1)],
                              capture_output=True, text=True, check=True).stdout.strip()
         return out == "true"
+
+    # board-loop.yml's ready report (#889): the readiness step's own Python
+    # heredoc, run on the AUTO_MERGE_ON its env hands over, must say what
+    # next_step_note says with the switch on exactly when the rule reads on.
+    import board_readiness as br
+    ready = next(st for st in _job_steps(root, BOARD_LOOP, "readiness")
+                 if st.get("name") == "Post the readiness report (ready)")
+    heredoc = ready["run"].split("<<'PYEOF'\n", 1)[-1].split("\nPYEOF", 1)[0]
+    on_note = br.next_step_note(True, False)
+
+    def ready_note(value):
+        if on_note == br.next_step_note(False, False):
+            raise ValueError("next_step_note does not tell auto-merge on from off")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "wc-pristine"))
+            os.symlink(os.path.join(root, ".github", "scripts"), os.path.join(tmp, "wc-pristine", "scripts"))
+            env = {"PATH": os.environ.get("PATH", ""), "RUNNER_TEMP": tmp, "KILL_SWITCH_PAUSED": "false",
+                   "AUTO_MERGE_ON": env_of(ready, "AUTO_MERGE_ON", "WING_COMMANDER_BOARD_AUTO_MERGE", value)}
+            got = subprocess.run(["python3", "-I", "-"], input=heredoc, capture_output=True, text=True,
+                                 env=env, check=True).stdout.strip()
+        return got == on_note.strip()
 
     return {
         "wc_board_status._switch_on": bs._switch_on,
@@ -1092,13 +1125,18 @@ def real_readers(root):
         "board_backlog_lines.selection_gate": backlog,
         "board_backlog_lines.selection_gate (loop paused)": backlog_paused,
         "board-loop.yml merge decision (jq)": jq_merge,
+        "board-loop.yml readiness ready report's next step": ready_note,
     }
 
 
-def _workflow_step(root, path, job, step_id):
+def _job_steps(root, path, job):
     import yaml
     with open(os.path.join(root, path), encoding="utf-8") as fh_:
-        steps = yaml.safe_load(fh_)["jobs"][job]["steps"]
+        return yaml.safe_load(fh_)["jobs"][job]["steps"]
+
+
+def _workflow_step(root, path, job, step_id):
+    steps = _job_steps(root, path, job)
     found = [st for st in steps if st.get("id") == step_id]
     if len(found) != 1:
         raise ValueError("{0}: job {1} has {2} step(s) with id {3}".format(path, job, len(found), step_id))
@@ -1119,6 +1157,24 @@ def _run_step(script, env):
             outputs = dict(line.split("=", 1) for line in fh_.read().splitlines() if "=" in line)
         with open(summary, encoding="utf-8") as fh_:
             return code, outputs, fh_.read()
+
+
+def _only_line(run, var):
+    """The one line of a step's script that reads the env var `var`."""
+    found = [ln.strip() for ln in run.splitlines() if re.search(r"\$\{?" + var + r"\b|\"" + var + r"\"", ln)]
+    if len(found) != 1:
+        raise ValueError("{0} is read on {1} line(s), not one: {2!r}".format(var, len(found), found))
+    return found[0]
+
+
+def _only_test(run, var):
+    """The one `[ "$VAR" = "..." ]` test a step's script makes on `var`;
+    any other way of reading it is refused rather than guessed at."""
+    line = _only_line(run, var)
+    tests = re.findall(r'\[ "\$' + var + r'" !?= "[^"]*" \]', line)
+    if len(tests) != 1 or line.count("$" + var) != 1:
+        raise ValueError("{0} is not read by one plain test: {1!r}".format(var, line))
+    return tests[0]
 
 
 def shell_pause_readers(root):
@@ -1186,12 +1242,69 @@ def shell_pause_readers(root):
         paused = gx.interpolate(state["env"]["PAUSED"], shared_input(value), known)
         return sr.guard("refs/heads/main", "main", "pr", paused)[1] == "paused"
 
+    def shared_guard_direct(value):
+        """wc_shared_review.guard on the value itself, so the function
+        follows the rule whoever calls it, not only behind the input."""
+        return sr.guard("refs/heads/main", "main", "pr", "" if value is None else value)[1] == "paused"
+
+    # #889 ("two more readers"): auto-release's container leg, both steps.
+    ar = ".github/workflows/auto-release.yml"
+    ar_mode = _workflow_step(root, ar, "detect", "mode")
+    ar_outcome = _workflow_step(root, ar, "report", "outcome")
+    container = "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED"
+
+    def ar_mode_reader(value):
+        with tempfile.TemporaryDirectory() as tmp:
+            # An odd day since the epoch: the container day, the only day
+            # the pause changes anything.
+            with open(os.path.join(tmp, "date"), "w", encoding="utf-8") as fh_:
+                fh_.write("#!/bin/sh\necho 86400\n")
+            os.chmod(os.path.join(tmp, "date"), 0o755)
+            code, outputs, _ = _run_step('PATH="$PATH_PREFIX:$PATH"\n' + ar_mode["run"], {
+                "PATH_PREFIX": tmp, "CONTAINER_PAUSED": env_of(ar_mode, "CONTAINER_PAUSED", container, value)})
+        if code or outputs.get("paused") not in ("true", "false"):
+            raise ValueError("auto-release mode step exited {0} with {1!r}".format(code, outputs))
+        return outputs["paused"] == "true"
+
+    def ar_outcome_reader(value):
+        test = _only_test(ar_outcome["run"], "CONTAINER_PAUSED")
+        code, _, _ = _run_step(test, {"CONTAINER_PAUSED": env_of(ar_outcome, "CONTAINER_PAUSED", container, value)})
+        return code == 0
+
+    # lifecycle-review-gate.yml's live re-checks (readiness and merge).
+    lrg = ".github/workflows/lifecycle-review-gate.yml"
+    lrg_ready = _workflow_step(root, lrg, "readiness", "decide")
+    lrg_merge = _workflow_step(root, lrg, "merge", "preconditions")
+    gate_var = "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED"
+
+    def lrg_ready_reader(value):
+        line = _only_line(lrg_ready["run"], "KILL_SWITCH_PAUSED")
+        code, outputs, _ = _run_step('paused=false\n{0}\necho "paused=$paused" >> "$GITHUB_OUTPUT"'.format(line), {
+            "KILL_SWITCH_PAUSED": env_of(lrg_ready, "KILL_SWITCH_PAUSED", gate_var, value)})
+        if code or outputs.get("paused") not in ("true", "false"):
+            raise ValueError("lifecycle-review-gate readiness re-check exited {0} with {1!r}".format(code, outputs))
+        return outputs["paused"] == "true"
+
+    def lrg_merge_reader(value):
+        import subprocess
+        expr = _only_line(lrg_merge["run"], "KILL_SWITCH_PAUSED").rstrip(",")
+        env = {"PATH": os.environ.get("PATH", ""),
+               "KILL_SWITCH_PAUSED": env_of(lrg_merge, "KILL_SWITCH_PAUSED", gate_var, value)}
+        out = subprocess.run(["python3", "-I", "-c", "import os\nprint(bool({0}))".format(expr)],
+                             capture_output=True, text=True, env=env, check=True).stdout.strip()
+        return out == "True"
+
     return {
         "spec-pr-review.yml select pause step": spec_select,
         "spec-pr-review.yml review eligibility re-check": spec_eligible,
         "watchdog.yml write suppression": watchdog,
         "shared-pr-reviewer.yml guard (via the wrapper's input)": shared_guard,
         "shared-pr-reviewer.yml prepare's wc_shared_review.guard (via the wrapper's input)": shared_prepare,
+        "wc_shared_review.guard (on the raw value)": shared_guard_direct,
+        "auto-release.yml detect's mode step (container leg pause)": ar_mode_reader,
+        "auto-release.yml report's outcome step (container leg pause)": ar_outcome_reader,
+        "lifecycle-review-gate.yml readiness re-check": lrg_ready_reader,
+        "lifecycle-review-gate.yml merge preconditions re-check": lrg_merge_reader,
     }
 
 
@@ -1206,32 +1319,44 @@ def reader_half():
     check("jq is available to run board-loop.yml's merge comparison", shutil.which("jq") is not None)
     readers = dict(real_readers(root), **shell_pause_readers(root))
     problems = one_rule_problems(root, readers, READER_EXCEPTIONS)
-    check("every switch reader follows the one switch rule, but the one registered exception",
-          not problems, problems)
-    check("the one exception is board-loop.yml's merge decision, tracked on #889",
-          {k: v["tracker"] for k, v in READER_EXCEPTIONS.items()} == {"board-loop.yml merge decision (jq)": "#889"},
-          READER_EXCEPTIONS)
+    check("every switch reader follows the one switch rule", not problems, problems)
+    # #889: the last exception (board-loop.yml's merge decision) and the
+    # last pending shell readers were brought under the rule; none is left.
+    check("no reader exception is registered", READER_EXCEPTIONS == {}, READER_EXCEPTIONS)
+    check("no pending shell reader is registered", PENDING_SHELL_READERS == (), PENDING_SHELL_READERS)
+    for name in ("board-loop.yml merge decision (jq)", "board-loop.yml readiness ready report's next step",
+                 "wc_shared_review.guard (on the raw value)",
+                 "auto-release.yml detect's mode step (container leg pause)",
+                 "auto-release.yml report's outcome step (container leg pause)",
+                 "lifecycle-review-gate.yml readiness re-check",
+                 "lifecycle-review-gate.yml merge preconditions re-check"):
+        check("the one-rule check runs {0}".format(name), name in readers, sorted(readers))
 
     # Shown to fail: a reader that trims, one that reads only exact "true",
-    # an exception whose line changed, an exception whose reader agrees, and
-    # a second exception.
+    # one that also takes 1 and yes, an exception whose line changed, an
+    # exception whose reader agrees, and a second exception.
     trims = lambda v: str(v or "").strip().lower() == "true"  # noqa: E731
     exact = lambda v: str(v or "") == "true"  # noqa: E731
+    loose = lambda v: str(v or "").lower() in ("true", "1", "yes")  # noqa: E731
     check("a reader that trims fails the one rule",
           one_rule_problems(root, dict(readers, trimmed=trims), READER_EXCEPTIONS))
     check("a reader that reads only the exact text 'true' fails the one rule",
           one_rule_problems(root, dict(readers, exact=exact), READER_EXCEPTIONS))
-    moved = {k: dict(v, line=v["line"].replace('== "true"', '| ascii_downcase == "true"'))
-             for k, v in READER_EXCEPTIONS.items()}
-    check("an exception whose line has changed fails", one_rule_problems(root, readers, moved))
-    fixed = dict(readers, **{"board-loop.yml merge decision (jq)": one_rule})
+    check("a reader that also takes 1 and yes fails the one rule",
+          one_rule_problems(root, dict(readers, loose=loose), READER_EXCEPTIONS))
+    real_line = next(line for line in _file_lines(root, BOARD_LOOP) if line)
+    sample = {"exact": dict(tracker="#889", path=BOARD_LOOP, line=real_line)}
+    check("a sample exception on a real line excuses its reader",
+          not one_rule_problems(root, dict(readers, exact=exact), sample),
+          one_rule_problems(root, dict(readers, exact=exact), sample))
+    moved = {k: dict(v, line=v["line"] + " # moved") for k, v in sample.items()}
+    check("an exception whose line has changed fails", one_rule_problems(root, dict(readers, exact=exact), moved))
     check("an exception whose reader now follows the rule fails",
-          one_rule_problems(root, fixed, READER_EXCEPTIONS))
+          one_rule_problems(root, dict(readers, exact=one_rule), sample))
     check("a second exception fails",
-          one_rule_problems(root, dict(readers, exact=exact),
-                            dict(READER_EXCEPTIONS, exact=dict(tracker="#889", path=BOARD_LOOP, line="x"))))
-    check("with no exception registered, the merge decision's disagreement fails",
-          one_rule_problems(root, readers, {}))
+          one_rule_problems(root, dict(readers, exact=exact, loose=loose),
+                            dict(sample, loose=dict(tracker="#889", path=BOARD_LOOP, line=real_line))))
+    check("an exception for a reader this check does not run fails", one_rule_problems(root, readers, sample))
 
     problems = reader_sites_problems(root, READER_SITES, READER_EXCEPTIONS)
     check("every switch's reader site still reads it by the one rule", not problems, problems)
@@ -1246,19 +1371,42 @@ def reader_half():
     problems = relay_problems(root, switch_vars, PENDING_SHELL_READERS, ONE_RULE_RELAYS)
     check("every raw relay of a switch reaches a one-rule reader or a registered pending reader",
           not problems, problems)
-    check("an unregistered exact shell reader fails the relay check",
-          relay_problems(root, switch_vars, PENDING_SHELL_READERS[:-1], ONE_RULE_RELAYS))
+    # A new exact-match reader: a workflow that hands a switch's raw value
+    # to a shell test. Written to a copy of the workflows, so the check
+    # runs on the real tree plus that one file.
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copytree(os.path.join(root, ".github", "workflows"), os.path.join(tmp, ".github", "workflows"))
+        with open(os.path.join(tmp, ".github", "workflows", "new-reader.yml"), "w", encoding="utf-8") as fh:
+            fh.write("jobs:\n  a:\n    steps:\n      - env:\n"
+                     "          PAUSED: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED }}\n"
+                     "        run: '[ \"$PAUSED\" = \"true\" ] && exit 0'\n")
+        check("a new workflow handing a switch raw to an exact shell test fails the relay check",
+              relay_problems(tmp, switch_vars, PENDING_SHELL_READERS, ONE_RULE_RELAYS))
+    check("board-loop.yml handing WING_COMMANDER_BOARD_AUTO_MERGE raw fails the relay check",
+          "WING_COMMANDER_BOARD_AUTO_MERGE" not in ONE_RULE_RELAYS["board-loop.yml"], ONE_RULE_RELAYS)
+    check("an unregistered raw relay fails the relay check",
+          relay_problems(root, switch_vars, PENDING_SHELL_READERS,
+                         {k: v for k, v in ONE_RULE_RELAYS.items() if k != "board-status.yml"}))
     check("a pending reader whose relay is gone fails the relay check",
           relay_problems(root, switch_vars, PENDING_SHELL_READERS
                          + (("board-status.yml", "WING_COMMANDER_NO_SUCH_SWITCH", "board-status.yml"),),
                          ONE_RULE_RELAYS))
     drifted = dict(READER_SITES, board_auto_merge=[(BOARD_LOOP, "switch_on: ($switch_on | ascii_downcase == \"true\")")])
     check("a drifted reader site fails the tie", reader_sites_problems(root, drifted, READER_EXCEPTIONS))
-    check("an exact comparison that is not the exception's line fails the tie",
-          reader_sites_problems(root, READER_SITES, {}))
+    exact_site = dict(READER_SITES, board_auto_merge=[(BOARD_LOOP, "'{class: $class, switch_on: ($switch_on == \"true\"),")])
+    check("an exact comparison as a reader site fails the tie",
+          reader_sites_problems(root, exact_site, READER_EXCEPTIONS))
     check("a switch with no reader site fails the tie",
           reader_sites_problems(root, {k: v for k, v in READER_SITES.items() if k != "proof_list_paused"},
                                 READER_EXCEPTIONS))
+
+    # #889 (code review of #1318): no workflow comment promises a switch is
+    # read as "exactly true" -- the one rule takes `true` in any case.
+    exact_claims = sorted(name for name in os.listdir(os.path.join(root, ".github", "workflows"))
+                          if name.endswith(".yml") and re.search(
+                              r"WING_COMMANDER_[A-Z0-9_]+\s+(?:#\s+)?is\s+(?:#\s+)?exactly\s+(?:#\s+)?true",
+                              open(os.path.join(root, ".github", "workflows", name), encoding="utf-8").read()))
+    check("no workflow comment says a switch is read as exactly true", not exact_claims, exact_claims)
 
     # Everything in wc_board_status reads a switch through switch_set().
     tree = ast.parse(inspect.getsource(bs))
@@ -1333,8 +1481,11 @@ def docs_half():
     # the rule leaves that list with its PENDING_SHELL_READERS entry.
     problems = pending_docs_problems(kill_flat, pending)
     check("docs/reference.md's not-yet list names only the readers still pending", not problems, problems)
-    check("a reader the not-yet list still names after its fix fails",
-          pending_docs_problems(kill_flat, pending[:-1]))
+    stale = kill_flat.replace("Every reader follows it", "One reader does not follow it yet: `auto-release.yml`."
+                              " Every reader follows it")
+    check("a not-yet list left behind once nothing is pending fails", pending_docs_problems(stale, []))
+    check("a list of pending readers the docs do not have fails",
+          pending_docs_problems(kill_flat, [("auto-release.yml", "WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED")]))
 
 
 def main():

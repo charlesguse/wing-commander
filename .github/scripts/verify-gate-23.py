@@ -41,12 +41,16 @@ name instead of silently shipping.
 
 WHAT COUNTS AS IN SCOPE
 ------------------------
-Every step, in every job, in every .github/workflows/*.yml file, whose `uses`
-starts with `anthropics/claude-code-action` AND whose `claude_args` contains
-`--max-turns`. Steps without `--max-turns` (none as of this writing; the
-stock claude.yml/claude-code-review.yml were the examples until their
-removal) are out of scope by design (research.md R8) — a step with no turn
-cap cannot experience the upstream defect this feature works around.
+Every step, in every job, in every .github/workflows/*.yml file, that
+wc_agent_step.is_agent_step() calls an agent step — the one predicate this
+gate shares with Gate 50 (#889). Its `uses` starts with
+`anthropics/claude-code-action` AND either its `claude_args` (shell comments
+stripped) contains `--max-turns` or its `with:` supplies a model credential.
+A credentialed step that lost its `--max-turns` is therefore in scope and
+fails (a) here. A step with neither — agent-startup-check.yml's
+credential-less action setup, which reaches no model — is out of scope: a
+step that cannot run a turn cannot experience the upstream defect this
+feature works around.
 
 WHAT EACH IN-SCOPE SITE MUST HAVE, ALL FOUR
 --------------------------------------------
@@ -88,8 +92,13 @@ import sys
 
 import yaml
 
+# __file__ is the dispatcher's own path, injected by _run() below. The
+# "is this an agent step" predicate has one home, shared with Gate 50
+# (verify-release-contract.py): wc_agent_step.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_agent_step import claude_args_text, is_agent_step  # noqa: E402
+
 WORKFLOWS_GLOB = ".github/workflows/*.yml"
-AGENT_USES_PREFIX = "anthropics/claude-code-action"
 CEILING_USES = "wing-commander-turn-ceiling"
 VERDICT_USES = "wing-commander-agent-verdict"
 
@@ -107,11 +116,6 @@ def note(msg):
 
 def step_uses(step, needle):
     return needle in str((step or {}).get("uses") or "")
-
-
-def is_agent_step(step):
-    return step_uses(step, AGENT_USES_PREFIX) \
-        and "--max-turns" in str((step.get("with") or {}).get("claude_args") or "")
 
 
 def is_ceiling_step(step):
@@ -250,7 +254,7 @@ def check_job(path, job_name, steps):
         prev_agent_idx = agent_indices[pos - 1] if pos > 0 else -1
         next_agent_idx = agent_indices[pos + 1] if pos + 1 < len(agent_indices) else len(steps)
 
-        claude_args = str((step.get("with") or {}).get("claude_args") or "")
+        claude_args = claude_args_text(step)
 
         ceiling_id, ceiling_step = find_ceiling_ref(steps, agent_idx,
                                                     prev_agent_idx)
@@ -347,7 +351,7 @@ def main():
 
     if in_scope == 0:
         print("::error::Gate 23: found zero in-scope agent call sites "
-             "(a claude-code-action step declaring --max-turns) across "
+             "(wc_agent_step.is_agent_step) across "
              "every .github/workflows/*.yml file. Either every such step "
              "was removed, or this gate's detection is broken — both are "
              "worth stopping the build over.")
