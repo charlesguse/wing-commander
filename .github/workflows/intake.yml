@@ -349,9 +349,9 @@ jobs:
   # Per-issue routing gate (spec 114, FR-001/FR-003/FR-012, research.md
   # D8). A job holds one concurrency group, so with routing on this small
   # job holds `wing-commander-intake-issue/<issue>` and runs the prefix
-  # check, the routing-label count and the re-run refusal; the numbering
-  # job below `needs:` it and holds the per-project numbering group. With
-  # routing off it is skipped and intake is unchanged (FR-016).
+  # check, the routing-label count and the re-run refusal; the intake job
+  # below `needs:` it and holds its own per-issue group. With routing off
+  # it is skipped and intake is unchanged (FR-016).
   routing-gate:
     needs: verify-image-prerequisites
     if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && inputs.routing-label-prefix != ''"
@@ -516,13 +516,19 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # Serialize intakes (in the CONSUMING repository — concurrency groups are
-    # scoped to the caller) so concurrent runs cannot allocate the same
-    # feature number. Numbering is per project (spec 114, research.md D8):
-    # the root keeps `wing-commander-intake`, a routed project P takes
-    # `wing-commander-intake/P`.
+    # One intake per issue at a time (in the CONSUMING repository —
+    # concurrency groups are scoped to the caller); intakes for different
+    # issues run in parallel. The group is never shared across issues:
+    # GitHub keeps one pending run per group, so a repository-wide group
+    # cancelled the third of three `spec-request` labels applied within
+    # seconds, with nothing retrying it (#992, 2026-10-17). It is not the
+    # routing gate's group either, so a gate queued behind this job cannot
+    # supersede it. Feature numbers stay unique without a group: "Allocate
+    # feature number" reserves its number atomically (wing-commander-project's
+    # allocate-number) and "Release the feature-number reservation" gives
+    # it back at the end of the job.
     concurrency:
-      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
+      group: wing-commander-intake-run/${{ inputs.issue-number }}
       cancel-in-progress: false
     # if: tolerates a skipped image check without widening to run merely
     # because the workflow was not cancelled (#224) -- see clarify.yml. A
@@ -724,9 +730,10 @@ jobs:
           spec-draft-prefix: ${{ inputs.spec-draft-prefix }}
           spec-prefix: ${{ inputs.spec-prefix }}
 
-      # This job holds the numbering group of the project the routing gate
-      # resolved; a routing label changed since then would allocate under
-      # another project's group (spec 114, FR-012). Refuse rather than race.
+      # The routing gate refused a re-run for the project it resolved; a
+      # routing label changed since then would allocate under another
+      # project than the one the gate checked (spec 114, FR-012). Refuse
+      # rather than race.
       - name: Refuse a routing label changed since the routing gate
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.num.outputs.project != needs.routing-gate.outputs.project
         env:
@@ -1938,6 +1945,22 @@ jobs:
               {"name": "Fail on an unopened subfolder spec PR", "conclusion": "${{ steps.unopened-pr.conclusion }}"}
             ]
 
+      # Give back the `spec-number:` label "Allocate feature number"
+      # reserved. By now the pushed spec-draft branch, if any, holds the
+      # number for every later scan; a run that pushed none frees it.
+      # always(), like the claim release: a failed or cancelled intake must
+      # not keep a number. Runs pipeline code only from a checkout the agent
+      # never had (the agent did not run, or the post-agent re-checkout
+      # succeeded); a reservation left behind only skips one number.
+      - name: Release the feature-number reservation
+        if: always() && steps.num.outputs.number-reservation != '' && (steps.agent.outcome == 'skipped' || steps.pipeline-recheckout.outcome == 'success')
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          token: ${{ github.token }}
+          check-folder: 'false'
+          release-number: ${{ steps.num.outputs.number-reservation }}
+
       # Release the routing gate's claim on the issue (spec 114, FR-003,
       # FR-012) -- see the gate's "Check for an existing spec label". By now
       # the issue's `spec:` label, if this run created one, carries the
@@ -1959,7 +1982,7 @@ jobs:
 
   # The same release for an intake job that did not release the claim
   # itself (spec 114, FR-003, FR-012): an intake still pending in its
-  # numbering group when the run is cancelled, or superseded there, never
+  # per-issue group when the run is cancelled, or superseded there, never
   # starts; one that fails before any step runs (a container that will not
   # start) never reaches its last step; and the release there can itself
   # fail inside an intake that fails too. Any of these would leave a claim
@@ -2036,9 +2059,9 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # The numbering group -- see the intake job.
+    # The intake job's per-issue group -- see the intake job.
     concurrency:
-      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
+      group: wing-commander-intake-run/${{ inputs.issue-number }}
       cancel-in-progress: false
     # contents: read -- the notice marks no record -- see clarify.yml.
     permissions:

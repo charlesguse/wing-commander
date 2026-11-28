@@ -4,8 +4,9 @@
 # intake.yml — the identical workflow_call interface adopters pin
 # (docs/adoption.md), called here by local path so every dogfooded run
 # exercises unreleased head (constitution I; specs/010-reusable-pipeline).
-# Serialization (the wing-commander-intake concurrency group) is declared inside the
-# called stage — repeating the group name here would deadlock the run.
+# Serialization (the per-issue wing-commander-intake-run/<issue> concurrency
+# group) is declared inside the called stage — repeating the group name here
+# would deadlock the run.
 name: "Wing Commander · 1 intake"
 
 on:

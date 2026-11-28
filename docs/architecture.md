@@ -255,8 +255,11 @@ shape (an agent-reachable App private key) reappearing.
 
 ### Concurrency
 Each stage job uses `concurrency: wing-commander-<spec key>` — one spec's stages
-serialize, different specs run in parallel. Intake serializes globally
-(`wing-commander-intake`) so feature numbers can't collide.
+serialize, different specs run in parallel. Intake serializes per issue
+(`wing-commander-intake-run/<issue>`), so intakes for different issues run in
+parallel; feature numbers can't collide because each intake reserves its
+number with a `spec-number:[P/]NNN` label, which GitHub creates atomically,
+and releases it when the job ends (`wing-commander-project`'s `allocate-number`).
 
 GitHub's own concurrency group holds only one pending job at a time, so two
 overlapping stage-9 (`pr-conversation.yml`) runs joining it directly could

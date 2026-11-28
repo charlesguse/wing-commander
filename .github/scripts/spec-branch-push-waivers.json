@@ -20,7 +20,7 @@
       "issue": null,
       "permanent": true,
       "permanent_reason": "No spec branch exists at intake.",
-      "reason": "No spec branch exists yet (specs/013 FR-005); the group is wing-commander-intake, one intake at a time."
+      "reason": "No spec branch exists yet (specs/013 FR-005); the group is wing-commander-intake-run/<issue>, one intake per issue at a time, and the feature number is reserved by a spec-number: label rather than by the group."
     },
     {
       "file": ".github/workflows/intake.yml",
@@ -29,7 +29,7 @@
       "issue": null,
       "permanent": true,
       "permanent_reason": "No spec branch exists at intake.",
-      "reason": "Same group as intake; no spec branch exists at this stage (specs/013 FR-005)."
+      "reason": "Same per-issue group as intake; no spec branch exists at this stage (specs/013 FR-005)."
     },
     {
       "file": ".github/workflows/clarify.yml",

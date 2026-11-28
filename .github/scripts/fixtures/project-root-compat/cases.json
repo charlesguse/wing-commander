@@ -14,7 +14,7 @@
   "routing_off": {
     "routing_label_prefix": "",
     "labels": ["spec-request", "node:ideas/alpha"],
-    "numbering_group": "wing-commander-intake"
+    "intake_group": "wing-commander-intake-run/7"
   },
   "pre_feature_spec_meta": {
     "path": "specs/012-root-login/spec-meta.json",
