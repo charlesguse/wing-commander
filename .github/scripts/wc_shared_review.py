@@ -17,10 +17,12 @@ wc_convergence.ROUND_MARKER, so read_round_records() never counts a record
 written here (FR-020) with no edit to that reader.
 """
 import argparse
+import io
 import json
 import os
 import re
 import sys
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_item_marker import (  # noqa: E402
@@ -35,6 +37,12 @@ SCHEMA = 1
 WORKFLOW_PATH = ".github/workflows/shared-pr-reviewer.yml"
 WRAPPER_PATH = ".github/workflows/wing-commander-shared-pr-reviewer.yml"
 ARTIFACT_PREFIX = "shared-review-"
+# The confirmation artifact's name: the prefix and the reviewed head. The
+# run's other artifacts (shared-review-input, -trees, -find, ...) never match.
+HEAD_ARTIFACT_RE = re.compile("^" + re.escape(ARTIFACT_PREFIX) + "[0-9a-f]{40}$")
+# The most the record file inside the artifact is read to (bytes): a record
+# is capped at MAX_RECORD_CHARS, so anything far past it is not one.
+MAX_ARTIFACT_RECORD_BYTES = 1 << 20
 MAX_RECORD_CHARS = 20000
 # What a size-capped `findings` entry keeps (build_record).
 STUB_KEYS = ("id", "status")
@@ -134,14 +142,8 @@ def parse_records(comments, bot_login, kind="round"):
     for comment in comments or []:
         if not isinstance(comment, dict) or not is_loop_marker_author(comment, bot_login):
             continue
-        match = last_marker_match(comment.get("body") or "", MARKER_RE, MARKER_OPEN_RE)
-        if not match:
-            continue
-        try:
-            rec = json.loads(match.group(1))
-        except ValueError:
-            continue
-        if not isinstance(rec, dict) or rec.get("reviewer") != REVIEWER:
+        rec = _last_payload(comment.get("body"))
+        if rec is None or rec.get("reviewer") != REVIEWER:
             continue
         is_handoff = rec.get("kind") == "handoff"
         if (kind == "handoff") != is_handoff:
@@ -150,33 +152,52 @@ def parse_records(comments, bot_login, kind="round"):
                                or rec["round"] < 1 or rec.get("verdict") not in VERDICTS
                                or not isinstance(rec.get("head_sha"), str)):
             continue
-        # An App comment anyone with write access edited (say `findings` to
-        # `clean`) is no longer what the run posted: GitHub moves its
-        # `updated_at` past `created_at`, and confirm_record() refuses it
-        # (#889, found by the code review of #1346). The flag is ours alone;
-        # a payload that carries one is not trusted for it.
-        rec.pop(EDITED_KEY, None)
-        if _edited(comment):
-            rec[EDITED_KEY] = True
         out.append((comment.get("created_at") or "", rec))
     out.sort(key=lambda pair: pair[0])
     return [rec for _stamp, rec in out]
 
 
-EDITED_KEY = "_comment_edited"
+def _last_payload(body):
+    """The JSON object after the LAST marker opener in `body`, or None."""
+    match = last_marker_match(body or "", MARKER_RE, MARKER_OPEN_RE)
+    if not match:
+        return None
+    try:
+        rec = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) else None
 
 
-def _edited(comment):
-    created, updated = comment.get("created_at") or "", comment.get("updated_at") or ""
-    return bool(updated) and updated != created
+def artifact_verdict(zip_bytes, artifact_name):
+    """The verdict of the round record inside a run's confirmation artifact,
+    or None when it cannot be read. The record job writes the artifact's
+    `record-<head>.md` from the same file it posts as the comment, so the
+    two verdicts agree unless the comment was edited afterwards."""
+    head = str(artifact_name or "")[len(ARTIFACT_PREFIX):]
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            info = zf.getinfo("record-{0}.md".format(head))
+            if info.file_size > MAX_ARTIFACT_RECORD_BYTES:
+                return None
+            body = zf.read(info).decode("utf-8")
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, TypeError, ValueError, OSError):
+        return None
+    rec = _last_payload(body)
+    if rec is None or rec.get("reviewer") != REVIEWER or rec.get("kind") == "handoff" or rec.get("head_sha") != head:
+        return None
+    return rec.get("verdict") if rec.get("verdict") in VERDICTS else None
 
 
 def confirm_record(record, run, default_branch, repository=None):
     """D5: a record counts only when the run it names, read back from the
     Actions API, is this reviewer's own completed successful run on the
-    default branch that uploaded `shared-review-<head_sha>`, and the comment
-    that carries it was never edited after the run posted it. Fails closed."""
-    if not isinstance(record, dict) or not isinstance(run, dict) or record.get(EDITED_KEY):
+    default branch that uploaded `shared-review-<head_sha>`, and the record
+    in that artifact carries the record's own `verdict` (#889: an App
+    comment edited from `findings` to `clean` keeps its run and head). An
+    artifact that could not be read (expired, deleted, not downloaded) has
+    no verdict, so its record does not confirm. Fails closed."""
+    if not isinstance(record, dict) or not isinstance(run, dict):
         return False
     run_id = str(record.get("run_id") or "")
     if not run_id.isdigit() or str(run.get("id")) != run_id:
@@ -191,7 +212,10 @@ def confirm_record(record, run, default_branch, repository=None):
     called = [str(p).split("@", 1)[0] for p in run.get("referenced_workflows") or []]
     if "{0}/{1}".format(repo, WORKFLOW_PATH) not in called:
         return False
-    return ARTIFACT_PREFIX + str(record.get("head_sha")) in (run.get("artifacts") or [])
+    name = ARTIFACT_PREFIX + str(record.get("head_sha"))
+    if name not in (run.get("artifacts") or []):
+        return False
+    return (run.get("artifact_verdicts") or {}).get(name) == record.get("verdict")
 
 
 def latest_round_for_commit(confirmed, head_sha):
@@ -200,8 +224,25 @@ def latest_round_for_commit(confirmed, head_sha):
     the newer wins: a re-run of a reviewer run keeps its run id, so while
     it runs the first attempt's record is unconfirmed and the re-run posts
     that round number again (#1346 pass 1)."""
-    at = rounds_for_commit(confirmed, head_sha)
-    return max(reversed(at), key=lambda r: r["round"]) if at else None
+    return latest_round(rounds_for_commit(confirmed, head_sha))
+
+
+def latest_round(records):
+    """The highest-round record of `records` (oldest first), at any head, or
+    None; of two with the same round the newer wins, as in
+    latest_round_for_commit. Round numbers run across the whole PR
+    (next_round), so this is the reviewer's newest word on it."""
+    return max(reversed(records), key=lambda r: r["round"]) if records else None
+
+
+def deciding_round(records, head_sha):
+    """The round that decides a merge at `head_sha`: the newest round on the
+    PR (latest_round) when it names `head_sha`, else None. A round at an
+    earlier head never decides once a newer round exists at another one,
+    so a force-push back to an old clean head is not clean (#889, owner
+    decision 2026-11-28, option (a))."""
+    newest = latest_round(records)
+    return newest if newest is not None and head_sha and newest.get("head_sha") == head_sha else None
 
 
 def rounds_for_commit(records, head_sha):
@@ -1134,12 +1175,23 @@ def write_private(path, text):
         fh.write(text)
 
 
-def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs=None):
+def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs=None, gh_zip=None):
     """Round records of `pr` that confirm_record() accepts, oldest first.
     `gh(args)` returns parsed JSON for a `gh api` path (None on failure,
     which fails the record closed). `gh_runs` reads the Actions run and
     its artifacts: the job's own token, since the App is granted no
-    Actions permission (docs/setup.md); it defaults to `gh`."""
+    Actions permission (docs/setup.md); it defaults to `gh`. `gh_zip`
+    downloads an artifact's zip with that same token (fetch_run_facts).
+
+    An artifact that cannot be read takes fetch_run_facts' two paths here
+    too. A failed download raises GhReadError, and the round stops before
+    it records anything, as a failed run read already does. An artifact
+    that is gone (expired after its 90 days, deleted, 404/410) leaves its
+    record unconfirmed, so the loop drops it exactly as it drops any other
+    unconfirmed record: next_round stays one past the highest confirmed
+    round, the round's budget is refunded, and its findings leave the fold.
+    The next round's find pass reviews the code again, so a dropped round
+    loses no defect the code still has."""
     gh_runs = gh_runs or gh
     comments = gh(["repos/{0}/issues/{1}/comments".format(repository, pr), "--paginate", "--slurp"])
     if comments is None:
@@ -1150,19 +1202,26 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs
         run_id = str(record.get("run_id") or "")
         if not run_id.isdigit():
             continue
-        run = fetch_run_facts(repository, run_id, gh_runs)
+        run = fetch_run_facts(repository, run_id, gh_runs, gh_zip)
         if run is not None and confirm_record(record, run, default_branch, repository):
             confirmed.append(record)
     return confirmed
 
 
-def fetch_run_facts(repository, run_id, gh_runs):
+def fetch_run_facts(repository, run_id, gh_runs, gh_zip=None):
     """The Actions API's facts for run `run_id`, shaped as confirm_record()
     reads them; None when the run does not exist (a real 404, so the record
     it backs is unconfirmed). Raises GhReadError when the run or its
     artifacts cannot be read, so no caller counts a failed read as a
     missing run. The one home of this read: wc_merge_evidence.py calls it
-    too."""
+    too.
+
+    `artifact_verdicts` maps each `shared-review-<head>` artifact to the
+    verdict of the record inside it, which `gh_zip(args)` (the artifact's
+    zip as bytes) downloads. The verdict is None when the artifact is gone:
+    listed as expired, a 404 or 410 on download, no zip reader given, or a
+    zip with no well-formed record. A record whose artifact verdict is None
+    never confirms. Any other failed download raises GhReadError."""
     try:
         run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
     except GhNotFound:
@@ -1172,9 +1231,28 @@ def fetch_run_facts(repository, run_id, gh_runs):
         raise GhReadError("run or artifacts read failed for run " + run_id)
     run = dict(run)
     run["repository"] = (run.get("repository") or {}).get("full_name") or repository
-    run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
+    listed = [a for a in (arts or {}).get("artifacts", []) if isinstance(a, dict)]
+    run["artifacts"] = [a.get("name") for a in listed]
+    run["artifact_verdicts"] = {a["name"]: _read_artifact_verdict(repository, a, gh_zip)
+                                for a in listed if HEAD_ARTIFACT_RE.match(str(a.get("name") or ""))}
     run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
     return run
+
+
+def _read_artifact_verdict(repository, artifact, gh_zip):
+    """artifact_verdict() of one listed confirmation artifact; None when it
+    is gone, GhReadError when the download failed for any other reason."""
+    art_id = str(artifact.get("id") or "")
+    if artifact.get("expired") or gh_zip is None or not art_id.isdigit():
+        return None
+    path = "repos/{0}/actions/artifacts/{1}/zip".format(repository, art_id)
+    try:
+        data = gh_zip([path])
+    except GhNotFound:
+        return None
+    if not isinstance(data, (bytes, bytearray)):
+        raise GhReadError("artifact download failed for " + str(artifact.get("name")))
+    return artifact_verdict(bytes(data), artifact.get("name"))
 
 
 class GhReadError(RuntimeError):
@@ -1185,19 +1263,36 @@ class GhNotFound(GhReadError):
     pass
 
 
+# A 404, or the 410 GitHub answers for an expired artifact's download.
+_NOT_FOUND_RE = re.compile(r"\(HTTP 404\)|\(HTTP 410\)|^gh: Not Found", re.M)
+
+
 def _gh_api(args, token=None):
     """`token`, when given, replaces GH_TOKEN for this one call."""
     import subprocess
     env = dict(os.environ, GH_TOKEN=token) if token else None
     proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
-        if re.search(r"\(HTTP 404\)|^gh: Not Found", proc.stderr or "", re.M):
+        if _NOT_FOUND_RE.search(proc.stderr or ""):
             raise GhNotFound(args[0])
         return None
     try:
         return json.loads(proc.stdout)
     except ValueError:
         return None
+
+
+def _gh_zip(args, token=None):
+    """_gh_api for a binary response (an artifact's zip): the bytes, None on
+    failure, GhNotFound on a 404 or 410."""
+    import subprocess
+    env = dict(os.environ, GH_TOKEN=token) if token else None
+    proc = subprocess.run(["gh", "api"] + args, capture_output=True, env=env)
+    if proc.returncode != 0:
+        if _NOT_FOUND_RE.search((proc.stderr or b"").decode("utf-8", "replace")):
+            raise GhNotFound(args[0])
+        return None
+    return proc.stdout
 
 
 # ------------------------------------------------------------------ CLI ---
@@ -1290,7 +1385,8 @@ def main(argv=None):
             return 1
         confirmed = confirmed_from_github(args.pr, args.bot_login, args.default_branch,
                                           args.repository, _gh_api,
-                                          lambda a: _gh_api(a, token=run_token))
+                                          lambda a: _gh_api(a, token=run_token),
+                                          lambda a: _gh_zip(a, token=run_token))
         spent, budget = budget_spent(confirmed, args.budget)
         print(json.dumps({"rounds": len(confirmed), "round": next_round(confirmed), "budget": budget,
                           "spent": spent, "open_set": open_set(fold_open_set(confirmed)),

@@ -39,7 +39,7 @@ REUSED_RULE_NAMES = ("_checks_green", "_gate_suite_green", "checks_green", "gate
                      # wc_shared_review's: the round record's parse, its run's
                      # read and its confirmation have one home there.
                      "parse_records", "confirm_record", "latest_round_for_commit", "rounds_for_commit", "fetch_run_facts",
-                     "confirmed_from_github")
+                     "confirmed_from_github", "latest_round", "deciding_round", "artifact_verdict")
 # Terminal-state literals the "checks green" rules own.
 # '"lifecycle-review-gate"' is lifecycle_readiness.OWN_STATUS_CONTEXT's
 # (#1173 round 5, finding 3).
@@ -112,15 +112,19 @@ def build_snapshot(base_doc, case):
 SHARED_REVIEWER_COMMIT = "c" * 40
 
 
-def shared_review_run(run_id, record_head, override):
+def shared_review_run(run_id, record_head, override, artifact_verdict="clean"):
     """The facts of a shared-reviewer run that confirms its record, with the
-    case's `override` keys replaced."""
+    case's `override` keys replaced. `artifact_verdict` is the verdict the
+    run's `shared-review-<head>` artifact carries: the round's own, unless
+    the case gives the round an `artifact_verdict` (an edited comment, or
+    null for an artifact that is gone)."""
     run = {"id": int(run_id), "path": wc_shared_review.WRAPPER_PATH, "head_branch": "main", "repository": "o/r",
            "status": "completed", "conclusion": "success", "head_sha": SHARED_REVIEWER_COMMIT,
            # After the fixtures' default comment times, before their merges.
            "updated_at": "2026-11-10T09:50:00Z",
            "referenced_workflows": ["o/r/{0}@refs/heads/main".format(wc_shared_review.WORKFLOW_PATH)],
-           "artifacts": [wc_shared_review.ARTIFACT_PREFIX + record_head]}
+           "artifacts": [wc_shared_review.ARTIFACT_PREFIX + record_head],
+           "artifact_verdicts": {wc_shared_review.ARTIFACT_PREFIX + record_head: artifact_verdict}}
     run.update(override or {})
     return run
 
@@ -135,14 +139,13 @@ def shared_review_comments(rounds, runs, bot):
                   "run_id": rnd["run_id"], "reviewer_commit": SHARED_REVIEWER_COMMIT, "findings": [],
                   "open_set": []}
         user = bot if rnd.get("author") != "owner" else {"login": "owner", "type": "User"}
-        created = rnd.get("created_at") or "2026-11-10T09:{0:02d}:00Z".format(i)
-        comments.append({"id": 100 + i, "created_at": created, "updated_at": rnd.get("updated_at") or created,
+        comments.append({"id": 100 + i, "created_at": rnd.get("created_at") or "2026-11-10T09:{0:02d}:00Z".format(i),
                          "user": user,
                          "body": wc_shared_review.build_record(record)})
         if runs is not None and rnd["run_id"] in runs:
             override = runs[rnd["run_id"]]
-            facts[rnd["run_id"]] = None if override is None else shared_review_run(rnd["run_id"], rnd["head_sha"],
-                                                                                   override)
+            facts[rnd["run_id"]] = None if override is None else shared_review_run(
+                rnd["run_id"], rnd["head_sha"], override, rnd.get("artifact_verdict", rnd["verdict"]))
     return comments, facts
 
 
@@ -1469,16 +1472,49 @@ def check_runtime_shared_review_reads(base_doc):
     return problems
 
 
-def check_issue_comments_keep_updated_at():
-    """#889 (found by the code review of #1346): the snapshot keeps each
-    comment's updated_at, so wc_shared_review can refuse an edited record."""
-    raw = [{"id": 1, "created_at": "2026-11-10T09:00:00Z", "updated_at": "2026-11-10T09:30:00Z",
-            "body": "b", "html_url": "u", "user": {"login": "x", "type": "Bot"}}]
-    with _Patched(board_merge__gh_items=lambda path, *a, **k: raw):
-        got = me._issue_comments("o/r", 1)
-    if [c.get("updated_at") for c in got] != ["2026-11-10T09:30:00Z"]:
-        return ["runtime: the snapshot's comments drop updated_at, so an edited round record confirms"]
-    return []
+def check_runtime_shared_review_artifact_read(base_doc):
+    """#889: the runtime read downloads the deciding run's confirmation
+    artifact with the Actions token, so confirm_record can compare the
+    record's verdict with it; a failed download is not-read, never met."""
+    problems = []
+    bot = {"login": base_doc["bot_login"], "type": "Bot"}
+    comments, _ = shared_review_comments([{"round": 1, "head_sha": "a" * 40, "verdict": "clean",
+                                           "run_id": "101"}], None, bot)
+    name = wc_shared_review.ARTIFACT_PREFIX + "a" * 40
+    tokens = []
+
+    def fake_api(args, token=None):
+        if args[0].endswith("/artifacts"):
+            return {"artifacts": [{"id": 9, "name": name}]}
+        return {"id": 101, "repository": {"full_name": "o/r"}}
+
+    def fake_zip(args, token=None):
+        tokens.append((args[0], token))
+        return zipped
+
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("record-{0}.md".format("a" * 40), comments[0]["body"])
+    zipped = buf.getvalue()
+    saved = (wc_shared_review._gh_api, wc_shared_review._gh_zip)
+    try:
+        wc_shared_review._gh_api, wc_shared_review._gh_zip = fake_api, fake_zip
+        snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], "actions-token", not_read)
+        got = ((snap.get("shared_review_runs") or {}).get("101") or {}).get("artifact_verdicts")
+        if got != {name: "clean"} or tokens != [("repos/o/r/actions/artifacts/9/zip", "actions-token")]:
+            problems.append("runtime: the deciding run's confirmation artifact is not downloaded with the Actions "
+                            "token ({0}, {1})".format(got, tokens))
+        zipped = None
+        snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], "actions-token", not_read)
+        if snap.get("shared_review_runs") is not None or not not_read:
+            problems.append("runtime: a failed artifact download was not named as not read")
+    finally:
+        wc_shared_review._gh_api, wc_shared_review._gh_zip = saved
+    return problems
 
 
 def check_runtime_shared_review_reads_noticed(base_doc):
@@ -1506,7 +1542,7 @@ def main():
     problems += check_round5_base_branch(base_doc)
     problems += check_record_type(base_doc) + check_shared_review_noticed(base_doc)
     problems += check_runtime_shared_review_reads(base_doc) + check_runtime_shared_review_reads_noticed(base_doc)
-    problems += check_issue_comments_keep_updated_at()
+    problems += check_runtime_shared_review_artifact_read(base_doc)
     if not check_sc003(directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing SC-003 corpus and expected file were not noticed")
     wf = os.path.join(REPO, WORKFLOW)

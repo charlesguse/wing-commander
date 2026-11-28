@@ -303,13 +303,17 @@ def _final_conditions(snap, bot_login):
 
 def _review_round_conditions(snap, bot_login, base_branch=None):
     """A session fix PR (kind `maintainer`): the newest shared-reviewer round
-    record at the exact head must be clean and confirmed by the run it
-    names. An older clean round never stands in for a newer one that is
-    unconfirmed (its run may still be going) or not clean. The record
-    format, its parse and the confirmation are wc_shared_review's (called,
-    never re-typed). `shared_review_runs` maps each run id a record names to
-    the run's facts, or to None when the run does not exist; a run id
-    missing from it was not read."""
+    record on the PR, at any head, must name the exact head, be clean, and
+    be confirmed by the run it names (#889, owner decision 2026-11-28,
+    option (a)). A force-push back to an earlier clean head therefore does
+    not stand on that head's old round once a newer round at another head
+    exists, and an older clean round never stands in for a newer one that
+    is unconfirmed (its run may still be going, its artifact may disagree
+    with an edited verdict, or be gone) or not clean. The record format,
+    its parse, the newest-round rule and the confirmation are
+    wc_shared_review's (called, never re-typed). `shared_review_runs` maps
+    each run id a record names to the run's facts, or to None when the run
+    does not exist; a run id missing from it was not read."""
     name = "review_round_record"
     if snap.get("comments") is None:
         return [_cond(name, "not-read", "the pull request's comments were not read")]
@@ -317,10 +321,11 @@ def _review_round_conditions(snap, bot_login, base_branch=None):
     if not records:
         return [_cond(name, "unmet", "no shared-reviewer round record on the pull request")]
     head = snap.get("headRefOid")
-    record = wc_shared_review.latest_round_for_commit(records, head) if head else None
+    record = wc_shared_review.deciding_round(records, head)
     if record is None:
-        return [_cond(name, "unmet", "the newest shared-reviewer round names another commit ({0})".format(
-            str(records[-1].get("head_sha"))[:12]))]
+        newest = wc_shared_review.latest_round(records)
+        return [_cond(name, "unmet", "the newest shared-reviewer round (round {0}) names another commit "
+                                     "({1})".format(newest.get("round"), str(newest.get("head_sha"))[:12]))]
     run_id = str(record.get("run_id") or "")
     if not run_id.isdigit():
         return [_cond(name, "unmet", "the newest shared-reviewer round at this head names no run")]
@@ -839,9 +844,7 @@ def download_ledger(repo, default_branch, directory):
 
 
 def _issue_comments(repo, number):
-    # updated_at: wc_shared_review.parse_records refuses an edited round record.
-    return [{"id": c.get("id"), "created_at": c.get("created_at"), "updated_at": c.get("updated_at"),
-             "body": c.get("body"),
+    return [{"id": c.get("id"), "created_at": c.get("created_at"), "body": c.get("body"),
              "html_url": c.get("html_url"),
              "user": {"login": (c.get("user") or {}).get("login"), "type": (c.get("user") or {}).get("type")}}
             for c in board_merge.gh_items("repos/{0}/issues/{1}/comments?per_page=100".format(repo, number))]
@@ -863,21 +866,24 @@ def _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read, as_
     is its merge time: a record posted after it is cut before the verdict
     (cut_snapshot), so it is left out here by the same test."""
     # The record chosen here is the one _review_round_conditions judges
-    # (the same comments, the same latest_round_for_commit), so a failed
-    # read of a run no deciding record names never makes the verdict
-    # not-read (#1346 passes 1 and 3).
+    # (the same comments, the same deciding_round), so a failed read of
+    # a run no deciding record names never makes the verdict not-read
+    # (#1346 passes 1 and 3).
     comments = snap.get("comments")
     if as_of and comments is not None:
         comments = [c for c in comments if not _after((c or {}).get("created_at"), as_of)]
     records = wc_shared_review.parse_records(comments, bot_login)
     head = snap.get("headRefOid")
-    newest = wc_shared_review.latest_round_for_commit(records, head) if head else None
+    newest = wc_shared_review.deciding_round(records, head)
     run_ids = [str(newest["run_id"])] if newest is not None and str(newest.get("run_id") or "").isdigit() else []
     runs = {}
     try:
         for run_id in run_ids:
+            # The confirmation artifact is downloaded with the same token:
+            # a failed download is not-read, a gone artifact unconfirmed.
             runs[run_id] = wc_shared_review.fetch_run_facts(
-                repo, run_id, lambda args: wc_shared_review._gh_api(args, actions_token))
+                repo, run_id, lambda args: wc_shared_review._gh_api(args, actions_token),
+                lambda args: wc_shared_review._gh_zip(args, actions_token))
     except wc_shared_review.GhReadError as exc:
         snap["shared_review_runs"] = None
         not_read.append("the shared reviewer's runs: {0}".format(exc))
