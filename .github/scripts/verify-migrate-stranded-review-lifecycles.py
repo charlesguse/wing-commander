@@ -4,7 +4,9 @@
 Drives `migration/` fixtures (`<name>.tasks.md` plus `<name>.expected` of
 `key=value` lines: issue-state, stage, marker, decision) through
 count-tasks-checkboxes.sh (the one classification home) and the migration
-script's pure `decide` mode. Also checks the script never counts tasks itself.
+script's pure `decide` mode. Also checks the script never counts tasks itself,
+and that the live contract's Migration section (specs/123 contracts/
+buildable-classification.md) names every workflow input and decide verdict.
 """
 import importlib.util
 import os
@@ -162,8 +164,59 @@ def input_guard_failures():
     return failures
 
 
+CONTRACT = os.path.join(ROOT, "specs", "123-implement-task-completion", "contracts",
+                        "buildable-classification.md")
+
+
+def contract_failures(contract_text, wf_text, script_text):
+    """#889 (found by the code review of #1119): the live contract's
+    Migration section must describe the workflow that ships -- every
+    workflow_dispatch input, and every verdict the decide script prints --
+    and name no input the workflow does not take (it once said `repo`, a
+    batch over every open lifecycle, while the workflow migrates one)."""
+    import re
+    failures = []
+    m = re.search(r"^## Migration\n(.*?)(?=^## |\Z)", contract_text, re.M | re.S)
+    if not m:
+        return ["contract buildable-classification.md has no '## Migration' section"]
+    section = m.group(1)
+    if "migrate-stranded-review-lifecycles.yml" not in section:
+        failures.append("contract Migration section does not name migrate-stranded-review-lifecycles.yml")
+    im = re.search(r"^    inputs:\n((?:      .*\n|\n)*)", wf_text, re.M)
+    inputs = re.findall(r"^      ([A-Za-z][A-Za-z0-9_-]*):\s*$", im.group(1), re.M) if im else []
+    if not inputs:
+        failures.append("migrate workflow: no workflow_dispatch inputs found")
+    for name in inputs:
+        if f"`{name}`" not in section:
+            failures.append(f"contract Migration section does not name the workflow input `{name}`")
+    for named in re.findall(r"inputs? `([a-z][a-z0-9-]*)`", section):
+        if named not in inputs:
+            failures.append(f"contract Migration section names input `{named}`, which the workflow does not take")
+    verdicts = set(re.findall(r'echo "(decision=[a-z-]+)', script_text))
+    reasons = set(re.findall(r'decision=skip reason=([a-z-]+)', script_text))
+    if not verdicts or not reasons:
+        failures.append("migration script: no decide verdicts found")
+    for v in sorted(verdicts):
+        if f"`{v}" not in section:
+            failures.append(f"contract Migration section does not describe `{v}`")
+    for r in sorted(reasons):
+        if f"`{r}`" not in section:
+            failures.append(f"contract Migration section does not name skip reason `{r}`")
+    return failures
+
+
 def main():
     failures = []
+    wf_text = open(os.path.join(ROOT, ".github", "workflows", "migrate-stranded-review-lifecycles.yml")).read()
+    script_text = open(SCRIPT).read()
+    failures.extend(contract_failures(open(CONTRACT).read(), wf_text, script_text))
+    # The check must fail on the contract's old wording (one batch run over
+    # a `repo`, which the workflow never took).
+    old = ("## Migration\n\n`migrate-stranded-review-lifecycles.sh`: inputs `repo`, optional "
+           "`dry-run`; idempotent; touches only open lifecycle issues whose spec-meta stage is "
+           "`review` and `buildable-unchecked-count` > 0.\n")
+    if not contract_failures(old, wf_text, script_text):
+        failures.append("contract check passes the old batch-over-`repo` Migration wording")
     d = os.path.join(vbc.FIXTURES, "migration")
     names = sorted(f[: -len(".tasks.md")] for f in os.listdir(d) if f.endswith(".tasks.md"))
     if len(names) < 4:

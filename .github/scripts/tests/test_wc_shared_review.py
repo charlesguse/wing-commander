@@ -262,6 +262,42 @@ class Confirm(unittest.TestCase):
         self.assertFalse(sr.confirm_record(rec(run_id="abc"), self.run_(), "main"))
         self.assertFalse(sr.confirm_record(rec(), None, "main"))
 
+    def test_edited_comment_never_confirms(self):
+        # #889 (found by the code review of #1346): an App comment edited
+        # from `findings` to `clean` keeps its run and head, so only the
+        # comment's own timestamps show the edit.
+        body = sr.build_record(rec(verdict="clean"))
+        posted = comment(body)
+        posted["updated_at"] = posted["created_at"]
+        self.assertTrue(sr.confirm_record(sr.parse_records([posted], BOT)[0], self.run_(), "main"))
+        edited = dict(posted, updated_at="2026-01-02T00:00:00Z")
+        got = sr.parse_records([edited], BOT)
+        self.assertEqual(len(got), 1)
+        self.assertFalse(sr.confirm_record(got[0], self.run_(), "main"))
+        # The flag is parse_records' own: a payload that carries it is not
+        # trusted for it, either way.
+        forged = comment(sr.build_record(rec(**{sr.EDITED_KEY: False})))
+        forged["updated_at"] = "2026-01-02T00:00:00Z"
+        self.assertFalse(sr.confirm_record(sr.parse_records([forged], BOT)[0], self.run_(), "main"))
+        cleared = comment(sr.build_record(rec(**{sr.EDITED_KEY: True})))
+        self.assertNotIn(sr.EDITED_KEY, sr.parse_records([cleared], BOT)[0])
+
+    def test_confirmed_from_github_drops_an_edited_record(self):
+        posted = comment(sr.build_record(rec(verdict="clean")))
+        posted["updated_at"] = "2026-01-02T00:00:00Z"
+        run = self.run_()
+
+        def gh(args):
+            if args[0].endswith("/comments"):
+                return [[posted]]
+            if args[0].endswith("/artifacts"):
+                return {"artifacts": [{"name": n} for n in run["artifacts"]]}
+            return dict(run, repository={"full_name": "o/r"},
+                        referenced_workflows=[{"path": p} for p in run["referenced_workflows"]])
+        self.assertEqual(sr.confirmed_from_github(5, BOT, "main", "o/r", gh), [])
+        posted["updated_at"] = posted["created_at"]
+        self.assertEqual(len(sr.confirmed_from_github(5, BOT, "main", "o/r", gh)), 1)
+
     def test_latest_round_for_commit(self):
         rs = [rec(1), rec(2), rec(3, head="d" * 40)]
         self.assertEqual(sr.latest_round_for_commit(rs, "a" * 40)["round"], 2)

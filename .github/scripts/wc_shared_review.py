@@ -150,16 +150,33 @@ def parse_records(comments, bot_login, kind="round"):
                                or rec["round"] < 1 or rec.get("verdict") not in VERDICTS
                                or not isinstance(rec.get("head_sha"), str)):
             continue
+        # An App comment anyone with write access edited (say `findings` to
+        # `clean`) is no longer what the run posted: GitHub moves its
+        # `updated_at` past `created_at`, and confirm_record() refuses it
+        # (#889, found by the code review of #1346). The flag is ours alone;
+        # a payload that carries one is not trusted for it.
+        rec.pop(EDITED_KEY, None)
+        if _edited(comment):
+            rec[EDITED_KEY] = True
         out.append((comment.get("created_at") or "", rec))
     out.sort(key=lambda pair: pair[0])
     return [rec for _stamp, rec in out]
 
 
+EDITED_KEY = "_comment_edited"
+
+
+def _edited(comment):
+    created, updated = comment.get("created_at") or "", comment.get("updated_at") or ""
+    return bool(updated) and updated != created
+
+
 def confirm_record(record, run, default_branch, repository=None):
     """D5: a record counts only when the run it names, read back from the
     Actions API, is this reviewer's own completed successful run on the
-    default branch that uploaded `shared-review-<head_sha>`. Fails closed."""
-    if not isinstance(record, dict) or not isinstance(run, dict):
+    default branch that uploaded `shared-review-<head_sha>`, and the comment
+    that carries it was never edited after the run posted it. Fails closed."""
+    if not isinstance(record, dict) or not isinstance(run, dict) or record.get(EDITED_KEY):
         return False
     run_id = str(record.get("run_id") or "")
     if not run_id.isdigit() or str(run.get("id")) != run_id:

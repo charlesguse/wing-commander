@@ -1,0 +1,30 @@
+{
+ "base": "maintainer",
+ "patch": {
+  "shared_review": [
+   {
+    "round": 1,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": "clean",
+    "run_id": "101"
+   },
+   {
+    "round": 2,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": "clean",
+    "run_id": "102",
+    "updated_at": "2026-11-10T09:30:00Z"
+   }
+  ],
+  "shared_review_runs": {
+   "101": {},
+   "102": {}
+  }
+ },
+ "expect": {
+  "kind": "maintainer",
+  "first_unmet": "review_round_record",
+  "complete": true,
+  "reason_contains": "(round 2) is not confirmed"
+ }
+}

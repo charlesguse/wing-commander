@@ -839,7 +839,9 @@ def download_ledger(repo, default_branch, directory):
 
 
 def _issue_comments(repo, number):
-    return [{"id": c.get("id"), "created_at": c.get("created_at"), "body": c.get("body"),
+    # updated_at: wc_shared_review.parse_records refuses an edited round record.
+    return [{"id": c.get("id"), "created_at": c.get("created_at"), "updated_at": c.get("updated_at"),
+             "body": c.get("body"),
              "html_url": c.get("html_url"),
              "user": {"login": (c.get("user") or {}).get("login"), "type": (c.get("user") or {}).get("type")}}
             for c in board_merge.gh_items("repos/{0}/issues/{1}/comments?per_page=100".format(repo, number))]

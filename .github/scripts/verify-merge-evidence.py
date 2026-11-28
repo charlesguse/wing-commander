@@ -135,7 +135,8 @@ def shared_review_comments(rounds, runs, bot):
                   "run_id": rnd["run_id"], "reviewer_commit": SHARED_REVIEWER_COMMIT, "findings": [],
                   "open_set": []}
         user = bot if rnd.get("author") != "owner" else {"login": "owner", "type": "User"}
-        comments.append({"id": 100 + i, "created_at": rnd.get("created_at") or "2026-11-10T09:{0:02d}:00Z".format(i),
+        created = rnd.get("created_at") or "2026-11-10T09:{0:02d}:00Z".format(i)
+        comments.append({"id": 100 + i, "created_at": created, "updated_at": rnd.get("updated_at") or created,
                          "user": user,
                          "body": wc_shared_review.build_record(record)})
         if runs is not None and rnd["run_id"] in runs:
@@ -1468,6 +1469,18 @@ def check_runtime_shared_review_reads(base_doc):
     return problems
 
 
+def check_issue_comments_keep_updated_at():
+    """#889 (found by the code review of #1346): the snapshot keeps each
+    comment's updated_at, so wc_shared_review can refuse an edited record."""
+    raw = [{"id": 1, "created_at": "2026-11-10T09:00:00Z", "updated_at": "2026-11-10T09:30:00Z",
+            "body": "b", "html_url": "u", "user": {"login": "x", "type": "Bot"}}]
+    with _Patched(board_merge__gh_items=lambda path, *a, **k: raw):
+        got = me._issue_comments("o/r", 1)
+    if [c.get("updated_at") for c in got] != ["2026-11-10T09:30:00Z"]:
+        return ["runtime: the snapshot's comments drop updated_at, so an edited round record confirms"]
+    return []
+
+
 def check_runtime_shared_review_reads_noticed(base_doc):
     """Shown to fail: when neither snapshot path reaches the read (the kind
     never comes out maintainer), the runtime check says so."""
@@ -1493,6 +1506,7 @@ def main():
     problems += check_round5_base_branch(base_doc)
     problems += check_record_type(base_doc) + check_shared_review_noticed(base_doc)
     problems += check_runtime_shared_review_reads(base_doc) + check_runtime_shared_review_reads_noticed(base_doc)
+    problems += check_issue_comments_keep_updated_at()
     if not check_sc003(directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing SC-003 corpus and expected file were not noticed")
     wf = os.path.join(REPO, WORKFLOW)

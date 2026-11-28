@@ -10,7 +10,7 @@ Posted once per round by the `record` job as an issue comment on the PR, authore
 
     <!-- wing-commander-shared-review-round: {json} -->
 
-Readers take only the last opener in a bot-authored body. A hand-off uses the same marker with `"kind": "handoff"` and no `verdict`. Fields: see data-model.md. A reader MUST ignore a record whose `run_id` fails confirmation (run id equals; path is the wrapper; default branch; completed success; calls this repository's `shared-pr-reviewer.yml`; artifact `shared-review-<head_sha>` exists).
+Readers take only the last opener in a bot-authored body. A hand-off uses the same marker with `"kind": "handoff"` and no `verdict`. Fields: see data-model.md. A reader MUST ignore a record whose `run_id` fails confirmation (run id equals; path is the wrapper; default branch; completed success; calls this repository's `shared-pr-reviewer.yml`; artifact `shared-review-<head_sha>` exists), and one whose comment was edited after it was posted (its `updated_at` differs from its `created_at`).
 
 ## Refusal / stop
 Written only to the run summary: `refused: <reason>` or `paused`. Never a record.
