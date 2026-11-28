@@ -947,7 +947,10 @@ things to know before you bind one:
      repository out with its own read-only `GITHUB_TOKEN` only, never
      `pipeline-repo-token`, so with a private pipeline repository that
      token cannot read, the cycle-start suite is likewise skipped and named
-     (the agent can still run the suite itself).
+     (the agent can still run the suite itself). The `gate-suite-implement-post`
+     job (specs/133-post-agent-gate-verdict) is the same shape and is
+     unbound for the same reason: it runs the full suite on the head the
+     cycle pushed, and the verdict it writes is read by the acting job.
 
   Counting the jobs that do run:
 

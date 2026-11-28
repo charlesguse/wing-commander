@@ -699,6 +699,17 @@ jobs:
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
       converged: ${{ steps.final.outputs.converged }}
+      # specs/133-post-agent-gate-verdict: the cycle's own tasks-only reading
+      # and the values the post-agent gate job's `if:` and its reader need.
+      # Flags and a SHA only -- never prose (#309).
+      tasks-converged: ${{ steps.final.outputs.converged }}
+      handoff: ${{ steps.final.outputs.handoff }}
+      routed: ${{ steps.final.outputs.routed }}
+      truncated: ${{ steps.final.outputs.truncated }}
+      # The exact head this cycle left on the spec branch (branch-advance's
+      # own after-SHA); empty when that step could not read it, which the
+      # verdict reader then fails closed on.
+      head-sha: ${{ steps.branch-advance.outputs.after-sha-available == 'true' && steps.branch-advance.outputs.after-sha || '' }}
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
       refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
@@ -4232,6 +4243,115 @@ jobs:
               {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
               {"name": "Dispatch next step", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
             ]
+
+  # specs/133-post-agent-gate-verdict: the FULL gate suite on the head this
+  # cycle pushed, after the agent, in a credential-free job -- the verdict
+  # that decides convergence (and an informational one on a stall hand-off).
+  # Same container, runner and prerequisites as gate-suite-implement-cycle
+  # (the shared prepare composite); the cycle-start job's comments say why it
+  # holds no id-token and why a missing pipeline checkout reads as a named
+  # missing prerequisite. The suite's budget (25 min) sits below the step's
+  # (30) so a slow suite writes a fail verdict naming the budget (FR-007).
+  # The verdict is read, fail-closed and bound to the head, by
+  # implement-dispatch -- never here.
+  gate-suite-implement-post:
+    needs: [implement]
+    if: >-
+      !cancelled() &&
+      needs.implement.result == 'success' &&
+      (needs.implement.outputs.tasks-converged == 'true' ||
+      needs.implement.outputs.handoff == 'true')
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+        # No Docker in this container either (#989): Gate 62 reads this.
+        WC_GATE_SUITE_DOCKERLESS: "true"
+    permissions:
+      contents: read
+    # Same shape as gate-suite-implement-cycle's outputs: ready only with the
+    # pipeline checked out, a missing pipeline named as the missing
+    # prerequisite.
+    outputs:
+      script-exists: ${{ steps.prepare.outputs.script-exists }}
+      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.prepare.outputs.ready || 'false' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.prepare.outputs.missing }}
+    steps:
+      # The trusted commit, full history (so origin/<spec branch> is here),
+      # and no credential left in .git/config afterwards.
+      - name: Checkout consumer repository (trusted commit, no credential kept)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        continue-on-error: true
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander implement stage (post-agent gate suite): cannot determine the pipeline commit to check out — github.job_workflow_sha is empty, and this credential-free job holds no id-token for the OIDC fallback. Set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        id: pipeline-checkout
+        if: steps.pipeline-ref.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # Only the job's own read-only token -- see gate-suite-implement-cycle.
+          token: ${{ github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Install actionlint for the gate suite
+        if: steps.pipeline-checkout.outcome == 'success' && hashFiles('.github/scripts/run-local-gates.py') != ''
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
+
+      # The spec branch to gate and the suite's prerequisites -- see
+      # wing-commander-gate-suite-prepare.
+      - name: "Prepare the gate suite (post-agent)"
+        id: prepare
+        if: steps.pipeline-checkout.outcome == 'success'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-suite-prepare
+        with:
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-prefix: ${{ inputs.spec-prefix }}
+          leg: post-agent
+
+      # Budget: the composite's own (25 min) is below the step's (30), so a
+      # slow suite writes a fail verdict that names the budget and the step
+      # timeout stays the backstop for a hung upload -- see
+      # gate-suite-implement-cycle.
+      - name: Run the post-agent gate suite (credential-free)
+        if: steps.prepare.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
+        timeout-minutes: 30
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
+        with:
+          site: implement-post
+          head-ref: ${{ steps.prepare.outputs.ref }}
+          suite-timeout-minutes: "25"
 
   # Survivor job (the #224 idiom, research.md D4/D7): reaches two mutually
   # exclusive arms. The exhausted-retry arm (final-ok == 'false') is today's

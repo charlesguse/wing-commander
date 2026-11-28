@@ -295,8 +295,11 @@ def _optout_sites(node, path=()):
         yield path
 
 
+# spec 133: the post-agent gate job runs the same suite in the same Docker-less
+# container, so it carries the same opt-out.
+POST_GATE_SUITE_JOB = "gate-suite-implement-post"
 ALLOWED_OPTOUTS = tuple(("jobs", job, "container", "env", DOCKERLESS_ENV)
-                        for job in (IMPLEMENT_JOB, GATE_SUITE_JOB))
+                        for job in (IMPLEMENT_JOB, GATE_SUITE_JOB, POST_GATE_SUITE_JOB))
 
 
 def stray_optouts(root="."):

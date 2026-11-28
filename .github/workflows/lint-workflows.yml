@@ -818,8 +818,11 @@ jobs:
                           exempt += 1
                       continue
 
-                  if (os.path.basename(f), jname) == ("implement.yml",
-                                                      "gate-suite-implement-cycle"):
+                  if (os.path.basename(f), jname) in (
+                          ("implement.yml", "gate-suite-implement-cycle"),
+                          # specs/133-post-agent-gate-verdict: the same shape,
+                          # the full suite after the agent.
+                          ("implement.yml", "gate-suite-implement-post")):
                       # specs/095-agent-code-credential-containment: the
                       # credential-free job that runs the spec branch's gate
                       # suite is deliberately unbound, file- and job-scoped.
@@ -833,7 +836,7 @@ jobs:
                       # registered exception. Asserted in the deviating
                       # direction, like verify-image-prerequisites above.
                       if "environment" in job:
-                          print(f"::error file={f}::job 'gate-suite-implement-cycle' "
+                          print(f"::error file={f}::job '{jname}' "
                                 f"carries an environment: block. It is deliberately "
                                 f"unbound (specs/095): it runs agent-authored code and "
                                 f"must hold no credential, environment secrets "
@@ -842,7 +845,7 @@ jobs:
                                 f"together.")
                           failures += 1
                       else:
-                          print(f"note: {f}: job 'gate-suite-implement-cycle' is a "
+                          print(f"note: {f}: job '{jname}' is a "
                                 f"registered Gate 7 exemption — deliberately unbound, "
                                 f"not counted as bound.")
                           exempt += 1

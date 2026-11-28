@@ -179,6 +179,16 @@ EXCEPTIONS = {
         "ENUM: a model name copied from an input or a step output.",
     (".github/workflows/implement.yml", "implement", "converged"):
         "ENUM: true/false chosen by the consolidate step.",
+    # specs/133-post-agent-gate-verdict: the flags the post-agent gate job's
+    # `if:` and implement-dispatch read, each a bare true/false.
+    (".github/workflows/implement.yml", "implement", "tasks-converged"):
+        "ENUM: true/false chosen by the consolidate step.",
+    (".github/workflows/implement.yml", "implement", "handoff"):
+        "ENUM: true/false chosen by the consolidate step.",
+    (".github/workflows/implement.yml", "implement", "routed"):
+        "ENUM: true/false chosen by the consolidate step.",
+    (".github/workflows/implement.yml", "implement", "truncated"):
+        "ENUM: true/false chosen by the consolidate step.",
     (".github/workflows/watchdog.yml", "diagnose", "outcome"):
         "ENUM: diagnose-failed / passed-inspection / findings.",
     (".github/workflows/auto-update-spec-kit.yml", "evaluate-path", "outcome"):
