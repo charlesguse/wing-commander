@@ -879,8 +879,8 @@ jobs:
       # always(), not !cancelled(): the always() verdict and metrics steps
       # below run pipeline code in a cancelled run too, and a checkout is a
       # read, never a remote rewrite. verify-subfolder-containment.py
-      # (check_pipeline_recheckout) holds every subfolder-capable agent to
-      # this unguarded pair.
+      # (check_pipeline_recheckout) holds every subfolder-capable agent, and
+      # every other agent followed by pipeline code, to this unguarded pair.
       - name: Remove the agent-writable pipeline checkout (post-agent)
         id: pipeline-rm
         if: always() && steps.agent.outcome != 'skipped'
