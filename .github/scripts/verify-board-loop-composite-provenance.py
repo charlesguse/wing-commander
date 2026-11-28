@@ -80,20 +80,16 @@ space, tab, CR or LF at either end, or a wrap holding only a string
 literal, whose text GitHub then reads as the condition.
 Today that is prove-gate and prove.
 
-Rule (g) carries the same uses:-block concern to every OTHER workflow in
-.github/workflows/, since a relative `uses: ./.github/actions/<name>`
-resolves from the workspace root in any file, not only this one:
-  (g1) a workflow that runs in a consumer's workspace -- it declares a
-       `pipeline-repo` workflow_call input -- holds no raw reference at
-       all: its root is the consumer's repository (and, after a leg's
-       checkout, a PR or item branch), so its composites come from the
-       pipeline copy at `./.wing-commander-pipeline/`;
-  (g2) in any other workflow, no raw reference follows, in the same job,
-       a checkout into the workspace root of anything but the run's own
-       commit (no `repository:`, and no `ref:` or one of TRUSTED_ROOT_REFS).
-pr-conversation.yml's act job once posted its outstanding task item
-through a raw reference after checking the PR's branch out at the root,
-with the bot token -- the shape both halves of (g) reject.
+The cross-workflow rule this gate once carried as rule (g) -- no
+`./` reference in any other workflow resolves inside a consumer's or an
+untrusted root checkout -- has one home now, Gate 178
+(verify-untrusted-checkout-local-uses.py, specs/132 FR-016a), which judges
+every workflow by the repository and ref each tree was checked out from.
+Its three mutations (pr-conversation.yml's act job, shared-pr-reviewer.yml's
+find job, the watchdog's metrics-branch checkout) moved with it. Rules
+(a)-(f) stay here: they pin board-loop.yml's own canonical trusted-copy
+steps (name, ref, order before the context and agent steps, write-protect,
+.gitignore), which Gate 178 does not model.
 
 Gate 98's own `run:`-block checks (helper-script/schema provenance, the
 `python3 -I` allowlist) are untouched and out of this gate's scope; this
@@ -129,14 +125,6 @@ CONTEXT_ACTION = "wing-commander-context"
 SIDECAR_PATH = ".wc-pristine-repo"
 EXPECTED_REF = "${{ github.sha }}"
 RAW_LINE_RE = re.compile(r"uses:\s*" + re.escape(RAW_PREFIX))
-WORKFLOWS_DIR = os.path.join(".github", "workflows")
-CONSUMER_INPUT = "pipeline-repo"
-# Refs a workspace-root checkout may name and still hold the run's own,
-# trusted commit (rule (g2)); no `ref:` at all means the same.
-TRUSTED_ROOT_REFS = (
-    "${{ github.sha }}",
-    "${{ github.event.repository.default_branch }}",
-)
 TRUSTED_ROOT_REPOS = (None, "${{ github.repository }}")
 # Rule (h): the ref every checkout of this repository names in a job that
 # can run on a pull_request event.
@@ -608,82 +596,6 @@ def check_doc(doc, gitignore_text):
     return problems
 
 
-# --- rule (g): every other workflow -----------------------------------------
-
-def _triggers(doc):
-    on = doc.get("on", doc.get(True))
-    return on if isinstance(on, dict) else {}
-
-
-def _runs_in_consumer_workspace(doc):
-    call = _triggers(doc).get("workflow_call")
-    return isinstance(call, dict) and CONSUMER_INPUT in ((call.get("inputs") or {}))
-
-
-def _is_raw(step):
-    return str((step or {}).get("uses", "")).strip().startswith(RAW_PREFIX)
-
-
-def _untrusted_root_checkout(step):
-    """The checkout's description when it writes something other than the
-    run's own commit into the workspace root; None otherwise."""
-    step = step or {}
-    if not _is_checkout(step):
-        return None
-    w, clashes = _with_folded(step)
-    path = str(w.get("path") or "").strip()
-    if path not in ("", ".", "./") and not clashes:
-        return None
-    ref, repo = w.get("ref"), w.get("repository")
-    if not clashes and repo in TRUSTED_ROOT_REPOS and (ref is None or ref in TRUSTED_ROOT_REFS):
-        return None
-    return "{0!r} (repository={1!r}, ref={2!r})".format(step.get("name"), repo, ref)
-
-
-def other_workflow_problems(name, doc):
-    """Rule (g) for one workflow other than board-loop.yml."""
-    problems = []
-    consumer = _runs_in_consumer_workspace(doc)
-    for job_id, job in ((doc or {}).get("jobs") or {}).items():
-        untrusted = None
-        for i, step in enumerate((job or {}).get("steps") or []):
-            if _is_raw(step):
-                label = (step or {}).get("name", i)
-                if consumer:
-                    problems.append(
-                        "{0}: {1}: step {2} ({3!r}) uses {4!r} in a workflow that runs in "
-                        "a consumer's workspace -- resolve it from ./.wing-commander-pipeline/ "
-                        "-- rule (g)".format(name, job_id, i, label, step.get("uses")))
-                elif untrusted:
-                    problems.append(
-                        "{0}: {1}: step {2} ({3!r}) uses {4!r} after the workspace-root "
-                        "checkout {5}, so it resolves from that checkout -- rule (g)".format(
-                            name, job_id, i, label, step.get("uses"), untrusted))
-            untrusted = untrusted or _untrusted_root_checkout(step)
-    return problems
-
-
-def load_other_workflows():
-    docs = {}
-    for fname in sorted(os.listdir(WORKFLOWS_DIR)):
-        path = os.path.join(WORKFLOWS_DIR, fname)
-        if path == WORKFLOW or not fname.endswith((".yml", ".yaml")):
-            continue
-        with open(path, encoding="utf-8") as fh:
-            docs[path] = yaml.safe_load(fh)
-    if not docs:
-        sys.exit("::error::Gate 104: no workflow found under {0}; rule (g) would pass "
-                 "vacuously.".format(WORKFLOWS_DIR))
-    return docs
-
-
-def check_others(docs):
-    problems = []
-    for name, doc in docs.items():
-        problems += other_workflow_problems(name, doc)
-    return problems
-
-
 # --- self-test mutations: each must be caught, attributed to its own rule --
 
 def _job_steps(doc, job_id):
@@ -940,43 +852,6 @@ def mut_gitignore_removed(text):
                    if SIDECAR_PATH not in line)
 
 
-def _other_step(docs, fname, job_id, pred):
-    steps = docs[os.path.join(WORKFLOWS_DIR, fname)]["jobs"][job_id]["steps"]
-    for step in steps:
-        if pred(step or {}):
-            return step
-    sys.exit("::error::Gate 104 self-test: the step rule (g)'s mutation needs is gone from "
-             "{0} job {1}; update the self-test alongside the workflow.".format(fname, job_id))
-
-
-def mut_consumer_raw_reference(docs):
-    """pr-conversation.yml's act job posts its outstanding task item through
-    a raw reference again, after the PR-branch checkout at the root."""
-    step = _other_step(docs, "pr-conversation.yml", "act",
-                       lambda s: "wing-commander-outstanding-task-item" in str(s.get("uses", "")))
-    step["uses"] = RAW_PREFIX + "wing-commander-outstanding-task-item"
-    return docs
-
-
-def mut_untrusted_root_ref(docs):
-    """shared-pr-reviewer.yml's find job checks the PR head out at the root
-    instead of the default-branch commit its composites come from."""
-    step = _other_step(docs, "shared-pr-reviewer.yml", "find",
-                       lambda s: _is_checkout(s))
-    step["with"]["ref"] = "${{ needs.prepare.outputs.head-sha }}"
-    return docs
-
-
-def mut_untrusted_root_ref_capitalised(docs):
-    """The same change as mut_untrusted_root_ref, with the input spelled
-    `Ref:`: the runner folds input names, so it is the same checkout
-    (found by #1307's validator re-check)."""
-    step = _other_step(docs, "shared-pr-reviewer.yml", "find", _is_checkout)
-    step["with"].pop("ref", None)
-    step["with"]["Ref"] = "${{ needs.prepare.outputs.head-sha }}"
-    return docs
-
-
 def mut_ref_changed_capitalised(doc):
     """fix's trusted-copy checkout keeps ref: github.sha and adds Ref: main;
     the runner folds input names, so main may be what it checks out."""
@@ -985,18 +860,8 @@ def mut_ref_changed_capitalised(doc):
     return doc
 
 
-def mut_side_checkout_moved_to_root(docs):
-    """The watchdog's metrics-branch checkout loses its path:, so the
-    trial-bound composite after it resolves from the metrics branch."""
-    step = _other_step(docs, "wing-commander-8-watchdog.yml", "trial-bound",
-                       lambda s: (s.get("with") or {}).get("path") == ".wing-commander-metrics")
-    del step["with"]["path"]
-    return docs
-
-
 # (label, "doc" mutates the parsed workflow / "gitignore" mutates .gitignore
-#  text / "others" mutates every other parsed workflow, mutation function,
-#  substring the caught problem must contain)
+#  text, mutation function, substring the caught problem must contain)
 MUTATIONS = [
     ("a raw uses: ./.github/actions/ reappears in fix (already sidecar-relative)",
      "doc", mut_raw_uses_reintroduced, "rule (a)"),
@@ -1017,15 +882,6 @@ MUTATIONS = [
      "doc", mut_write_protect_dropped, "rule (f)"),
     ("gate-suite-fix resolves the contained gate suite from the workspace (spec 095)",
      "doc", mut_gate_job_raw_reference, "rule (a)"),
-    ("pr-conversation.yml's act job resolves the outstanding-task-item composite from "
-     "the workspace (the PR branch it checked out at the root)",
-     "others", mut_consumer_raw_reference, "rule (g)"),
-    ("shared-pr-reviewer.yml's find job checks the PR head out at the root before its "
-     "raw composite references",
-     "others", mut_untrusted_root_ref, "rule (g)"),
-    ("the watchdog's metrics-branch checkout moves to the root before the trial-bound "
-     "composite",
-     "others", mut_side_checkout_moved_to_root, "rule (g)"),
     ("prove-gate's trusted copy goes back to github.sha",
      "doc", mut_prove_gate_side_ref_sha, "rule (h)"),
     ("prove's workspace checkout loses its default-branch ref",
@@ -1046,8 +902,6 @@ MUTATIONS = [
      "doc", mut_prove_gate_root_checkout_capitalised, "rule (h)"),
     ("prove's workspace checkout adds REF: github.sha beside its default-branch ref",
      "doc", mut_prove_root_ref_twice_in_cases, "rule (h)"),
-    ("shared-pr-reviewer.yml's find job checks the PR head out at the root, the input spelled Ref:",
-     "others", mut_untrusted_root_ref_capitalised, "rule (g)"),
     ("fix's trusted-copy checkout adds Ref: main beside its github.sha ref",
      "doc", mut_ref_changed_capitalised, "rule (c)"),
 ]
@@ -1061,16 +915,13 @@ def main():
     text = open(WORKFLOW, encoding="utf-8").read()
     gitignore_text = open(GITIGNORE, encoding="utf-8").read() if os.path.isfile(GITIGNORE) else ""
     failures = []
-    others = check_others(load_other_workflows())
     if self_test:
-        base = check(text, gitignore_text) + others
+        base = check(text, gitignore_text)
         if base:
             failures += ["the shipped workflow already fails: {0}".format(p) for p in base]
         failures += pr_condition_case_failures()
         for label, kind, mutate, expect in MUTATIONS:
-            if kind == "others":
-                caught = check_others(mutate(load_other_workflows()))
-            elif kind == "doc":
+            if kind == "doc":
                 doc = mutate(yaml.safe_load(text))
                 caught = check_doc(doc, gitignore_text)
             else:
@@ -1082,12 +933,9 @@ def main():
                 failures.append("mutation {0!r} was NOT caught by its rule ({1!r})".format(
                     label, expect))
     else:
-        failures = check(text, gitignore_text) + others
+        failures = check(text, gitignore_text)
     for f in failures:
-        # A rule (g) problem names its own workflow first; annotate that file.
-        named = f.split(": ", 1)[0]
-        where = named if named.startswith(WORKFLOWS_DIR + os.sep) else WORKFLOW
-        print("::error file={0}::Gate 104: {1}".format(where, f))
+        print("::error file={0}::Gate 104: {1}".format(WORKFLOW, f))
     if failures:
         return 1
     if self_test:
@@ -1096,8 +944,7 @@ def main():
               "rule.".format(len(PR_CONDITION_CASES), len(MUTATIONS)))
     else:
         print("Gate 104: every uses: ./.github/actions/ reference in board-loop.yml "
-              "resolves from the trusted copy, never the workspace; no other workflow "
-              "resolves one from a consumer's or an untrusted root checkout.")
+              "resolves from the trusted copy, never the workspace.")
     return 0
 
 

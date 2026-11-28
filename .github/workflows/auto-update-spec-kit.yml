@@ -1580,7 +1580,7 @@ jobs:
       # all required actions", before any step runs. Bump this to the next full
       # version deliberately; do not "normalise" it back to `@v10`.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@v10.0.0
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         # Gate 170: no Actions cache (setup-uv's default restores and saves one).
         with:
           enable-cache: false
@@ -1940,7 +1940,7 @@ jobs:
       # on run 31658562063. Pinned to a full version for the same reason as
       # `prepare`'s copy: there is no floating `@v10` tag to resolve.
       - name: Install uv (provides uvx for the Spec Kit CLI)
-        uses: astral-sh/setup-uv@v10.0.0
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
         # Gate 170: no Actions cache (setup-uv's default restores and saves one).
         with:
           enable-cache: false

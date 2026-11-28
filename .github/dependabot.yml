@@ -1,0 +1,36 @@
+# specs/132-workflow-trigger-security FR-009b (owner decision on #890,
+# research D6): keeps the SHA-pinned third-party actions current.
+# Dependabot rewrites each pin's SHA and its `# vX.Y.Z` comment together.
+# github-actions only; no other ecosystem is managed here.
+#
+# Every bump pull request is merged by a human, never by automation.
+# Before merging, run `python3 .github/scripts/wc_action_pins.py --write`
+# on the bump branch: Dependabot cannot write Gate 170's registers
+# (action-runtime-pins.json, action-runtime-waivers.json), and Gate 170
+# fails the pull request until the new refs' rows are there (FR-017a).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" covers .github/workflows/; "**" covers every composite action
+    # directory however deeply nested (Gate 179 fails when one is not
+    # matched).
+    directories:
+      - "/"
+      - "/.github/actions/**/*"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:23"
+      timezone: Etc/UTC
+    # A release is proposed only once it has been public for a week.
+    cooldown:
+      default-days: 7
+    # One grouped pull request a week, so its register rows are added once.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: scope

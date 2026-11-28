@@ -179,6 +179,53 @@ gates. The examples below include them; keep them when you customize:
 - **Bot-actor loop guard on rebase** — skip runs triggered by your App's own
   pushes.
 
+## Events and gates
+
+Every event the wrapper workflows trigger on, what it drives, and how it is
+gated:
+
+| Event | Drives | Gated by |
+|-------|--------|----------|
+| `issues` | intake (and the read-only report wrappers) | maintainer-applied label |
+| `issue_comment` | clarify, PR conversation | commenter is a maintainer (by association), never a bot |
+| `pull_request` | plan, tasks, cleanup, spec-kit update | same-repo pipeline branches only |
+| `pull_request_review`, `pull_request_review_comment` | PR conversation | same-repo PRs; commenter gate |
+| `workflow_dispatch` | implement, finalize and the redispatch targets | repository write access |
+| `workflow_run` | watchdog, metrics persistence, fold-cycle guard | the triggering workflow's conclusion |
+| `schedule` | cleanup, rebase, spec-kit update and the report wrappers | none needed: runs on the default branch |
+| `push` | rebase, reference-image build | branch filter; bot-actor loop guard |
+
+A sample Actions event policy that includes every event the pipeline needs.
+`verify-adopter-event-policy.py` fails when a wrapper in this repository uses
+an event this block lacks:
+
+```yaml wc-event-policy
+events:
+  issues: {gate: maintainer label}
+  issue_comment: {gate: commenter check}
+  pull_request: {gate: same-repo branches}
+  pull_request_review: {gate: same-repo PRs}
+  pull_request_review_comment: {gate: same-repo PRs}
+  workflow_dispatch: {gate: write access}
+  workflow_run: {gate: triggering conclusion}
+  schedule: {gate: default branch}
+  push: {gate: branch filter}
+```
+
+- **Try the policy in Evaluate mode first**, so a missing event shows up as a
+  report rather than a silently dropped run. Whether Evaluate mode needs a
+  GitHub Enterprise plan is unresolved; check your plan before relying on it.
+- **Fork-PR limit.** Review and review-comment events from a fork run with a
+  read-only token and no secrets, so PR conversation cannot act on a
+  fork's PR.
+- **A token's write access comes from the repository's default workflow
+  permissions and each `permissions:` block, not from the trigger.** Trimming
+  the trigger list does not replace least-privilege `permissions:` blocks.
+- **Pinned third-party actions.** Third-party actions outside the
+  trusted-publisher set (`actions/*`, `github/*`, `anthropics/*`) are pinned
+  by SHA in the published stage workflows, so each Wing Commander release
+  freezes them. You get upstream fixes to them by moving to a new release.
+
 ## The minimal full-pipeline wrapper set
 
 Copy these eight files into `.github/workflows/` of your repository. They are

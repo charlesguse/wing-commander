@@ -2128,6 +2128,9 @@ jobs:
       # green one whose only evidence is an issue comment.
       - name: Fail the job on an attempted-but-failed merge
         if: steps.merge.outcome == 'failure'
+        env:
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          FAILURE_KIND: ${{ steps.merge.outputs.failure-kind }}
         run: |
-          echo "::error::lifecycle-review-gate: the merge of PR #${{ needs.select.outputs.pr-number }} was attempted and failed (${{ steps.merge.outputs.failure-kind }}); the reason is stated on the lifecycle issue."
+          echo "::error::lifecycle-review-gate: the merge of PR #${PR_NUMBER} was attempted and failed (${FAILURE_KIND}); the reason is stated on the lifecycle issue."
           exit 1

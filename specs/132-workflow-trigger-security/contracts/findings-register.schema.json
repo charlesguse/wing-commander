@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zizmor accepted-findings register",
+  "type": "object",
+  "required": ["waivers"],
+  "properties": {
+    "waivers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "audit", "location", "reason", "control", "issue"],
+        "additionalProperties": false,
+        "properties": {
+          "file": {"type": "string"},
+          "audit": {"type": "string"},
+          "location": {"type": "string", "pattern": "^(workflow|step:.+|job:[^/]+(/step:.+)?)$"},
+          "reason": {"type": "string", "minLength": 1},
+          "control": {"type": "string", "minLength": 1},
+          "issue": {"type": ["string", "null"], "pattern": "^#[0-9]+$"},
+          "permanent": {"type": "boolean"},
+          "permanent_reason": {"type": "string"},
+          "decided_by": {
+            "oneOf": [
+              {"type": "string", "pattern": "^#[0-9]+$"},
+              {"type": "array", "items": {"type": "string", "pattern": "^#[0-9]+$"}}
+            ]
+          }
+        }
+      }
+    }
+  }
+}

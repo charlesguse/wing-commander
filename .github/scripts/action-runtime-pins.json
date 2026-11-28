@@ -23,9 +23,9 @@
     "actions/download-artifact@v7": "node24",
     "actions/upload-artifact@v6": "node24",
     "anthropics/claude-code-action@v1": "composite",
-    "astral-sh/setup-uv@v10.0.0": "node24",
-    "aws-actions/configure-aws-credentials@v4": "node20",
-    "docker/build-push-action@v6": "node20",
-    "docker/login-action@v3": "node20"
+    "astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d": "node24",
+    "aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a": "node20",
+    "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8": "node20",
+    "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9": "node20"
   }
 }
