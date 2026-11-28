@@ -282,12 +282,12 @@ runs:
         release() { gh api -X DELETE "repos/$GH_REPO/labels/$(jq -rn --arg s "$1" '$s | @uri')" >/dev/null; }
         num="$(bash "$lib" next-number "$PROJECT")" || exit 1
         label=""
+        desc="Wing Commander: feature number reserved by a running intake"
         for (( i = 0; i < 25; i++ )); do
           try="spec-number:${PROJECT:+$PROJECT/}$num"
           # gh prints the response body (its `already_exists` code) on
           # stdout and only the HTTP status on stderr, so both are read.
-          if err="$(gh api -X POST "repos/$GH_REPO/labels" -f name="$try" -f color=EDEDED \
-              -f description="Wing Commander: feature number reserved by a running intake" 2>&1)"; then
+          if err="$(gh api -X POST "repos/$GH_REPO/labels" -f name="$try" -f color=EDEDED -f description="$desc" 2>&1)"; then  # wc-gh-api-error-exempt: the body carries the already_exists code this loop branches on
             fresh="$(bash "$lib" next-number "$PROJECT")" || { release "$try" || true; exit 1; }
             if (( 10#$fresh <= 10#$num )); then label="$try"; break; fi
             echo "Feature number $num was taken while it was being reserved; trying $fresh."
