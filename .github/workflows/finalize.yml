@@ -1245,6 +1245,24 @@ jobs:
           else
             printf '## Remaining work\n\nNo manual work remains.\n' >> "$narrative_file"
           fi
+          # specs/133-post-agent-gate-verdict (FR-014): a hand-off with
+          # converged=false carries the newest post-agent full-suite verdict
+          # implement-dispatch posted on the lifecycle issue (the comment's
+          # first-failure text is already fenced; this rendering only drops
+          # the marker line), or says none was produced. Informational.
+          if [ "$CONVERGED" = "false" ]; then
+            verdict_body="$(gh issue view "$ISSUE" --json comments --jq '[.comments[].body | select(startswith("<!-- wing-commander:post-agent-verdict -->"))] | last // ""' 2>/dev/null || true)"
+            {
+              echo ""
+              echo "## Post-agent full suite"
+              echo ""
+              if [ -n "$verdict_body" ]; then
+                printf '%s\n' "$verdict_body" | sed '1d'
+              else
+                echo "No post-agent verdict was produced for this hand-off."
+              fi
+            } >> "$narrative_file"
+          fi
           {
             echo ""
             echo "Lifecycle issue: #$ISSUE"

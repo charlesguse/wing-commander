@@ -38,7 +38,7 @@
 - [X] T008 [US1] Add job `implement-dispatch` to `.github/workflows/implement.yml`: `needs: [implement, gate-suite-implement-post]`, `if: !cancelled() && needs.implement.result == 'success'`, holds the App token, reads the verdict with `wing-commander-gate-verdict` (`site: implement-post`, `expected-head-sha` = `head-sha`, `gate-job-result`), computes final `converged` by the decision table in data-model.md `Cycle decision` (fail closed on absent/unbound/red/cancelled; missing prerequisite names `missing`; no suite → tasks alone), and moves the existing "Dispatch next step" logic here so it exists exactly once; cap-reached path keeps finalize with `converged=false` (FR-005)
 - [X] T009 [US1] Point the `workflow_call` output `converged` and the metrics record's convergence field at `jobs.implement-dispatch.outputs.converged` in `.github/workflows/implement.yml` (FR-006); other outputs keep their names
 - [X] T010 [US1] Stall hand-off (`handoff=true`, blocker and cap alike): in `implement-dispatch`, wait for the post job at most the suite budget, post one lifecycle-issue comment starting `<!-- wing-commander:post-agent-verdict -->` with outcome, head and fenced first failure (or "no verdict produced: <reason>") per data-model.md `Stall hand-off verdict`, then dispatch finalize unchanged; the outcome never blocks the hand-off (FR-014)
-- [ ] T011 [P] [US1] In `.github/workflows/finalize.yml` read the newest `<!-- wing-commander:post-agent-verdict -->` comment on the lifecycle issue and render it (or the "none produced" report) in the final PR body as untrusted fenced text; do not change finalize's `workflow_dispatch` inputs (FR-014, SC-007)
+- [X] T011 [P] [US1] In `.github/workflows/finalize.yml` read the newest `<!-- wing-commander:post-agent-verdict -->` comment on the lifecycle issue and render it (or the "none produced" report) in the final PR body as untrusted fenced text; do not change finalize's `workflow_dispatch` inputs (FR-014, SC-007)
 - [ ] T012 [P] [US1] Extend `.github/scripts/verify-gate-suite-credential-free.py` (with self-test cases): `gate-suite-implement-post` holds `contents: read` only and no App-token step; `implement-dispatch` is its registered reader; no `run-local-gates.py` invocation in `implement-dispatch`
 - [ ] T013 [P] [US1] Create `.github/scripts/verify-implement-post-verdict.py` with `--self-test`: asserts the dispatch step exists exactly once in `implement.yml` inside `implement-dispatch`, the post job's `if:` and budget-below-timeout (FR-007), `converged` output sourced from `implement-dispatch`, and finalize's dispatch signature unchanged; register it with whatever lists `run-local-gates.py` and `lint-workflows.yml` use
 - [ ] T014 [US1] Run the `review-step-gating` skill over the new `if:`/`needs` chain in `.github/workflows/implement.yml` and the `container-shell-safety` skill over the new container job; fix findings; run `python .github/scripts/run-local-gates.py`
@@ -72,7 +72,7 @@
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T020 [P] Update `docs/reference.md`: post-agent gate job, its 25-minute budget inside the 30-minute timeout, and its effect on convergence and stall hand-off (FR-012)
+- [X] T020 [P] Update `docs/reference.md`: post-agent gate job, its 25-minute budget inside the 30-minute timeout, and its effect on convergence and stall hand-off (FR-012)
 - [ ] T021 Run `python .github/scripts/run-local-gates.py` and fix any red gate; walk through `specs/133-post-agent-gate-verdict/quickstart.md` statically against the final workflow
 
 ---
