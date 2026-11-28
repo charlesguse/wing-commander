@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"name": "important finding dropped", "expect_error": "important/security",
+     "finding": {"failure_class": "loud", "severity": "important"}, "in_scope": false,
+     "outcome": "drop", "reason": "fails loudly"},
+    {"name": "security finding dropped", "expect_error": "important/security",
+     "finding": {"failure_class": "none", "security": true}, "in_scope": false,
+     "outcome": "drop", "reason": "no output change"},
+    {"name": "unreadable class dropped", "expect_error": "unreadable",
+     "finding": {}, "in_scope": false,
+     "outcome": "drop", "reason": "fails loudly"}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "title": "stale count in the summary",
+  "what": "The summary reports the old count after a rerun.",
+  "evidence": {
+    "file_paths": [".github/workflows/board-loop.yml"]
+  },
+  "in_scope": false,
+  "failure_class": "an-unrecognised-class",
+  "silent_description": "the count reads fine but is stale",
+  "severity": "important",
+  "security": false,
+  "fingerprint_basis": {
+    "file_path": ".github/workflows/board-loop.yml",
+    "gate_or_artifact": "summary"
+  }
+}

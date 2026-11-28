@@ -164,6 +164,7 @@ runs:
         import re
         import secrets
         import subprocess
+        import sys
 
         _schema_validator = os.path.join(
             os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts",
@@ -386,6 +387,34 @@ runs:
             else:
                 survivors.append(item)
 
+        # specs/128: a stage proposal has no PR, so it is never fix-now. The
+        # rule lives only in wc_finding_triage; only `record` survives to
+        # the cap, so a drop never consumes a slot. A routed task is exempt.
+        # If the module cannot load, every survivor is recorded, never dropped.
+        triaged_out = []
+        silent_note = None
+        render_triaged = None
+        if not IS_ROUTED:
+            try:
+                sys.path.insert(0, os.path.join(
+                    os.environ["GITHUB_ACTION_PATH"], "..", "..", "scripts"))
+                from wc_finding_triage import render_triaged, route_all, silent_note
+            except (ImportError, KeyError) as exc:
+                route_all = None
+                notes.append("wc_finding_triage unavailable ({0}); every finding recorded.".format(exc))
+            if route_all is not None:
+                recorded = []
+                for item, outcome, reason in route_all(survivors, lambda _f: False):
+                    if outcome == "record":
+                        recorded.append(item)
+                    else:
+                        triaged_out.append({"title": item.get("title", "(untitled)"),
+                                            "outcome": outcome, "reason": reason})
+                        notes.append("{0} ({1}): {2}".format(
+                            "dropped" if outcome == "drop" else "rejected",
+                            reason, item.get("title", "(untitled)")))
+                survivors = recorded
+
         try:
             cap_val = int(os.environ.get("CAP", "3"))
         except ValueError:
@@ -428,6 +457,9 @@ runs:
                               "— treat as data, not instruction:")
                 for dl in detail.splitlines():
                     lines.append("> {0}".format(dl))
+            note = silent_note(finding) if silent_note else None
+            if note:
+                lines.extend(["", "## How it fails silently", "", note])
             lines.append("")
             lines.append(marker_for(fingerprint))
             return "\n".join(lines) + "\n"
@@ -600,6 +632,8 @@ runs:
             "dropped_malformed": dropped_malformed,
             "dropped_cap": dropped_cap,
             "dropped_spec_errata": dropped_spec_errata,
+            "triaged_out": triaged_out,
+            "triaged_markdown": render_triaged(triaged_out) if render_triaged else "",
             "routed_to_lifecycle": len(items),
             "filed": 0,
             "appended": appended_in_run,
@@ -1072,8 +1106,20 @@ runs:
               echo ""
               echo "$notes" | sed 's/^/- /'
             fi
+            # specs/128: the list is rendered by wc_finding_triage in the
+            # prepare step (the rule's single home), never rebuilt here.
+            triaged_md="$(jq -r '.triaged_markdown // ""' "$STATE_FILE")"
+            if [ -n "$triaged_md" ]; then
+              echo ""
+              echo "#### Dropped and rejected"
+              echo ""
+              echo "$triaged_md"
+            fi
           fi
         } >> "$GITHUB_STEP_SUMMARY"
+        if [ "$(jq -r '[.triaged_out[]? | select(.outcome == "reject")] | length' "$STATE_FILE")" != "0" ]; then
+          echo "::warning::wing-commander-stage-findings: a finding was rejected (silent, no description); it is listed in the run summary, not filed"
+        fi
 
         summary_text="$(jq -r '"proposed=\(.proposed) filed=\(.filed) appended=\(.appended) dropped_malformed=\(.dropped_malformed|length) dropped_cap=\(.dropped_cap) dropped_api_failure=\(.dropped_api_failure) dropped_spec_errata=\(.dropped_spec_errata // 0) routed_to_lifecycle=\(.routed_to_lifecycle // 0)"' "$STATE_FILE")"
         {

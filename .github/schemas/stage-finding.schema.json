@@ -21,6 +21,10 @@
         "detail": { "type": "string" }
       }
     },
+    "failure_class": { "type": "string" },
+    "silent_description": { "type": "string" },
+    "severity": { "type": "string" },
+    "security": { "type": "boolean" },
     "fingerprint_basis": {
       "type": "object",
       "required": ["file_path", "gate_or_artifact"],

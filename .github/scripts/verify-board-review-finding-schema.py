@@ -166,8 +166,8 @@ def _fixture_files():
     if not os.path.isdir(FIXTURES_DIR):
         return []
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
-    if len(found) != 12:
-        sys.exit("::error::board-review-finding-schema: expected exactly 12 "
+    if len(found) != 13:
+        sys.exit("::error::board-review-finding-schema: expected exactly 13 "
                  "fixtures under {0}, found {1} -- a fixture was added or "
                  "removed without updating this pin.".format(FIXTURES_DIR, len(found)))
     return found

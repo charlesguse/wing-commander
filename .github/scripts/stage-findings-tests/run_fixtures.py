@@ -882,7 +882,8 @@ def case_unverifiable_anchor_is_rejected_and_recorded():
           state and set(state.keys()) == {
               "disabled", "proposed", "dropped_malformed", "dropped_cap",
               "dropped_spec_errata", "routed_to_lifecycle", "filed", "appended",
-              "dropped_api_failure", "outstanding_skipped", "notes"},
+              "dropped_api_failure", "outstanding_skipped", "notes",
+              "triaged_out", "triaged_markdown"},
           state and sorted(state.keys()))
     check(case + ": dropped_malformed/dropped_cap are still zero -- not counted as a drop",
           state and state["dropped_malformed"] == [] and state["dropped_cap"] == 0, state)
@@ -1855,7 +1856,80 @@ def case_zero_findings_summary_is_terse():
     check(case + ": summary says no findings", "No findings proposed" in summary, summary)
 
 
+def case_triage_routes_each_class():
+    case = "triage: silent and important/security findings are recorded; loud, none and a bad silent are not"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+
+    def f(n, **extra):
+        return valid_finding(
+            title="triage case {0}".format(n),
+            fingerprint_basis={"file_path": ".github/scripts/case-{0}.py".format(n),
+                               "gate_or_artifact": "Gate {0}".format(n)},
+            evidence={"file_paths": [".github/scripts/case-{0}.py".format(n)]}, **extra)
+    findings = [
+        f(1, failure_class="silent", silent_description="reads clean while wrong"),
+        f(2, failure_class="loud", severity="nit"),
+        f(3, failure_class="none", severity="important"),
+        f(4, failure_class="loud"),
+        f(5, failure_class="none"),
+        f(6, failure_class="silent"),
+        f(7, failure_class="loud", security=True),
+    ]
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings, cap="3")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": three recorded (silent, important, security)",
+          outputs.get("survivor-count") == "3", outputs.get("survivor-count"))
+    titles = [outputs.get("survivor-{0}-title".format(i)) for i in range(3)]
+    check(case + ": the recorded set is 1, 3 and 7",
+          titles == ["triage case 1", "triage case 3", "triage case 7"], titles)
+    check(case + ": no recorded finding was capped away", state and state["dropped_cap"] == 0, state)
+    out_titles = {t["title"]: t["outcome"] for t in (state or {}).get("triaged_out", [])}
+    check(case + ": loud and none dropped, the bad silent rejected",
+          out_titles == {"triage case 2": "drop", "triage case 4": "drop",
+                         "triage case 5": "drop", "triage case 6": "reject"},
+          out_titles)
+    md = (state or {}).get("triaged_markdown", "")
+    check(case + ": the list gives each literal reason",
+          "`triage case 2` -- dropped: fails loudly" in md
+          and "`triage case 5` -- dropped: no output change" in md
+          and "`triage case 6` -- rejected: silent, no description" in md, md)
+    with open(outputs["survivor-0-body-file"], encoding="utf-8") as fh:
+        body = fh.read()
+    check(case + ": a recorded silent finding's body says how it fails",
+          "reads clean while wrong" in body, body)
+
+
+def case_triage_drops_do_not_consume_the_cap():
+    case = "triage: drops are removed before the cap"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    findings = [
+        valid_finding(title="loud {0}".format(n), failure_class="loud",
+                      fingerprint_basis={"file_path": ".github/scripts/l{0}.py".format(n),
+                                         "gate_or_artifact": "Gate {0}".format(n)},
+                      evidence={"file_paths": [".github/scripts/l{0}.py".format(n)]})
+        for n in range(3)]
+    findings.append(valid_finding())  # no class: unreadable, recorded
+    rc, outputs, state, out = run_prepare(tmp, "structured-array", findings=findings, cap="1")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": the unclassified finding is the one filed", outputs.get("survivor-count") == "1", out)
+    check(case + ": nothing counted as capped", state and state["dropped_cap"] == 0, state)
+
+
+def case_triage_exempts_routed_tasks():
+    case = "triage: a routed task is never triaged"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array", findings=[valid_finding(failure_class="none")],
+        finding_kind="routed-task")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": filed anyway", outputs.get("survivor-count") == "1", out)
+    check(case + ": nothing triaged out", state and state.get("triaged_out") == [], state)
+
+
 CASES = [
+    case_triage_routes_each_class,
+    case_triage_drops_do_not_consume_the_cap,
+    case_triage_exempts_routed_tasks,
     case_well_formed_finding_survives,
     case_malformed_finding_dropped,
     case_spec_errata_is_dropped_and_counted,

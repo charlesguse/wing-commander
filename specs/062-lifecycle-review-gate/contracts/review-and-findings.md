@@ -83,3 +83,14 @@ code review of #<N>.` (FR-019). Never held against this PR's readiness or
 gate status (FR-020) — `disposition`'s partition step (contracts/
 lifecycle-review-gate-workflow.md job 5) only ever counts `in_scope: true`
 findings toward `review_gate.findings_open`.
+
+### Triage (spec 128)
+
+Only out-of-scope findings that can fail silently are filed. A finding may
+carry optional `failure_class` (`silent|loud|none`), `silent_description`
+(one line, required when silent), `severity` and `security`; the rule is
+`.github/scripts/wc_finding_triage.py`'s alone. A loud or no-effect
+out-of-scope finding is dropped, and one that is silent with no description
+is rejected; both are listed with their reason under "Dropped and rejected"
+in the round's review body. Important, security and unreadable-class
+findings are never dropped. In-scope findings are folded as before.
