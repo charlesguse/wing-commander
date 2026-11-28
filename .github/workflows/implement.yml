@@ -530,9 +530,9 @@ jobs:
     # composite and verdict writer) was checked out. A pipeline this job
     # could not resolve or check out reads as a named missing prerequisite.
     outputs:
-      script-exists: ${{ steps.gate-suite-preflight-cycle.outputs.script-exists }}
-      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs.ready || 'false' }}
-      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.gate-suite-preflight-cycle.outputs.missing }}
+      script-exists: ${{ steps.prepare.outputs.script-exists }}
+      ready: ${{ steps.pipeline-checkout.outcome == 'success' && steps.prepare.outputs.ready || 'false' }}
+      missing: ${{ steps.pipeline-ref.outcome == 'failure' && 'the pipeline checkout (github.job_workflow_sha is empty and this job holds no id-token; set the pipeline-ref input)' || steps.pipeline-checkout.outcome == 'failure' && 'the pipeline checkout (the pipeline repository could not be checked out from this job)' || steps.prepare.outputs.missing }}
     steps:
       # The trusted commit, full history (so origin/<spec branch> is here),
       # and no credential left in .git/config afterwards.
@@ -583,32 +583,6 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
-      # The spec branch to gate, from the same validated spec-dir the
-      # implement job resolves; anything else is refused, and the implement
-      # job then reads an absent verdict as red. A subfolder project's
-      # `P/specs/NNN-slug` gates branch `<spec-prefix>P/NNN-slug` (spec 114);
-      # the implement job's wing-commander-project step enforces the project
-      # grammar, and a project segment named `specs` (`specs/specs/001-x`,
-      # which would gate the root branch of another lifecycle) is refused
-      # here already. The root form is unchanged.
-      - name: Resolve the spec branch to gate
-        id: head
-        env:
-          SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
-          SPEC_PREFIX: ${{ inputs.spec-prefix }}
-        run: |
-          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
-            echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
-            exit 1
-          fi
-          project_part="${SPEC_DIR_INPUT%specs/*}"
-          case "/$project_part" in
-            */specs/*)
-              echo "::error::spec-dir '$SPEC_DIR_INPUT' has a project segment named 'specs'; refusing to guess."
-              exit 1 ;;
-          esac
-          echo "ref=${SPEC_PREFIX}${project_part}${SPEC_DIR_INPUT#"${project_part}specs/"}" >> "$GITHUB_OUTPUT"
-
       # FR-009a: a failed install degrades to the preflight's missing-
       # actionlint skip below, never to a job failure with no verdict. Not
       # installed at all where there is no suite to run (#935).
@@ -617,45 +591,21 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-install-actionlint
 
-      # FR-009a: check the gate suite's prerequisites without (re)installing
-      # them — actionlint is installed by the step above, so this leg only
-      # confirms it. A missing prerequisite degrades to a step-
-      # summary note; it never fails this step or denies the agent. The
-      # suite script itself is checked first: an adopter repository has no
-      # .github/scripts/run-local-gates.py (#935), so script-exists=false
-      # forces ready=false and skips the tool checks, and the summary and
-      # prompt below say there is no suite rather than that a tool is gone.
-      # Gate 62 runs this step inside wing-commander's own reference image
-      # (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
-      - name: "Preflight: gate-suite prerequisites (cycle)"
-        id: gate-suite-preflight-cycle
-        run: |
-          if [ ! -f .github/scripts/run-local-gates.py ]; then
-            echo "script-exists=false" >> "$GITHUB_OUTPUT"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "ℹ️ gate-suite preflight (cycle): no local gate suite in this repository (.github/scripts/run-local-gates.py is absent); skipping it for this cycle." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "script-exists=true" >> "$GITHUB_OUTPUT"
-          ready=true
-          missing=""
-          if ! python3 -c "import yaml" >/dev/null 2>&1; then
-            ready=false
-            missing="$missing pyyaml"
-          fi
-          if ! command -v jq >/dev/null 2>&1; then
-            ready=false
-            missing="$missing jq"
-          fi
-          if ! command -v actionlint >/dev/null 2>&1; then
-            ready=false
-            missing="$missing actionlint"
-          fi
-          echo "ready=$ready" >> "$GITHUB_OUTPUT"
-          echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
-          if [ "$ready" != "true" ]; then
-            echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
-          fi
+      # The spec branch to gate and the suite's prerequisites, from the one
+      # shared home -- see wing-commander-gate-suite-prepare. It lives in the
+      # pipeline checkout, so a job that could not check the pipeline out
+      # skips it and reports the checkout as the missing prerequisite (the
+      # outputs above); a failure inside it also degrades to not-ready,
+      # never to a job failure with no verdict.
+      - name: "Prepare the gate suite (cycle)"
+        id: prepare
+        if: steps.pipeline-checkout.outcome == 'success'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-gate-suite-prepare
+        with:
+          spec-dir: ${{ inputs.spec-dir }}
+          spec-prefix: ${{ inputs.spec-prefix }}
+          leg: cycle
 
       # The full suite took over 10 minutes on a hosted runner (run
       # 40101571746), so a 10-minute step timeout read every cycle start as
@@ -663,12 +613,12 @@ jobs:
       # so a slow suite writes a fail verdict that names the budget, and
       # the step timeout stays the backstop for a hung upload.
       - name: Run the cycle-start gate suite (credential-free)
-        if: steps.gate-suite-preflight-cycle.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
+        if: steps.prepare.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
         timeout-minutes: 30
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
         with:
           site: implement-cycle
-          head-ref: ${{ steps.head.outputs.ref }}
+          head-ref: ${{ steps.prepare.outputs.ref }}
           suite-timeout-minutes: "25"
 
   implement:

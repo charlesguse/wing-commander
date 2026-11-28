@@ -54,6 +54,14 @@ EXEMPT_COMPOSITES = {
         permanent=True,
         permanent_reason="Running the agent's gate suite is the composite's whole job.",
     ),
+    "wing-commander-gate-suite-prepare": Exemption(
+        reason=("its preflight tests whether the consumer checkout has "
+                ".github/scripts/run-local-gates.py, in a credential-free job; it "
+                "executes nothing from the workspace"),
+        issue=(),
+        permanent=True,
+        permanent_reason="Asking whether the checkout has a gate suite is the composite's whole job.",
+    ),
 }
 
 USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*['\"]?(\./[^\s'\"#]+)")

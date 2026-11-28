@@ -20,7 +20,7 @@ description: >-
   (pass/fail), reason and first-failure.
 inputs:
   site:
-    description: "Verdict site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    description: "Verdict site: board-fix, board-review-fixup, implement-cycle, implement-retry or implement-post."
     required: false
     default: board-fix
   expected-head-sha:

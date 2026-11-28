@@ -88,7 +88,12 @@ IMPLEMENT_JOB = "implement"
 # spec 095: the cycle leg's preflight and suite run in this credential-free
 # job (same runner and image), the retry leg's still in the implement job.
 GATE_SUITE_JOB = "gate-suite-implement-cycle"
-PREFLIGHT_STEPS = ("Preflight: gate-suite prerequisites (cycle)",
+# spec 133: the cycle-start preflight's shell lives in the shared prepare
+# composite; the job step of this name calls it, and the text this gate runs
+# is the composite's preflight step with its leg placeholder filled in.
+PREPARE_COMPOSITE = ".github/actions/wing-commander-gate-suite-prepare/action.yml"
+PREPARE_USES = "wing-commander-gate-suite-prepare"
+PREFLIGHT_STEPS = ("Prepare the gate suite (cycle)",
                    "Preflight: gate-suite prerequisites (retry)")
 # The job each preflight step lives in.
 PREFLIGHT_JOBS = {PREFLIGHT_STEPS[0]: GATE_SUITE_JOB, PREFLIGHT_STEPS[1]: IMPLEMENT_JOB}
@@ -326,7 +331,21 @@ def stray_optouts(root="."):
     return problems
 
 
-def read_implement_subject(root=".", wf=None):
+def _prepare_preflight_run(root, override=None):
+    """The shared composite's preflight text with its leg placeholder filled
+    in as `cycle`; '' when the composite has no such step."""
+    import yaml
+    if override is not None:
+        return override
+    with io.open(os.path.join(root, PREPARE_COMPOSITE), encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    for st in (doc.get("runs") or {}).get("steps") or []:
+        if (st or {}).get("id") == "preflight":
+            return str(st.get("run", "")).replace("$LEG", "cycle")
+    return ""
+
+
+def read_implement_subject(root=".", wf=None, prepare_run=None):
     """-> (preflight scripts {step name: run text}, prompted commands, problems).
 
     Prompted commands are the suite interpreter the prompt's gate-suite
@@ -367,6 +386,8 @@ def read_implement_subject(root=".", wf=None):
         names = [n for n in PREFLIGHT_STEPS if PREFLIGHT_JOBS[n] == job_id]
         for name in names:
             run = job_by_name.get(name, {}).get("run")
+            if not run and PREPARE_USES in str(job_by_name.get(name, {}).get("uses", "")):
+                run = _prepare_preflight_run(root, prepare_run)
             if not run:
                 problems.append(f"{IMPLEMENT_WORKFLOW} job {job_id!r} has no "
                                 f"step {name!r} with a run: block -- if it was "
@@ -631,6 +652,8 @@ def _copy_subject(dst):
     shutil.copy(REQUIRED_TOOLS_FILE, os.path.join(dst, REQUIRED_TOOLS_FILE))
     os.makedirs(os.path.dirname(os.path.join(dst, IMPLEMENT_WORKFLOW)), exist_ok=True)
     shutil.copy(IMPLEMENT_WORKFLOW, os.path.join(dst, IMPLEMENT_WORKFLOW))
+    os.makedirs(os.path.dirname(os.path.join(dst, PREPARE_COMPOSITE)), exist_ok=True)
+    shutil.copy(PREPARE_COMPOSITE, os.path.join(dst, PREPARE_COMPOSITE))
     shutil.copy(GIT_FLOOR_FRAGMENT, os.path.join(dst, GIT_FLOOR_FRAGMENT))
     shutil.copy(LOADER_FRAGMENT, os.path.join(dst, LOADER_FRAGMENT))
 
@@ -995,12 +1018,6 @@ def _static_self_test():
     cases.append(("the actionlint install moved after the preflight", late_install,
                   JOB_INSTALLED["actionlint"][IMPLEMENT_JOB]))
 
-    def expression(wf):
-        st = next(st for st in wf["jobs"][GATE_SUITE_JOB]["steps"]
-                  if st.get("name") == PREFLIGHT_STEPS[0])
-        st["run"] = "echo ${{ github.sha }}\n" + st["run"]
-    cases.append(("an expression in the preflight", expression, PREFLIGHT_STEPS[0]))
-
     def no_suite_command(wf):
         st = next(st for st in wf["jobs"][IMPLEMENT_JOB]["steps"]
                   if st.get("name") == SUMMARY_STEPS[1])
@@ -1056,6 +1073,13 @@ def _static_self_test():
         if not any(needle in g for g in got):
             problems.append(f"{label} was NOT reported (expected a problem naming "
                             f"{needle!r}); got: {got}")
+    # an expression in the shared composite's preflight (the cycle leg's text)
+    _, _, got = read_implement_subject(
+        wf=copy.deepcopy(parsed),
+        prepare_run="echo ${{ github.sha }}\n" + _prepare_preflight_run("."))
+    if not any(PREFLIGHT_STEPS[0] in g for g in got):
+        problems.append(f"an expression in the preflight was NOT reported (expected a "
+                        f"problem naming {PREFLIGHT_STEPS[0]!r}); got: {got}")
     for label, mutate in cases_ok:
         wf = copy.deepcopy(parsed)
         mutate(wf)

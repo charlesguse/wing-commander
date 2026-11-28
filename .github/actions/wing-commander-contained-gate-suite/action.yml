@@ -18,7 +18,7 @@ description: >-
   verdict, never a skip.
 inputs:
   site:
-    description: "Verdict site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    description: "Verdict site: board-fix, board-review-fixup, implement-cycle, implement-retry or implement-post."
     required: false
     default: board-fix
   bundle-artifact:

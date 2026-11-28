@@ -1,0 +1,114 @@
+# wing-commander-gate-suite-prepare -- the one home of the shell a
+# credential-free implement gate-suite job runs before the suite: resolve
+# the spec branch to gate, then preflight the suite's prerequisites
+# (specs/133-post-agent-gate-verdict FR-011). Called by
+# gate-suite-implement-cycle (cycle start) and gate-suite-implement-post
+# (after the agent) in implement.yml, so the two cannot drift.
+#
+# The caller checks the consumer repository and the pipeline out first and
+# installs actionlint (tolerated) before this runs; this composite reads
+# only the workspace and writes step outputs, holding no credential.
+#
+# Constitution VII: every input is optional with a default.
+name: wing-commander-gate-suite-prepare
+description: >-
+  Resolves the spec branch a gate-suite job gates and checks the gate
+  suite's prerequisites, emitting ref, script-exists, ready and missing.
+inputs:
+  spec-dir:
+    description: "Spec directory (specs/NNN-slug, optionally under a project folder)."
+    required: false
+    default: ""
+  spec-prefix:
+    description: "Branch prefix of the persistent spec branch."
+    required: false
+    default: spec/
+  leg:
+    description: "Which gate-suite site this preparation is for; only names the site in step-summary notes."
+    required: false
+    default: cycle
+outputs:
+  ref:
+    description: The spec branch to gate (origin/<ref>).
+    value: ${{ steps.head.outputs.ref }}
+  script-exists:
+    description: "'true' when .github/scripts/run-local-gates.py exists in the checkout."
+    value: ${{ steps.preflight.outputs.script-exists }}
+  ready:
+    description: "'true' when the suite exists and its prerequisites are present."
+    value: ${{ steps.preflight.outputs.ready }}
+  missing:
+    description: Space-separated prerequisites the preflight could not find.
+    value: ${{ steps.preflight.outputs.missing }}
+runs:
+  using: composite
+  steps:
+    # The spec branch to gate, from the same validated spec-dir the
+    # implement job resolves; anything else is refused, and the implement
+    # job then reads an absent verdict as red. A subfolder project's
+    # `P/specs/NNN-slug` gates branch `<spec-prefix>P/NNN-slug` (spec 114);
+    # the implement job's wing-commander-project step enforces the project
+    # grammar, and a project segment named `specs` (`specs/specs/001-x`,
+    # which would gate the root branch of another lifecycle) is refused
+    # here already. The root form is unchanged.
+    - name: Resolve the spec branch to gate
+      id: head
+      shell: bash -e {0}
+      env:
+        SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
+        SPEC_PREFIX: ${{ inputs.spec-prefix }}
+      run: |
+        if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
+          exit 1
+        fi
+        project_part="${SPEC_DIR_INPUT%specs/*}"
+        case "/$project_part" in
+          */specs/*)
+            echo "::error::spec-dir '$SPEC_DIR_INPUT' has a project segment named 'specs'; refusing to guess."
+            exit 1 ;;
+        esac
+        echo "ref=${SPEC_PREFIX}${project_part}${SPEC_DIR_INPUT#"${project_part}specs/"}" >> "$GITHUB_OUTPUT"
+
+    # FR-009a: check the gate suite's prerequisites without (re)installing
+    # them -- actionlint is installed by the caller's step before this one,
+    # so this leg only confirms it. A missing prerequisite degrades to a
+    # step-summary note; it never fails this step or denies the agent. The
+    # suite script itself is checked first: an adopter repository has no
+    # .github/scripts/run-local-gates.py (#935), so script-exists=false
+    # forces ready=false and skips the tool checks, and the summary and
+    # prompt say there is no suite rather than that a tool is gone.
+    # Gate 62 runs this step inside wing-commander's own reference image
+    # (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
+    - name: "Preflight: gate-suite prerequisites (${{ inputs.leg }})"
+      id: preflight
+      shell: bash -e {0}
+      env:
+        LEG: ${{ inputs.leg }}
+      run: |
+        if [ ! -f .github/scripts/run-local-gates.py ]; then
+          echo "script-exists=false" >> "$GITHUB_OUTPUT"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "ℹ️ gate-suite preflight ($LEG): no local gate suite in this repository (.github/scripts/run-local-gates.py is absent); skipping it for this $LEG." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        echo "script-exists=true" >> "$GITHUB_OUTPUT"
+        ready=true
+        missing=""
+        if ! python3 -c "import yaml" >/dev/null 2>&1; then
+          ready=false
+          missing="$missing pyyaml"
+        fi
+        if ! command -v jq >/dev/null 2>&1; then
+          ready=false
+          missing="$missing jq"
+        fi
+        if ! command -v actionlint >/dev/null 2>&1; then
+          ready=false
+          missing="$missing actionlint"
+        fi
+        echo "ready=$ready" >> "$GITHUB_OUTPUT"
+        echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+        if [ "$ready" != "true" ]; then
+          echo "⚠️ gate-suite preflight ($LEG): missing prerequisites —$missing; skipping the local gate suite for this $LEG." >> "$GITHUB_STEP_SUMMARY"
+        fi

@@ -64,6 +64,7 @@ JOB = "implement"
 GATE_JOB = "gate-suite-implement-cycle"
 NEEDS = "needs.{0}.outputs.".format(GATE_JOB)
 SCRIPT = ".github/scripts/run-local-gates.py"
+PREPARE = ".github/actions/wing-commander-gate-suite-prepare/action.yml"
 LEGS = ("cycle", "retry")
 # Built by concatenation: a literal two-brace opener in this file's text is
 # the shape the workflow linters read as an Actions expression.
@@ -314,6 +315,23 @@ MUTATIONS = (
 )
 
 
+def load_prepare():
+    """The shared prepare composite's steps by id (the cycle-start and the
+    post-agent gate jobs both call it; spec 133 FR-011). Its run text is
+    returned with the leg placeholder filled in as `cycle`, so it compares
+    with the retry leg's inline copy exactly as the inline cycle copy did."""
+    import yaml
+    with open(PREPARE, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    steps = {}
+    for s in (doc.get("runs") or {}).get("steps") or []:
+        s = dict(s)
+        if "run" in s:
+            s["run"] = s["run"].replace("$LEG", "cycle")
+        steps[s.get("id")] = s
+    return steps
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -324,12 +342,13 @@ def main():
     steps = job.get("steps") or []
     by_name = {(s or {}).get("name"): s for s in steps}
     gate_by_name = {(s or {}).get("name"): s for s in gate_job.get("steps") or []}
+    prepare_by_id = load_prepare()
     by_id = {(s or {}).get("id"): s for s in steps}
     texts = {}
     # The spec branch the gate job checks out, from spec-dir (spec 114): a
     # project segment named `specs` is refused, never read as the root
     # branch of another lifecycle.
-    head = next((s for s in gate_job.get("steps") or [] if (s or {}).get("id") == "head"), {})
+    head = prepare_by_id.get("head", {})
     for spec_dir, want in (("specs/001-x", "spec/001-x"),
                            ("ideas/alpha/specs/001-x", "spec/ideas/alpha/001-x"),
                            ("specs/specs/001-x", None),
@@ -352,24 +371,34 @@ def main():
           GATE_JOB in (job.get("needs") or []), "needs={0}".format(job.get("needs")))
     check("(cycle) the preflight no longer runs in the implement job, beside the App token",
           "Preflight: gate-suite prerequisites (cycle)" not in by_name, "")
+    # spec 133 FR-011: the branch-resolve and preflight shell has one home.
+    prep_uses = [s for s in gate_job.get("steps") or []
+                 if "wing-commander-gate-suite-prepare" in str((s or {}).get("uses", ""))]
+    check("(cycle) {0} prepares through the shared composite, with no inline copy of its shell".format(
+              GATE_JOB),
+          len(prep_uses) == 1 and prep_uses[0].get("id") == "prepare"
+          and not any("script-exists=" in str((s or {}).get("run", ""))
+                      or "refusing to guess" in str((s or {}).get("run", ""))
+                      for s in gate_job.get("steps") or []),
+          "steps={0}".format([(s or {}).get("name") for s in gate_job.get("steps") or []]))
     outs = gate_job.get("outputs") or {}
-    piped = "steps.pipeline-checkout.outcome == 'success' && steps.gate-suite-preflight-cycle.outputs."
+    piped = "steps.pipeline-checkout.outcome == 'success' && steps.prepare.outputs."
     check("(cycle) {0} exports the preflight's script-exists, and ready/missing only "
           "with the pipeline checked out".format(GATE_JOB),
-          outs.get("script-exists") == OPEN + "steps.gate-suite-preflight-cycle.outputs.script-exists" + CLOSE
+          outs.get("script-exists") == OPEN + "steps.prepare.outputs.script-exists" + CLOSE
           and str(outs.get("ready", "")).startswith(OPEN + piped + "ready || 'false'")
           and str(outs.get("missing", "")).startswith(
               OPEN + "steps.pipeline-ref.outcome == 'failure' && '")
           and "steps.pipeline-checkout.outcome == 'failure' && '" in str(outs.get("missing", ""))
           and str(outs.get("missing", "")).endswith(
-              "|| steps.gate-suite-preflight-cycle.outputs.missing" + CLOSE),
+              "|| steps.prepare.outputs.missing" + CLOSE),
           "outputs={0}".format(outs))
     contained = [s for s in gate_job.get("steps") or []
                  if "wing-commander-contained-gate-suite" in str((s or {}).get("uses", ""))]
     check("(cycle) {0} runs the suite through the contained composite, only when ready".format(
               GATE_JOB),
           len(contained) == 1
-          and str(contained[0].get("if", "")) == ("steps.gate-suite-preflight-cycle.outputs.ready == 'true'"
+          and str(contained[0].get("if", "")) == ("steps.prepare.outputs.ready == 'true'"
                                                  " && steps.pipeline-checkout.outcome == 'success'")
           and (contained[0].get("with") or {}).get("site") == "implement-cycle",
           "steps={0}".format(contained))
@@ -377,7 +406,7 @@ def main():
     # still reach its preflight, so the implement job reads "not ready" (an
     # honest skip), never a missing verdict (red at cycle start).
     for name in ("Resolve pipeline ref", "Checkout pipeline repository (shared composite actions)",
-                 "Install actionlint for the gate suite"):
+                 "Install actionlint for the gate suite", "Prepare the gate suite (cycle)"):
         st = gate_by_name.get(name) or {}
         check("(cycle) {0}'s {1!r} is tolerated, so its preflight still runs".format(
                   GATE_JOB, name),
@@ -438,8 +467,13 @@ def main():
                  "agent": AGENT_STEP[leg]}
         found = {}
         for key, name in names.items():
-            home, where = ((gate_by_name, GATE_JOB) if (leg, key) == ("cycle", "preflight")
-                           else (by_name, JOB))
+            if (leg, key) == ("cycle", "preflight"):
+                # spec 133: the shared composite is the one home of this text.
+                if "preflight" not in prepare_by_id:
+                    sys.exit("::error file={0}::no preflight step in {1}".format(PREPARE, PREPARE))
+                found[key] = prepare_by_id["preflight"]
+                continue
+            home, where = by_name, JOB
             if name not in home:
                 sys.exit("::error file={0}::no step named {1!r} in job {2!r}. If it was renamed, "
                          "update the workflow and this harness together.".format(WORKFLOW, name, where))

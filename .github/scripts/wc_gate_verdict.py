@@ -28,7 +28,8 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_step_output import output_line  # noqa: E402
 
-SITES = ("board-fix", "board-review-fixup", "implement-cycle", "implement-retry")
+SITES = ("board-fix", "board-review-fixup", "implement-cycle", "implement-retry",
+         "implement-post")
 KEYS = ("schema_version", "site", "trusted_sha", "head_sha", "outcome",
         "first_failure", "exit_code")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -160,6 +161,14 @@ def _self_test():
         write_verdict(path, site="board-fix", trusted_sha=sha_b,
                       head_sha=sha_a, outcome="pass", exit_code=0)
         expect("writer round trip", outcome()[0], "pass")
+        # spec 133: the post-agent site is a known site, bound like any other.
+        write_verdict(path, site="implement-post", trusted_sha=sha_b,
+                      head_sha=sha_a, outcome="pass", exit_code=0)
+        expect("post site pass", read_verdict(path, sha_a, sha_b, "implement-post")[0], "pass")
+        expect("post site wrong site", read_verdict(path, sha_a, sha_b, "implement-cycle")[1],
+               "site mismatch")
+        expect("post site other head", read_verdict(path, sha_b, sha_b, "implement-post")[1],
+               "head_sha mismatch")
     for failure in failures:
         print("SELF-TEST FAIL: " + failure, file=sys.stderr)
     if failures:

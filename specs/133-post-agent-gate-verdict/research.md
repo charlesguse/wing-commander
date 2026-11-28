@@ -91,3 +91,27 @@ plan-level choices made without clarification.
   `implement-dispatch`), and the composite descriptions. Gates 7, 62
   (job-name constants), credential-free and project-single-home tables get the
   new job.
+
+## Implementation findings (cycle 1, T001)
+
+Divergences from the plan found while reading `implement.yml` and the
+composites:
+
+- **Prepare composite scope.** The composite cannot hold the pipeline
+  checkout (it is loaded from that checkout), so
+  `wing-commander-gate-suite-prepare` holds only the branch resolve and the
+  preflight; the pipeline ref/checkout and the actionlint install stay in the
+  job. Consequence: when the pipeline checkout fails, the composite does not
+  run, so `script-exists` is empty and the job reports the checkout as the
+  missing prerequisite (it used to still report whether the repository had a
+  suite). The implement job's `script-exists || 'true'` fallback is unchanged.
+- **Exact-head input (T004).** No new input on the contained composite: it
+  already gates `origin/<head-ref>` and the reader binds the verdict to
+  `expected-head-sha`, so a branch that moved between the push and the post
+  job reads as a `head_sha mismatch` failure (fail closed).
+- **Job outputs are prose-free (#309).** `implement-dispatch` needs the
+  remaining-work text, stall comment and cycle outcome that the `implement`
+  job's dispatch step reads today as step outputs. Those are model-written
+  prose and cannot travel as job outputs (`verify-job-outputs-prose-free.py`);
+  moving the dispatch needs an artifact or a re-derivation from the pushed
+  branch for them.

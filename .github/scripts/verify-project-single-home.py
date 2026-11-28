@@ -102,12 +102,14 @@ ALLOWED = {
 # name the inline split would read differently. check_split_parity()
 # runs each of them against the parser, so an allowance is never just
 # trusted.
+PREPARE_COMPOSITE = ".github/actions/wing-commander-gate-suite-prepare/action.yml"
 INLINE_SPLIT_ALLOWED = {
     ".github/workflows/plan.yml": 2,              # resolve-spec
     ".github/workflows/tasks.yml": 6,             # resolve-spec x3
     ".github/workflows/cleanup.yml": 1,           # select
     ".github/workflows/pr-conversation.yml": 2,   # resolve-identity
-    ".github/workflows/implement.yml": 1,         # gate-suite-implement-cycle
+    # spec 133: the one home of the gate-suite jobs' branch resolve.
+    PREPARE_COMPOSITE: 1,                         # wing-commander-gate-suite-prepare
 }
 for _rel, _n in INLINE_SPLIT_ALLOWED.items():
     ALLOWED.setdefault(_rel, {})["inline-project-split"] = _n
@@ -125,7 +127,8 @@ INLINE_SPLIT_SITES = (
     (".github/workflows/tasks.yml", "stalled-approved", "identity"),
     (".github/workflows/cleanup.yml", "select", "pick"),
     (".github/workflows/pr-conversation.yml", "resolve-identity", "identity"),
-    (".github/workflows/implement.yml", "gate-suite-implement-cycle", "head"),
+    # A composite, not a workflow: its steps sit under runs: (job "runs").
+    (PREPARE_COMPOSITE, "runs", "head"),
 )
 # Root, one project segment and a nested project; implement branches also
 # carry -iterN.
@@ -174,8 +177,11 @@ def _load_steps(texts):
     for rel, job, sid in INLINE_SPLIT_SITES:
         if rel not in docs:
             docs[rel] = yaml.safe_load(texts[rel])
-        found = [st for st in (docs[rel].get("jobs", {}).get(job, {}).get("steps") or [])
-                 if st.get("id") == sid]
+        if rel == PREPARE_COMPOSITE:
+            listed = (docs[rel].get("runs") or {}).get("steps") or []
+        else:
+            listed = docs[rel].get("jobs", {}).get(job, {}).get("steps") or []
+        found = [st for st in listed if st.get("id") == sid]
         if len(found) != 1:
             errors.append(f"{rel}: split-parity site {job}/{sid} not found (update INLINE_SPLIT_SITES)")
         else:
@@ -269,7 +275,7 @@ def _site_cases(rel, job, sid, name):
                                  "STUB_BASE_REF": "main", "STUB_HEAD_REF": "spec/" + name,
                                  **SPLIT_PREFIXES},
                  {"qualifies": "true", "slug": name, **want})]
-    if rel.endswith("implement.yml"):
+    if rel == PREPARE_COMPOSITE:
         # The ref the step builds must parse back to the spec dir it was given.
         return [("spec dir", {"SPEC_DIR_INPUT": p["spec_dir"], "SPEC_PREFIX": "spec/"},
                  {"ref": "spec/" + p["qualified"]})]
@@ -325,7 +331,7 @@ SPLIT_PARITY_MUTATIONS = (
      "a spec dir that keeps the project's inner segments"),
     (".github/workflows/cleanup.yml", 'slug="${slug%-iter*}"', ':',
      "an implement branch's -iterN kept in the spec dir"),
-    (".github/workflows/implement.yml", '${SPEC_DIR_INPUT#"${project_part}specs/"}',
+    (PREPARE_COMPOSITE, '${SPEC_DIR_INPUT#"${project_part}specs/"}',
      '${SPEC_DIR_INPUT##*/}', "a ref that drops the project"),
 )
 

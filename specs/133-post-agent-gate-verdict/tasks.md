@@ -10,7 +10,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `.github/workflows/implement.yml`, the `gate-suite-implement-cycle` job, and the composites `wing-commander-contained-gate-suite` and `wing-commander-gate-verdict` under `.github/actions/`; record in `specs/133-post-agent-gate-verdict/research.md` only any divergence from the plan found (no edit if none)
+- [X] T001 Read `.github/workflows/implement.yml`, the `gate-suite-implement-cycle` job, and the composites `wing-commander-contained-gate-suite` and `wing-commander-gate-verdict` under `.github/actions/`; record in `specs/133-post-agent-gate-verdict/research.md` only any divergence from the plan found (no edit if none)
 
 ---
 
@@ -19,9 +19,9 @@
 **Purpose**: Register the new verdict site and extract shared prepare logic, so both the cycle-start and post jobs use one home.
 
 - [ ] T002 [P] Add `implement-post` to `SITES` in `.github/scripts/wc_gate_verdict.py` and its entry in `.github/scripts/wc_gate_suite_sites.py`; extend their self-tests; verdict artifact name `wc-gate-verdict-implement-post` with fields `site`, `outcome`, `head_sha`, `trusted_sha`, `first_failure` per data-model.md `Post-agent verdict`
-- [ ] T003 Create composite `.github/actions/wing-commander-gate-suite-prepare/action.yml` holding the branch-resolve + preflight shell currently inlined in `gate-suite-implement-cycle` (outputs `script-exists`, `ready`, `missing`); move the logic, do not copy it (CLAUDE.md "single home")
-- [ ] T004 Switch `gate-suite-implement-cycle` in `.github/workflows/implement.yml` to call the new prepare composite, behaviour unchanged (FR-011); update `.github/actions/wing-commander-contained-gate-suite/action.yml` and `.github/actions/wing-commander-gate-verdict/action.yml` site-list docs and add the optional exact-head input (default = today's behaviour)
-- [ ] T005 Update the existing gates that pin the cycle-start job's inline preflight (single-home and preflight gates under `.github/scripts/verify-*.py`) so they accept the composite and fail on a reappearing inline copy
+- [X] T003 Create composite `.github/actions/wing-commander-gate-suite-prepare/action.yml` holding the branch-resolve + preflight shell currently inlined in `gate-suite-implement-cycle` (outputs `script-exists`, `ready`, `missing`); move the logic, do not copy it (CLAUDE.md "single home")
+- [X] T004 Switch `gate-suite-implement-cycle` in `.github/workflows/implement.yml` to call the new prepare composite, behaviour unchanged (FR-011); update `.github/actions/wing-commander-contained-gate-suite/action.yml` and `.github/actions/wing-commander-gate-verdict/action.yml` site-list docs and add the optional exact-head input (default = today's behaviour)
+- [X] T005 Update the existing gates that pin the cycle-start job's inline preflight (single-home and preflight gates under `.github/scripts/verify-*.py`) so they accept the composite and fail on a reappearing inline copy
 
 **Checkpoint**: cycle-start behaviour unchanged, gates green.
 
